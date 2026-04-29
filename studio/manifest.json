@@ -1,0 +1,16 @@
+{
+  "name": "AAPS Studio",
+  "short_name": "AAPS",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#fffdf8",
+  "theme_color": "#ff4f8b",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
+

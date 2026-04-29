@@ -1,0 +1,19 @@
+{
+  "name": "aaps",
+  "version": "0.1.0",
+  "description": "Autonomous Agentic Pipeline Script: Prompt Is All You Need.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node tests/aaps.test.js",
+    "studio": "python3 backend/aaps_codex_server.py --host 127.0.0.1 --port 8766",
+    "build:website": "cp src/aaps.js studio/aaps.js && rm -rf website/studio && mkdir -p website/studio && cp -R studio/. website/studio/"
+  },
+  "keywords": [
+    "agent",
+    "prompt",
+    "pipeline",
+    "workflow",
+    "language"
+  ],
+  "license": "UNLICENSED"
+}

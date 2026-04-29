@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AAPS Codex Response",
+  "type": "object",
+  "required": ["ok", "summary", "message"],
+  "additionalProperties": true,
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "data": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    }
+  }
+}
+

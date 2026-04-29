@@ -1,0 +1,20 @@
+# Runtime and local state
+.env
+.env.*
+!.env.example
+runtime/
+.aaps-work/
+website/studio/
+
+# Dependencies and caches
+node_modules/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Build outputs
+dist/
+build/
+coverage/
+.DS_Store

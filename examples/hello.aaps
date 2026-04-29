@@ -1,0 +1,35 @@
+pipeline "Hello Autonomous Pipeline" {
+  subtitle "Prompt Is All You Need"
+  goal "Turn one product prompt into planned, verified work."
+  input repo = "./"
+
+  agent planner {
+    role "Break ambiguous requests into small, verifiable tasks."
+    model "gpt-5"
+    tools "shell, git"
+  }
+
+  task plan {
+    uses planner
+    prompt """
+Read the repository. Return a short plan with files to edit, checks to run, and deployment steps.
+"""
+    output "docs/plan.md"
+  }
+
+  task build after plan {
+    uses planner
+    prompt "Implement the planned change and keep the diff focused."
+    run "npm test"
+    verify "The requested behavior works and tests pass."
+    retry 1
+  }
+
+  task publish after build {
+    uses planner
+    prompt "Commit the change, push it, and report the deployed URL."
+    run "git status --short"
+    verify "Remote branch contains the latest commit."
+  }
+}
+

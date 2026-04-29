@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AAPS Studio</title>
+    <meta name="theme-color" content="#ff4f8b" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="aaps.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="../" aria-label="AAPS">
+        <span class="brand-mark">A</span>
+        <span>
+          <strong>AAPS Studio</strong>
+          <small>Prompt Is All You Need</small>
+        </span>
+      </a>
+      <div class="toolbar" role="group" aria-label="Pipeline actions">
+        <button id="sample-btn" type="button">Sample</button>
+        <button id="format-btn" type="button">Format</button>
+        <button id="markdown-btn" type="button">Runbook</button>
+        <button id="download-btn" type="button">Download</button>
+      </div>
+    </header>
+
+    <main class="studio-shell">
+      <aside class="panel palette-panel">
+        <div class="panel-head">
+          <h2>Blocks</h2>
+          <span id="task-count">0 tasks</span>
+        </div>
+        <button class="block block-agent" draggable="true" data-kind="agent">agent</button>
+        <button class="block block-discover" draggable="true" data-kind="discover">discover</button>
+        <button class="block block-build" draggable="true" data-kind="build">build</button>
+        <button class="block block-verify" draggable="true" data-kind="verify">verify</button>
+        <button class="block block-publish" draggable="true" data-kind="publish">publish</button>
+        <button class="block block-custom" draggable="true" data-kind="custom">custom task</button>
+      </aside>
+
+      <section class="panel canvas-panel">
+        <div class="panel-head">
+          <h2>Program</h2>
+          <span id="diagnostics">Ready</span>
+        </div>
+        <div id="canvas" class="canvas" tabindex="0" aria-label="AAPS task canvas"></div>
+      </section>
+
+      <section class="panel editor-panel">
+        <div class="panel-head">
+          <h2>Source</h2>
+          <span>.aaps</span>
+        </div>
+        <textarea id="source" spellcheck="false"></textarea>
+      </section>
+
+      <section class="panel chat-panel">
+        <div class="panel-head">
+          <h2>Chat Edit</h2>
+          <span>local</span>
+        </div>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form">
+          <textarea
+            id="chat-input"
+            rows="3"
+            placeholder="Try: add task deploy after implement"
+          ></textarea>
+          <button type="submit">Apply</button>
+        </form>
+      </section>
+
+      <section class="panel ir-panel">
+        <div class="panel-head">
+          <h2>IR</h2>
+          <span>aaps_ir/0.1</span>
+        </div>
+        <pre id="ir"></pre>
+      </section>
+    </main>
+  </body>
+</html>
+
