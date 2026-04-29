@@ -331,5 +331,13 @@ addMessage("assistant", "AAPS Studio is ready. Add blocks or ask chat to edit th
 render();
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch(() => {});
+  const localhost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  if (localhost) {
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((registrations) => registrations.forEach((registration) => registration.unregister()))
+      .catch(() => {});
+  } else if (window.isSecureContext) {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  }
 }
