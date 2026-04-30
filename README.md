@@ -143,7 +143,7 @@ aaps studio --host 127.0.0.1 --port 8796
 aaps parse examples/hello.aaps --project .
 ```
 
-The package is published as `@lazyingart/aaps`. Future releases are prepared for GitHub Actions Trusted Publishing in `.github/workflows/npm-publish.yml`, so the release workflow can use GitHub OIDC after npm trust is approved. In npm package settings, connect the trusted publisher to GitHub owner `lachlanchen`, repository `AAPS`, workflow filename `npm-publish.yml`.
+The package is published as `@lazyingart/aaps`. Future releases use GitHub Actions Trusted Publishing in `.github/workflows/npm-publish.yml`, with npm trust configured for GitHub owner `lachlanchen`, repository `AAPS`, workflow filename `npm-publish.yml`.
 
 Studio tabs:
 

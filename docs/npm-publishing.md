@@ -6,7 +6,7 @@ AAPS is published on npm as `@lazyingart/aaps`.
 
 The repository uses `.github/workflows/npm-publish.yml` for tokenless publishing with GitHub Actions OIDC.
 
-Configure npm package settings with:
+The npm package has a Trusted Publisher configured:
 
 - Package: `@lazyingart/aaps`
 - Publisher: GitHub Actions
@@ -15,7 +15,7 @@ Configure npm package settings with:
 - Workflow filename: `npm-publish.yml`
 - Environment: blank, unless a GitHub deployment environment is added later
 
-Equivalent npm CLI command after the package exists:
+Equivalent npm CLI command:
 
 ```bash
 npm install -g npm@^11.10.0
@@ -29,7 +29,7 @@ The workflow runs `npm test`, `npm run project:validate`, `npm pack --dry-run`, 
 ## Release Flow
 
 1. Confirm `package.json` has a new version.
-2. Confirm the npm trusted publisher is configured for `lachlanchen/AAPS`.
+2. Confirm the npm trusted publisher is still configured for `lachlanchen/AAPS`.
 3. Push the release commit and tag or create a GitHub Release.
 4. Publish the GitHub Release, or run the `Publish npm package` workflow manually.
 5. Confirm the package page shows provenance after npm publish completes.
