@@ -24,11 +24,12 @@ The public product site is `https://aaps.lazying.art`. The broader agent portal 
 
 ## What This Repo Contains
 
-- `src/aaps.js`: `aaps_ir/0.2` parser, serializer, sample scripts, and Markdown runbook compiler.
-- `studio/`: AAPS Studio, a two-tab Scratch-like PWA with Block Lab chat, reusable skills, block inspector, source editing, tree visualization, and IR preview.
-- `backend/`: local Codex wrapper server for `/api/aaps/edit` and `/api/codex/*`.
+- `aaps.project.json`: project manifest for this repository.
+- `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for parsing scripts and validating projects.
+- `studio/`: AAPS Studio, a three-tab PWA with Block Lab chat, project management, block inspector, source editing, tree visualization, and IR preview.
+- `backend/`: local Codex wrapper server for `/api/aaps/project`, `/api/aaps/edit`, and `/api/codex/*`.
 - `website/`: bright landing page deployed by GitHub Pages.
-- `docs/`: language spec, Codex wrapper guide, and roadmap.
+- `docs/`: language spec, project management guide, Codex wrapper guide, and roadmap.
 - `references/pipeline-scripts/`: copied source pipeline materials plus converted general `.aaps` scripts.
 - `vendor/AgInTiFlow`: submodule for the future browser/tool-use backend candidate.
 
@@ -72,6 +73,36 @@ pipeline "Ship AAPS Studio" {
 See [docs/language-spec.md](docs/language-spec.md) and [examples/hello.aaps](examples/hello.aaps).
 Current implementation coverage and known gaps are tracked in [docs/implementation-audit.md](docs/implementation-audit.md).
 
+## AAPS Projects
+
+AAPS projects use `aaps.project.json` to manage many `.aaps` files:
+
+```text
+my-aaps-project/
+  aaps.project.json
+  blocks/
+  skills/
+  modules/
+  subworkflows/
+  workflows/
+  drafts/
+  archive/
+  data/
+  artifacts/
+  runs/
+  reports/
+  notes/
+```
+
+The manifest records project metadata, default and active `.aaps` files, data folders, artifact root, run database, variables, tools, models, notes, and file categories. Workflows can declare dependencies with project-root relative includes:
+
+```aaps
+include "blocks/qc_image.aaps"
+include "skills/microscopy_qc.aaps"
+```
+
+See [docs/project-management.md](docs/project-management.md) and [examples/projects/organoid-analysis](examples/projects/organoid-analysis).
+
 ## Design Philosophy
 
 AAPS keeps a clean boundary between intent and execution:
@@ -95,6 +126,7 @@ For biology, this means segmentation is modeled as inspect image -> build priors
 
 ```bash
 npm test
+npm run project:validate
 npm run studio
 ```
 
@@ -114,6 +146,10 @@ AAPS currently uses Codex as the primary local agent executor. The wrapper expos
 GET  /api/health
 POST /api/aaps/chat
 POST /api/aaps/edit
+GET  /api/aaps/project
+POST /api/aaps/project
+GET  /api/aaps/project/file
+POST /api/aaps/project/file
 POST /api/codex/respond
 POST /api/codex/jobs
 GET  /api/codex/job?id=<job-id>
@@ -146,6 +182,7 @@ aaps.lazying.art
 ```bash
 npm test
 python3 -m py_compile backend/aaps_codex_server.py
+npm run project:validate
 npm run build:website
 ```
 

@@ -17,6 +17,22 @@ function walk(dir) {
   return files;
 }
 
+function walkProjectFiles(dir) {
+  return walk(dir).map((file) => path.relative(dir, file).split(path.sep).join("/"));
+}
+
+function findManifests(dir) {
+  const manifests = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory() && ![".git", "node_modules", "vendor", "runtime"].includes(entry.name)) {
+      manifests.push(...findManifests(full));
+    }
+    else if (entry.name === "aaps.project.json") manifests.push(full);
+  }
+  return manifests;
+}
+
 const ir = AAPS.parseAAPS(AAPS.sample);
 
 assert.strictEqual(ir.version, "aaps_ir/0.2");
@@ -55,6 +71,24 @@ assert.strictEqual(reparsed.pipeline.tasks[0].children[0].kind, "for_each");
 assert.strictEqual(reparsed.pipeline.requiredTools.includes("cellpose"), true);
 assert.strictEqual(reparsed.diagnostics.length, 0, JSON.stringify(reparsed.diagnostics));
 
+assert.strictEqual(AAPS.PROJECT_VERSION, "aaps_project/0.1");
+const projectCheck = AAPS.validateProjectManifest(AAPS.sampleProject, AAPS.projectFileIndex(AAPS.sampleProject));
+assert.strictEqual(projectCheck.ok, true, JSON.stringify(projectCheck.diagnostics));
+assert(projectCheck.files.includes("blocks/qc_image.aaps"));
+assert(AAPS.projectStructureText(AAPS.sampleProject).includes("aaps.project.json"));
+
+const projectMain = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "main.aaps"));
+assert.strictEqual(projectMain.pipeline.includes.includes("blocks/qc_image.aaps"), true);
+assert.strictEqual(projectMain.diagnostics.length, 0, JSON.stringify(projectMain.diagnostics));
+
+const badProject = AAPS.validateProjectManifest({
+  ...AAPS.sampleProject,
+  path: "/tmp/bad",
+  defaultMain: "workflows/main.txt",
+});
+assert.strictEqual(badProject.ok, false);
+assert(badProject.diagnostics.some((diagnostic) => diagnostic.severity === "error"));
+
 const invalid = AAPS.parseAAPS('task missing_pipeline {\n  prompt "bad"\n}\n');
 assert(invalid.diagnostics.some((diagnostic) => diagnostic.message.includes("Missing pipeline")));
 
@@ -69,6 +103,14 @@ for (const file of walk(path.join(__dirname, "..", "examples"))) {
 for (const file of walk(path.join(__dirname, "..", "references", "pipeline-scripts", "converted"))) {
   const parsed = parseFile(file);
   assert.strictEqual(parsed.diagnostics.length, 0, `${file}: ${JSON.stringify(parsed.diagnostics)}`);
+}
+
+for (const manifestFile of findManifests(path.join(__dirname, ".."))) {
+  if (manifestFile.includes(`${path.sep}node_modules${path.sep}`)) continue;
+  const projectDir = path.dirname(manifestFile);
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  const checked = AAPS.validateProjectManifest(manifest, walkProjectFiles(projectDir));
+  assert.strictEqual(checked.ok, true, `${manifestFile}: ${JSON.stringify(checked.diagnostics)}`);
 }
 
 const markdown = AAPS.toMarkdown(biology);

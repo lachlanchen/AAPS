@@ -1,0 +1,19 @@
+pipeline "Microscopy QC Skill" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  include "blocks/qc_image.aaps"
+  include "blocks/segment_organoid.aaps"
+  goal "Bundle reusable image QC and segmentation blocks for microscopy workflows."
+
+  skill microscopy_qc {
+    input image_path: image required
+    output qc_report: json
+    output mask_path: image
+    output overlay_path: image
+    call qc_image as qc
+    call segment_organoid as segmentation
+    validate "QC and segmentation artifacts are both produced."
+    recover "If segmentation fails, keep QC report and route sample to manual review."
+  }
+}

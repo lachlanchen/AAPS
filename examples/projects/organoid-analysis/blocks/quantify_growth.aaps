@@ -1,0 +1,29 @@
+pipeline "Quantify Growth Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  tags "block, quantification, metrics"
+  artifact_dir "artifacts/metrics"
+  database "runs/organoid-aaps-runs.jsonl"
+  goal "Compute object-level and sample-level growth metrics from masks."
+  input image_path: image required = "{{image_path}}"
+  input mask_path: image required = "{{mask_path}}"
+  output object_table: table = "artifacts/metrics/{{sample_id}}.objects.csv"
+  output metrics_report: json = "artifacts/metrics/{{sample_id}}.metrics.json"
+
+  skill quantify_growth {
+    input image_path: image required
+    input mask_path: image required
+    output object_table: table
+    output metrics_report: json
+    action measure_objects {
+      run "python tools/measure_objects.py --image {{image_path}} --mask {{mask_path}} --objects {{object_table}} --report {{metrics_report}}"
+      validate "Object table includes id, area, perimeter, circularity, intensity_mean, and qc_flag."
+      recover "If table is empty, mark sample failed and preserve image, mask, and logs."
+    }
+    action summarize_sample {
+      prompt "Summarize count, total area, mean area, distribution shape, and QC warnings."
+      verify "Metrics report contains sample summary and links to artifacts."
+    }
+  }
+}

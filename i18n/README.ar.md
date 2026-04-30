@@ -6,7 +6,7 @@
 
 AAPS هو اختصار Autonomous Agentic Pipeline Script. إنه لغة برمجة تجعل التعليمات النصية جزءا أساسيا من الكود لوصف مهام وكلاء مستقلة وقابلة للاستئناف والتحقق.
 
-الإصدار الحالي يضيف `skill` و `stage` و `action` و `method` و `guard` و `if` و `for_each` ومدخلات/مخرجات typed و AAPS Studio بواجهتين.
+الإصدار الحالي يضيف `skill` و `stage` و `action` و `method` و `guard` و `if` و `for_each` ومدخلات/مخرجات typed وملفات manifest للمشاريع و AAPS Studio بثلاث واجهات.
 
 ## المحتويات
 

@@ -6,6 +6,8 @@ Subtitle: **Prompt Is All You Need**.
 
 Current parser target: `aaps_ir/0.2`.
 
+Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.project.json` plus project-root relative `.aaps` files. See [project-management.md](project-management.md).
+
 ## Design Goals
 
 - Treat prompts as first-class code while making inputs and outputs explicit.
@@ -46,6 +48,7 @@ Current parser target: `aaps_ir/0.2`.
 | `param` | `param diameter = "auto"` |
 | `metric` | `metric boundary_overlap = "required"` |
 | `policy` | `policy destructive_actions = "disabled"` |
+| `include` | `include "blocks/qc_image.aaps"` |
 
 Multiline prompts use triple quotes.
 
@@ -59,6 +62,7 @@ pipeline "Biology Image Segmentation QC" {
   database "runtime/aaps-runs.jsonl"
   log_path "runtime/logs/segmentation.log"
   domain "biology"
+  include "blocks/qc_image.aaps"
   input image_batch: collection required = "data/images"
   output metrics: table = "runtime/metrics.csv"
 
@@ -115,7 +119,7 @@ An AAPS runtime should:
 
 1. Parse `.aaps` into `aaps_ir/0.2`.
 2. Validate ports, dependencies, calls, and branch structure.
-3. Resolve task dependencies and loop expansion.
+3. Resolve project `include` dependencies, task dependencies, and loop expansion.
 4. Execute prompts and commands through bounded adapters.
 5. Persist every block state, selected method, output artifact, and QC result.
 6. Require `validate`, `verify`, and `guard` checks before advancing.

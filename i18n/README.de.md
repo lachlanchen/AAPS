@@ -6,7 +6,7 @@
 
 AAPS steht für Autonomous Agentic Pipeline Script. Es ist eine prompt-native Programmiersprache für autonome Workflows, die planbar, fortsetzbar und überprüfbar bleiben.
 
-Die aktuelle Version ergänzt `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, typisierte Ein- und Ausgaben sowie AAPS Studio mit zwei Tabs.
+Die aktuelle Version ergänzt `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, typisierte Ein- und Ausgaben, Projektmanifeste sowie AAPS Studio mit drei Tabs.
 
 ## Inhalt
 

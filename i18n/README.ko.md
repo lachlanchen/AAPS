@@ -6,7 +6,7 @@
 
 AAPS는 Autonomous Agentic Pipeline Script입니다. 프롬프트를 실행 가능한 코드 단위로 다루고, 자율 에이전트 작업을 계획, 재개, 검증 가능한 파이프라인으로 표현합니다.
 
-현재 버전은 `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, 타입 입력/출력, 두 탭 구조의 AAPS Studio를 포함합니다.
+현재 버전은 `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, 타입 입력/출력, 프로젝트 매니페스트, 세 탭 구조의 AAPS Studio를 포함합니다.
 
 ## 구성
 

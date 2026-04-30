@@ -1,0 +1,36 @@
+pipeline "Main Organoid Analysis" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  author "AAPS"
+  domain "biology"
+  tags "project, main, organoid"
+  include "blocks/qc_image.aaps"
+  include "blocks/segment_organoid.aaps"
+  include "blocks/quantify_growth.aaps"
+  include "blocks/generate_report.aaps"
+  requires_tools "python, cellpose, scikit-image, opencv, codex"
+  requires_models "gpt-5, cellpose, vision-mask"
+  artifact_dir "artifacts"
+  database "runs/organoid-aaps-runs.jsonl"
+  log_path "runs/main.log"
+  goal "Run QC, segmentation, quantification, visualization, and report export for one organoid image."
+  input image_path: image required = "data/raw/example.tif" validate "Image exists and is readable."
+  output report: markdown = "reports/example.md"
+
+  agent analyst {
+    role "Microscopy workflow agent that chooses methods, records artifacts, and asks for review when confidence is low."
+    model "gpt-5"
+    tools "python, image_viewer, cellpose, opencv, codex"
+  }
+
+  task analyze_sample {
+    uses analyst
+    call qc_image as qc
+    call segment_organoid as segment
+    call quantify_growth as quantify
+    call generate_report as report
+    validate "Report and all declared artifacts exist."
+    recover "If any block fails, preserve logs and stop with a clear failed-sample report."
+    review "Human approves overlay and report before export."
+  }
+}

@@ -20,6 +20,8 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO_DIR = ROOT / "studio"
 RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
+PROJECT_MANIFEST = "aaps.project.json"
+SKIP_SCAN_DIRS = {".git", "node_modules", "vendor", "runtime", "__pycache__"}
 SCHEMAS = {
     "response": ROOT / "schemas" / "aaps_response.schema.json",
     "aaps_edit": ROOT / "schemas" / "aaps_edit.schema.json",
@@ -37,6 +39,95 @@ def read_json(handler: SimpleHTTPRequestHandler) -> dict:
         return {}
     raw = handler.rfile.read(length)
     return json.loads(raw.decode("utf-8"))
+
+
+def safe_repo_path(value: str | None = ".") -> Path:
+    text = str(value or ".").strip() or "."
+    candidate = Path(text)
+    if candidate.is_absolute() or text.startswith("~") or ".." in candidate.parts:
+        raise ValueError(f"path must be relative to the AAPS repository: {text}")
+    resolved = (ROOT / candidate).resolve()
+    resolved.relative_to(ROOT)
+    return resolved
+
+
+def relative_to_project(project_dir: Path, file_name: str) -> Path:
+    text = str(file_name or "").strip()
+    candidate = Path(text)
+    if not text or candidate.is_absolute() or text.startswith("~") or ".." in candidate.parts:
+        raise ValueError(f"file must be project-relative: {text}")
+    resolved = (project_dir / candidate).resolve()
+    resolved.relative_to(project_dir.resolve())
+    return resolved
+
+
+def scan_aaps_files(project_dir: Path) -> list[str]:
+    files: list[str] = []
+    if not project_dir.exists():
+        return files
+    for current, dirnames, filenames in os.walk(project_dir):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_SCAN_DIRS]
+        for filename in filenames:
+            if filename.endswith(".aaps"):
+                full = Path(current) / filename
+                files.append(full.relative_to(project_dir).as_posix())
+    return sorted(files)
+
+
+def read_project(project_dir: Path) -> dict:
+    manifest_path = project_dir / PROJECT_MANIFEST
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    else:
+        manifest = {
+            "schema": "aaps_project/0.1",
+            "name": project_dir.name or "AAPS Project",
+            "path": ".",
+            "description": "AAPS project manifest.",
+            "domain": "general",
+            "tags": [],
+            "defaultMain": "workflows/main.aaps",
+            "activeFile": "workflows/main.aaps",
+            "created": now_iso(),
+            "updated": now_iso(),
+            "paths": {
+                "blocks": "blocks",
+                "skills": "skills",
+                "modules": "modules",
+                "subworkflows": "subworkflows",
+                "workflows": "workflows",
+                "drafts": "drafts",
+                "archives": "archive",
+                "data": "data",
+                "artifacts": "artifacts",
+                "runs": "runs",
+                "reports": "reports",
+                "notes": "notes",
+            },
+            "dataFolders": ["data"],
+            "artifactRoot": "artifacts",
+            "runDatabase": "runs/aaps-runs.jsonl",
+            "variables": {},
+            "tools": [],
+            "models": [],
+            "notes": [],
+            "files": {
+                "blocks": [],
+                "skills": [],
+                "modules": [],
+                "subworkflows": [],
+                "workflows": ["workflows/main.aaps"],
+                "drafts": [],
+                "archives": [],
+                "references": [],
+            },
+        }
+    return {
+        "manifest": manifest,
+        "manifest_exists": manifest_path.exists(),
+        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+        "files": scan_aaps_files(project_dir),
+    }
 
 
 def write_json(handler: SimpleHTTPRequestHandler, payload: dict, status: int = 200) -> None:
@@ -136,6 +227,8 @@ AAPS v0.2 supports:
 - `pipeline`, `agent`, `skill`, `task`, `stage`, `method`, `action`, `guard`, `choose`, `if`, `else`, `for_each`
 - typed `input` and `output` ports
 - `prompt`, `run`, `verify`, `call`, `param`, `metric`, and `policy`
+- project-root relative `include` statements
+- AAPS projects with `aaps.project.json` for blocks, skills, modules, subworkflows, workflows, drafts, archives, artifacts, and runs
 
 Current source:
 ```aaps
@@ -283,6 +376,35 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 },
             )
             return
+        if parsed.path == "/api/aaps/project":
+            try:
+                project_dir = safe_repo_path(parse_qs(parsed.query).get("path", ["."])[0])
+                write_json(self, read_project(project_dir))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+        if parsed.path == "/api/aaps/project/file":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                file_path = relative_to_project(project_dir, query.get("file", [""])[0])
+                if not file_path.name.endswith(".aaps"):
+                    write_json(self, {"error": "only .aaps files can be loaded"}, 400)
+                    return
+                if not file_path.exists():
+                    write_json(self, {"error": "file not found"}, 404)
+                    return
+                write_json(
+                    self,
+                    {
+                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "file": file_path.relative_to(project_dir).as_posix(),
+                        "source": file_path.read_text(encoding="utf-8"),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
         if parsed.path == "/api/codex/job":
             job_id = parse_qs(parsed.query).get("id", [""])[0]
             record = read_job(job_id)
@@ -361,6 +483,49 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             write_json(self, {"id": job_id, **outcome}, status)
             return
 
+        if parsed.path == "/api/aaps/project":
+            try:
+                project_dir = safe_repo_path(str(body.get("path") or "."))
+                project_dir.mkdir(parents=True, exist_ok=True)
+                manifest = body.get("manifest")
+                if not isinstance(manifest, dict):
+                    write_json(self, {"error": "manifest object is required"}, 400)
+                    return
+                manifest["updated"] = manifest.get("updated") or now_iso()
+                manifest_path = project_dir / PROJECT_MANIFEST
+                manifest_path.write_text(
+                    json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                write_json(self, read_project(project_dir))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
+        if parsed.path == "/api/aaps/project/file":
+            try:
+                project_dir = safe_repo_path(str(body.get("path") or "."))
+                file_name = str(body.get("file") or "").strip()
+                source = str(body.get("source") or "")
+                if not file_name.endswith(".aaps"):
+                    write_json(self, {"error": "only .aaps files can be saved"}, 400)
+                    return
+                file_path = relative_to_project(project_dir, file_name)
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(source, encoding="utf-8")
+                write_json(
+                    self,
+                    {
+                        "ok": True,
+                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "file": file_path.relative_to(project_dir).as_posix(),
+                        "files": scan_aaps_files(project_dir),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
         if parsed.path == "/api/codex/respond":
             schema = str(body.get("schema") or "response")
             job_id = uuid.uuid4().hex[:16]
@@ -385,7 +550,7 @@ def main() -> None:
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/project, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 

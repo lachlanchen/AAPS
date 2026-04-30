@@ -1,0 +1,30 @@
+pipeline "QC Image Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  tags "block, qc, microscopy"
+  artifact_dir "artifacts/qc"
+  database "runs/organoid-aaps-runs.jsonl"
+  goal "Inspect a microscopy image and produce a structured QC report."
+  input image_path: image required = "{{image_path}}" validate "Image file exists and can be opened."
+  input image_metadata: json optional = "{{image_metadata}}"
+  output qc_report: json = "artifacts/qc/{{sample_id}}.qc.json"
+  output qc_overlay: image = "artifacts/qc/{{sample_id}}.qc-overlay.png"
+
+  skill qc_image {
+    input image_path: image required
+    input image_metadata: json optional
+    output qc_report: json
+    output qc_overlay: image
+    stage inspect {
+      prompt "Inspect brightness, contrast, blur, saturation, debris, field completeness, and organoid density."
+      output image_context: json
+    }
+    stage score {
+      prompt "Return blur_score, contrast_score, density_level, object_size_range, and routing hints."
+      validate "QC report includes blur_score, contrast_score, density_level, and route_hint."
+      recover "If required fields are missing, rerun inspection with stricter JSON output."
+    }
+    review "Human review is required when blur_score or contrast_score is outside project thresholds."
+  }
+}

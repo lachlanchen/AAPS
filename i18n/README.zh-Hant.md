@@ -6,7 +6,7 @@
 
 AAPS 是 Autonomous Agentic Pipeline Script，一種以提示詞為核心的程式語言，用來描述可規劃、可恢復、可驗證的自主智能體任務流水線。
 
-目前版本加入了 `skill`、`stage`、`action`、`method`、`guard`、`if`、`for_each`、型別化輸入輸出，以及雙分頁 AAPS Studio。
+目前版本加入了 `skill`、`stage`、`action`、`method`、`guard`、`if`、`for_each`、型別化輸入輸出、專案清單，以及三分頁 AAPS Studio。
 
 ## 內容
 

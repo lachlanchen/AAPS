@@ -1,0 +1,78 @@
+{
+  "schema": "aaps_project/0.1",
+  "name": "AAPS",
+  "path": ".",
+  "description": "The AAPS language, Studio, reference workflows, and website project.",
+  "domain": "agentic-workflows",
+  "tags": [
+    "agent",
+    "prompt",
+    "workflow",
+    "studio"
+  ],
+  "defaultMain": "examples/general_agentic_workflow.aaps",
+  "activeFile": "examples/organoid_segmentation.aaps",
+  "created": "2026-04-29T00:00:00Z",
+  "updated": "2026-04-30T00:00:00Z",
+  "paths": {
+    "blocks": "examples/blocks",
+    "skills": "examples/skills",
+    "modules": "examples/modules",
+    "subworkflows": "examples/subworkflows",
+    "workflows": "examples",
+    "drafts": "drafts",
+    "archives": "archive",
+    "data": "data",
+    "artifacts": "runtime/artifacts",
+    "runs": "runtime",
+    "reports": "reports",
+    "notes": "docs"
+  },
+  "dataFolders": [
+    "data"
+  ],
+  "artifactRoot": "runtime/artifacts",
+  "runDatabase": "runtime/aaps-runs.jsonl",
+  "variables": {
+    "studio_port": "8796",
+    "website_domain": "aaps.lazying.art"
+  },
+  "tools": [
+    "node",
+    "python",
+    "codex",
+    "git",
+    "browser"
+  ],
+  "models": [
+    "gpt-5",
+    "gpt-5.3-codex"
+  ],
+  "notes": [
+    "Keep project paths relative to the manifest.",
+    "Use examples/projects for domain-specific project templates."
+  ],
+  "files": {
+    "blocks": [],
+    "skills": [],
+    "modules": [],
+    "subworkflows": [],
+    "workflows": [
+      "examples/general_agentic_workflow.aaps",
+      "examples/organoid_segmentation.aaps",
+      "examples/app_development_review.aaps",
+      "examples/book_writing_pipeline.aaps",
+      "examples/hello.aaps"
+    ],
+    "drafts": [],
+    "archives": [],
+    "references": [
+      "references/pipeline-scripts/converted/autoappdev-autopilot-loop.aaps",
+      "references/pipeline-scripts/converted/lazyblog-chat-action-router.aaps",
+      "references/pipeline-scripts/converted/biology-segmentation-qc.aaps",
+      "references/pipeline-scripts/converted/app80-deo-guarded-batch.aaps",
+      "references/pipeline-scripts/converted/app81-density-cellpose.aaps",
+      "references/pipeline-scripts/converted/bookwriting-chapter-loop.aaps"
+    ]
+  }
+}

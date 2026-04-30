@@ -5,8 +5,10 @@
 AAPS is split into a language core, a local Studio app, and a landing website.
 
 - `src/aaps.js` contains the JavaScript `aaps_ir/0.2` parser, serializer, sample scripts, and Markdown compiler.
+- `aaps.project.json` describes the current multi-file AAPS project.
 - `tests/` contains Node smoke tests for the language core.
 - `examples/` contains `.aaps` pipeline examples.
+- `examples/projects/` contains complete multi-file AAPS project examples.
 - `docs/` contains the language spec, wrapper notes, and roadmap.
 - `studio/` contains the standalone AAPS Studio PWA.
 - `backend/` contains the local Codex wrapper server used by Studio.
@@ -17,6 +19,7 @@ AAPS is split into a language core, a local Studio app, and a landing website.
 ## Build, Test, and Development Commands
 
 - `npm test`: runs parser and serializer smoke tests.
+- `npm run project:validate`: validates `aaps.project.json` and all project `.aaps` files.
 - `npm run studio`: starts the local Studio plus Codex wrapper at `http://127.0.0.1:8796`.
 - `npm run build:website`: copies `src/aaps.js` into Studio and stages Studio under `website/studio/` for static deployment.
 - `python3 -m py_compile backend/aaps_codex_server.py`: checks the wrapper server syntax.

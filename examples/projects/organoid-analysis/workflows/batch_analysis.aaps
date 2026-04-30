@@ -1,0 +1,34 @@
+pipeline "Batch Organoid Analysis" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  tags "project, batch, organoid"
+  include "workflows/main.aaps"
+  artifact_dir "artifacts"
+  database "runs/organoid-aaps-runs.jsonl"
+  log_path "runs/batch.log"
+  goal "Run the main organoid analysis workflow over a folder of microscopy images."
+  input image_folder: folder required = "data/raw"
+  output batch_report: markdown = "reports/batch-summary.md"
+
+  agent batch_runner {
+    role "Batch analysis agent that keeps per-image failures isolated and logged."
+    model "gpt-5"
+    tools "python, shell, image_viewer"
+  }
+
+  task analyze_folder {
+    uses batch_runner
+    for_each image_path in "data/raw/**/*.tif" {
+      action run_main {
+        call analyze_sample
+        validate "Per-image report or failed-sample log is written."
+        recover "Skip bad image, log reason, and continue batch."
+      }
+    }
+    action summarize_batch {
+      prompt "Summarize successful images, failed images, QC distributions, metric distributions, and review queue."
+      output batch_report: markdown = "reports/batch-summary.md"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+pipeline "Report Generation Skill" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  include "blocks/generate_report.aaps"
+  goal "Bundle report generation and publication readiness checks."
+
+  skill report_generation {
+    input qc_report: json required
+    input segmentation_report: json required
+    input metrics_report: json required
+    output report: markdown
+    call generate_report as report
+    validate "Report exists and includes required sections."
+    review "Human approves report before export."
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "schema": "aaps_project/0.1",
+  "name": "Organoid Analysis Project",
+  "path": ".",
+  "description": "Reusable AAPS project for microscopy QC, organoid segmentation, growth quantification, and report generation.",
+  "domain": "biology",
+  "tags": [
+    "organoid",
+    "microscopy",
+    "segmentation",
+    "quantification"
+  ],
+  "defaultMain": "workflows/main.aaps",
+  "activeFile": "workflows/main.aaps",
+  "created": "2026-04-30T00:00:00Z",
+  "updated": "2026-04-30T00:00:00Z",
+  "paths": {
+    "blocks": "blocks",
+    "skills": "skills",
+    "modules": "modules",
+    "subworkflows": "workflows",
+    "workflows": "workflows",
+    "drafts": "drafts",
+    "archives": "archive",
+    "data": "data",
+    "artifacts": "artifacts",
+    "runs": "runs",
+    "reports": "reports",
+    "notes": "notes"
+  },
+  "dataFolders": [
+    "data/raw",
+    "data/processed"
+  ],
+  "artifactRoot": "artifacts",
+  "runDatabase": "runs/organoid-aaps-runs.jsonl",
+  "variables": {
+    "image_glob": "data/raw/**/*.tif",
+    "qc_threshold": "domain_defined",
+    "review_mode": "required_when_low_confidence"
+  },
+  "tools": [
+    "python",
+    "cellpose",
+    "scikit-image",
+    "opencv",
+    "codex"
+  ],
+  "models": [
+    "gpt-5",
+    "cellpose",
+    "vision-mask"
+  ],
+  "notes": [
+    "Every reusable block declares typed inputs, outputs, artifacts, validation, and recovery.",
+    "Workflows include block and skill files by project-root relative path."
+  ],
+  "files": {
+    "blocks": [
+      "blocks/qc_image.aaps",
+      "blocks/segment_organoid.aaps",
+      "blocks/quantify_growth.aaps",
+      "blocks/generate_report.aaps"
+    ],
+    "skills": [
+      "skills/microscopy_qc.aaps",
+      "skills/report_generation.aaps"
+    ],
+    "modules": [],
+    "subworkflows": [
+      "workflows/test_segmentation_methods.aaps"
+    ],
+    "workflows": [
+      "workflows/main.aaps",
+      "workflows/batch_analysis.aaps"
+    ],
+    "drafts": [],
+    "archives": [],
+    "references": []
+  }
+}

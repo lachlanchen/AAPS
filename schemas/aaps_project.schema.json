@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aaps.lazying.art/schemas/aaps_project.schema.json",
+  "title": "AAPS Project Manifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "path",
+    "description",
+    "domain",
+    "defaultMain",
+    "activeFile",
+    "artifactRoot",
+    "runDatabase",
+    "files"
+  ],
+  "properties": {
+    "schema": {
+      "const": "aaps_project/0.1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "default": "."
+    },
+    "description": {
+      "type": "string"
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "defaultMain": {
+      "type": "string",
+      "pattern": "\\.aaps$"
+    },
+    "activeFile": {
+      "type": "string",
+      "pattern": "\\.aaps$"
+    },
+    "created": {
+      "type": "string"
+    },
+    "updated": {
+      "type": "string"
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "dataFolders": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "artifactRoot": {
+      "type": "string"
+    },
+    "runDatabase": {
+      "type": "string"
+    },
+    "variables": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "files": {
+      "type": "object",
+      "required": [
+        "blocks",
+        "skills",
+        "modules",
+        "subworkflows",
+        "workflows",
+        "drafts",
+        "archives",
+        "references"
+      ],
+      "properties": {
+        "blocks": {
+          "$ref": "#/$defs/aapsFileList"
+        },
+        "skills": {
+          "$ref": "#/$defs/aapsFileList"
+        },
+        "modules": {
+          "$ref": "#/$defs/aapsFileList"
+        },
+        "subworkflows": {
+          "$ref": "#/$defs/aapsFileList"
+        },
+        "workflows": {
+          "$ref": "#/$defs/aapsFileList"
+        },
+        "drafts": {
+          "$ref": "#/$defs/aapsFileList"
+        },
+        "archives": {
+          "$ref": "#/$defs/aapsFileList"
+        },
+        "references": {
+          "$ref": "#/$defs/aapsFileList"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "aapsFileList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "\\.aaps$"
+      },
+      "uniqueItems": true
+    }
+  }
+}

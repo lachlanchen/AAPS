@@ -3,7 +3,7 @@
 ## 0.1 Seed
 
 - AAPS v0.2 syntax, parser, serializer, and Markdown compiler.
-- Static AAPS Studio with Block Lab, Program tab, nested block visualization, source preview, and chat-routed edits.
+- Static AAPS Studio with Block Lab, Program tab, Project tab, nested block visualization, source preview, manifest validation, and chat-routed edits.
 - Multilingual README and GitHub Pages product site.
 
 ## 0.2 Runtime

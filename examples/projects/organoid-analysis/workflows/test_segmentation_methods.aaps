@@ -1,0 +1,44 @@
+pipeline "Test Segmentation Methods" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  tags "project, experiment, segmentation"
+  include "blocks/qc_image.aaps"
+  include "blocks/segment_organoid.aaps"
+  artifact_dir "artifacts/method-tests"
+  database "runs/organoid-aaps-runs.jsonl"
+  log_path "runs/method-tests.log"
+  goal "Compare segmentation routes on a curated subset and record method choice evidence."
+  input test_images: folder required = "data/raw/test-set"
+  output comparison_report: markdown = "reports/segmentation-method-comparison.md"
+
+  agent method_tester {
+    role "Method comparison agent that evaluates thresholding, Cellpose, and vision masks against QC criteria."
+    model "gpt-5"
+    tools "python, cellpose, opencv, vision-mask"
+  }
+
+  task compare_methods {
+    uses method_tester
+    for_each image_path in "data/raw/test-set/**/*.tif" {
+      action run_candidates {
+        prompt "Run thresholding, Cellpose, and vision-mask candidates when available."
+        output candidate_scores: json = "artifacts/method-tests/{{sample_id}}.scores.json"
+      }
+      if "candidate_scores.best_confidence < 0.75" {
+        action request_review {
+          review "Human chooses the best overlay or marks image unsuitable."
+        }
+      }
+      else {
+        action accept_best {
+          prompt "Record best method and routing rule evidence."
+        }
+      }
+    }
+    action write_comparison {
+      prompt "Write method recommendations, failure modes, and default routing thresholds."
+      validate "Comparison report includes method table and default routing rule."
+    }
+  }
+}

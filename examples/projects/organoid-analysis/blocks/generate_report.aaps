@@ -1,0 +1,28 @@
+pipeline "Generate Report Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  tags "block, report, artifact"
+  artifact_dir "reports"
+  database "runs/organoid-aaps-runs.jsonl"
+  goal "Produce a human-readable analysis report with artifact links."
+  input qc_report: json required = "{{qc_report}}"
+  input segmentation_report: json required = "{{segmentation_report}}"
+  input metrics_report: json required = "{{metrics_report}}"
+  output report: markdown = "reports/{{sample_id}}.md"
+
+  skill generate_report {
+    input qc_report: json required
+    input segmentation_report: json required
+    input metrics_report: json required
+    output report: markdown
+    stage assemble {
+      prompt "Write methods, QC summary, segmentation route, metrics, warnings, and artifact links."
+      validate "Report includes Methods, QC, Segmentation, Quantification, Artifacts, and Review sections."
+    }
+    stage conclusion {
+      prompt "State conclusions conservatively and separate observed measurements from interpretation."
+      review "Human approves final report before publication."
+    }
+  }
+}

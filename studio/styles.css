@@ -141,6 +141,11 @@ main {
   min-height: calc(100svh - 72px);
 }
 
+[data-panel="project"] {
+  grid-template-columns: minmax(360px, 1fr) minmax(320px, 0.82fr) minmax(280px, 0.68fr);
+  min-height: calc(100svh - 72px);
+}
+
 .panel {
   min-height: 0;
   overflow: hidden;
@@ -224,6 +229,8 @@ main {
 .chat-form textarea,
 .inspector-form textarea,
 .inspector-form input,
+.project-controls input,
+#project-manifest,
 .editor-panel textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -397,6 +404,121 @@ main {
   grid-template-rows: auto 1fr;
 }
 
+.project-manifest-panel,
+.project-files-panel,
+.project-structure-panel {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+}
+
+.project-controls {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.project-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.project-controls input,
+#project-manifest {
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+#project-manifest {
+  min-height: 0;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.project-summary,
+.project-files,
+#project-structure {
+  overflow: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+}
+
+.project-summary {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.project-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.project-kpi {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff8ef;
+}
+
+.project-kpi strong {
+  display: block;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.project-files {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.project-category h3 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.project-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  margin: 0 0 6px;
+  padding: 0 10px;
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-file.is-active {
+  color: #fff;
+  background: var(--violet);
+  border-color: var(--violet);
+}
+
+#project-structure {
+  color: #f7f5ff;
+  background: #171321;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 #ir {
   margin: 0;
   padding: 14px;
@@ -410,7 +532,8 @@ main {
 @media (max-width: 1160px) {
   .topbar,
   [data-panel="lab"],
-  [data-panel="program"] {
+  [data-panel="program"],
+  [data-panel="project"] {
     grid-template-columns: 1fr;
   }
 

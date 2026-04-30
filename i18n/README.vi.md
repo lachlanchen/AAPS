@@ -6,7 +6,7 @@
 
 AAPS là Autonomous Agentic Pipeline Script, một ngôn ngữ lập trình lấy prompt làm trung tâm để mô tả pipeline tác vụ tự trị, có thể tiếp tục và kiểm chứng.
 
-Phiên bản hiện tại thêm `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, input/output có kiểu và AAPS Studio hai tab.
+Phiên bản hiện tại thêm `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, input/output có kiểu, manifest dự án và AAPS Studio ba tab.
 
 ## Nội dung
 

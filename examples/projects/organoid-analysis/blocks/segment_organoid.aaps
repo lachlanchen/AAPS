@@ -1,0 +1,47 @@
+pipeline "Segment Organoid Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  tags "block, segmentation, organoid"
+  artifact_dir "artifacts/segmentation"
+  database "runs/organoid-aaps-runs.jsonl"
+  goal "Route microscopy segmentation to the safest available method."
+  input image_path: image required = "{{image_path}}"
+  input qc_report: json required = "{{qc_report}}"
+  output mask_path: image = "artifacts/segmentation/{{sample_id}}.mask.png"
+  output overlay_path: image = "artifacts/segmentation/{{sample_id}}.overlay.png"
+  output segmentation_report: json = "artifacts/segmentation/{{sample_id}}.segmentation.json"
+
+  skill segment_organoid {
+    input image_path: image required
+    input qc_report: json required
+    output mask_path: image
+    output overlay_path: image
+    output segmentation_report: json
+    choose method_router {
+      prompt "Choose thresholding, Cellpose, SAM/SAM2, or a vision mask model from QC and morphology."
+      output selected_method: json
+    }
+    if "qc_report.density_level == 'high'" {
+      method instance_segmentation {
+        tool "cellpose, sam2"
+        run "python tools/segment_instance.py --image {{image_path}} --out {{mask_path}}"
+        validate "Mask is non-empty and separates touching organoids."
+        recover "Fallback to watershed-assisted thresholding and request review."
+      }
+    }
+    else {
+      method threshold_or_vision {
+        tool "scikit-image, opencv, vision-mask"
+        run "python tools/segment_threshold.py --image {{image_path}} --out {{mask_path}}"
+        validate "Mask area and object count are plausible for QC density."
+        recover "Escalate to vision-mask model if thresholding confidence is low."
+      }
+    }
+    stage overlay {
+      artifact overlay_path: image = "artifacts/segmentation/{{sample_id}}.overlay.png"
+      validate "Overlay file exists and aligns with source image dimensions."
+      review "Approve overlay when segmentation confidence is low or fallback was used."
+    }
+  }
+}
