@@ -27,7 +27,13 @@
       (text.startsWith('"') && text.endsWith('"')) ||
       (text.startsWith("'") && text.endsWith("'"))
     ) {
-      return text.slice(1, -1);
+      return text
+        .slice(1, -1)
+        .replace(/\\n/g, "\n")
+        .replace(/\\t/g, "\t")
+        .replace(/\\"/g, '"')
+        .replace(/\\'/g, "'")
+        .replace(/\\\\/g, "\\");
     }
     return text;
   }
@@ -108,9 +114,20 @@
       logPath: "",
       requiredTools: [],
       requiredModels: [],
+      requiredAgents: [],
       requiredCommands: [],
       requiredFiles: [],
       requiredPythonPackages: [],
+      requiredNodePackages: [],
+      environment: {
+        python: "",
+        requirements: [],
+        commands: [],
+        nodePackages: [],
+        files: [],
+        env: {},
+        setup: [],
+      },
       executionMode: "",
       safety: {},
       includes: [],
@@ -143,6 +160,29 @@
       model: "",
       role: "",
       tools: [],
+      requirements: {
+        tools: [],
+        models: [],
+        agents: [],
+        commands: [],
+        files: [],
+        pythonPackages: [],
+        nodePackages: [],
+      },
+      environment: {
+        python: "",
+        requirements: [],
+        commands: [],
+        nodePackages: [],
+        files: [],
+        env: {},
+        setup: [],
+      },
+      compile: {
+        agent: "",
+        prompt: "",
+        onMissing: "prompt",
+      },
       prompt: "",
       condition: "",
       iterator: null,
@@ -164,6 +204,7 @@
       calls: [],
       run: [],
       verify: [],
+      tests: [],
       notes: [],
       children: [],
       ...(extra || {}),
@@ -210,6 +251,56 @@
       return;
     }
     parent.children.push(node);
+  }
+
+  function addRequirement(target, key, values) {
+    const list = Array.isArray(values) ? values : parseList(values);
+    if (!list.length) return;
+    const pipelineMap = {
+      tools: "requiredTools",
+      models: "requiredModels",
+      agents: "requiredAgents",
+      commands: "requiredCommands",
+      files: "requiredFiles",
+      pythonPackages: "requiredPythonPackages",
+      nodePackages: "requiredNodePackages",
+    };
+    if (target.inputPorts || target.outputPorts) {
+      const field = pipelineMap[key];
+      target[field] = uniqueList([...(target[field] || []), ...list]);
+      return;
+    }
+    target.requirements = target.requirements || {};
+    target.requirements[key] = uniqueList([...(target.requirements[key] || []), ...list]);
+  }
+
+  function addEnvironmentValue(target, key, value) {
+    target.environment = target.environment || {
+      python: "",
+      requirements: [],
+      commands: [],
+      nodePackages: [],
+      files: [],
+      env: {},
+      setup: [],
+    };
+    const normalized = String(key || "").trim();
+    const text = unquote(value);
+    if (normalized === "python" || normalized === "python_path" || normalized === "interpreter") {
+      target.environment.python = text;
+    } else if (["requirement", "requirements", "python_package", "python_packages"].includes(normalized)) {
+      target.environment.requirements = uniqueList([...(target.environment.requirements || []), ...parseList(text)]);
+    } else if (["command", "commands", "system_command", "system_commands"].includes(normalized)) {
+      target.environment.commands = uniqueList([...(target.environment.commands || []), ...parseList(text)]);
+    } else if (["node_package", "node_packages"].includes(normalized)) {
+      target.environment.nodePackages = uniqueList([...(target.environment.nodePackages || []), ...parseList(text)]);
+    } else if (["file", "files"].includes(normalized)) {
+      target.environment.files = uniqueList([...(target.environment.files || []), ...parseList(text)]);
+    } else if (normalized === "setup" || normalized === "setup_command") {
+      target.environment.setup = uniqueList([...(target.environment.setup || []), text]);
+    } else {
+      target.environment.env = { ...(target.environment.env || {}), [normalized]: text };
+    }
   }
 
   function nearest(stack, predicate) {
@@ -330,7 +421,7 @@
         return;
       }
 
-      match = line.match(/^(prompt|description)\s+(.+)$/i);
+      match = line.match(/^(prompt|description|purpose)\s+(.+)$/i);
       if (match) {
         target.prompt = unquote(match[2]);
         return;
@@ -397,21 +488,43 @@
         return;
       }
 
-      match = line.match(/^(requires_tools|requires_models)\s+(.+)$/i);
-      if (match && target === ir.pipeline) {
-        const key = match[1].toLowerCase() === "requires_tools" ? "requiredTools" : "requiredModels";
-        ir.pipeline[key] = parseList(unquote(match[2]));
+      match = line.match(/^(requires_tools|requires_models|requires_agents|requires_commands|requires_files|requires_python_packages|requires_node_packages)\s+(.+)$/i);
+      if (match) {
+        const map = {
+          requires_tools: "tools",
+          requires_models: "models",
+          requires_agents: "agents",
+          requires_commands: "commands",
+          requires_files: "files",
+          requires_python_packages: "pythonPackages",
+          requires_node_packages: "nodePackages",
+        };
+        addRequirement(target, map[match[1].toLowerCase()], unquote(match[2]));
         return;
       }
 
-      match = line.match(/^(requires_commands|requires_files|requires_python_packages)\s+(.+)$/i);
-      if (match && target === ir.pipeline) {
+      match = line.match(/^(python_package|node_package|system_command|required_file|required_tool|required_agent)\s+(.+)$/i);
+      if (match) {
         const map = {
-          requires_commands: "requiredCommands",
-          requires_files: "requiredFiles",
-          requires_python_packages: "requiredPythonPackages",
+          python_package: "pythonPackages",
+          node_package: "nodePackages",
+          system_command: "commands",
+          required_file: "files",
+          required_tool: "tools",
+          required_agent: "agents",
         };
-        ir.pipeline[map[match[1].toLowerCase()]] = parseList(unquote(match[2]));
+        addRequirement(target, map[match[1].toLowerCase()], unquote(match[2]));
+        return;
+      }
+
+      match = line.match(/^(environment|env)\s+(.+)$/i);
+      if (match) {
+        const kv = parseKeyValue(match[2]);
+        if (!kv) {
+          diagnostic(lineNumber, `${match[1]} must use name = value.`);
+          return;
+        }
+        addEnvironmentValue(target, kv.key, kv.value);
         return;
       }
 
@@ -465,7 +578,7 @@
       if (match && target !== ir.pipeline) {
         const type = match[2].toLowerCase();
         const value = unquote(match[3] || "");
-        const commandTypes = new Set(["shell", "sh", "bash", "node_script", "npm_script", "manual", "noop", "internal"]);
+        const commandTypes = new Set(["shell", "sh", "bash", "node_script", "npm_script", "manual", "noop", "internal", "agent"]);
         target.exec.push({
           type,
           command: commandTypes.has(type) ? value : "",
@@ -496,6 +609,36 @@
       match = line.match(/^fallback\s+(.+)$/i);
       if (match && target !== ir.pipeline) {
         target.fallback = unquote(match[1]);
+        return;
+      }
+
+      match = line.match(/^compile_agent\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.compile = target.compile || {};
+        target.compile.agent = unquote(match[1]);
+        addRequirement(target, "agents", target.compile.agent);
+        return;
+      }
+
+      match = line.match(/^compile_prompt\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.compile = target.compile || {};
+        target.compile.prompt = unquote(match[1]);
+        return;
+      }
+
+      match = line.match(/^compile_on_missing\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.compile = target.compile || {};
+        target.compile.onMissing = unquote(match[1]);
+        return;
+      }
+
+      match = line.match(/^test\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        const kv = parseKeyValue(match[1]);
+        if (kv) target.tests.push({ key: kv.key, value: kv.value });
+        else target.tests.push({ key: "note", value: unquote(match[1]) });
         return;
       }
 
@@ -646,6 +789,25 @@
     if (node.model) lines.push(`${childIndent}model ${quote(node.model)}`);
     if (node.tools && node.tools.length) lines.push(`${childIndent}tools ${quote(node.tools.join(", "))}`);
     if (node.agent) lines.push(`${childIndent}uses ${node.agent}`);
+    const requirements = node.requirements || {};
+    if (requirements.tools && requirements.tools.length) lines.push(`${childIndent}requires_tools ${quote(requirements.tools.join(", "))}`);
+    if (requirements.models && requirements.models.length) lines.push(`${childIndent}requires_models ${quote(requirements.models.join(", "))}`);
+    if (requirements.agents && requirements.agents.length) lines.push(`${childIndent}requires_agents ${quote(requirements.agents.join(", "))}`);
+    if (requirements.commands && requirements.commands.length) lines.push(`${childIndent}requires_commands ${quote(requirements.commands.join(", "))}`);
+    if (requirements.files && requirements.files.length) lines.push(`${childIndent}requires_files ${quote(requirements.files.join(", "))}`);
+    if (requirements.pythonPackages && requirements.pythonPackages.length) lines.push(`${childIndent}requires_python_packages ${quote(requirements.pythonPackages.join(", "))}`);
+    if (requirements.nodePackages && requirements.nodePackages.length) lines.push(`${childIndent}requires_node_packages ${quote(requirements.nodePackages.join(", "))}`);
+    const environment = node.environment || {};
+    if (environment.python) lines.push(`${childIndent}environment python = ${quote(environment.python)}`);
+    if (environment.requirements && environment.requirements.length) lines.push(`${childIndent}environment requirements = ${quote(environment.requirements.join(", "))}`);
+    if (environment.commands && environment.commands.length) lines.push(`${childIndent}environment commands = ${quote(environment.commands.join(", "))}`);
+    if (environment.nodePackages && environment.nodePackages.length) lines.push(`${childIndent}environment node_packages = ${quote(environment.nodePackages.join(", "))}`);
+    if (environment.files && environment.files.length) lines.push(`${childIndent}environment files = ${quote(environment.files.join(", "))}`);
+    (environment.setup || []).forEach((command) => lines.push(`${childIndent}environment setup = ${quote(command)}`));
+    Object.entries(environment.env || {}).forEach(([key, value]) => lines.push(`${childIndent}env ${key} = ${quote(value)}`));
+    if (node.compile && node.compile.agent) lines.push(`${childIndent}compile_agent ${quote(node.compile.agent)}`);
+    if (node.compile && node.compile.prompt) lines.push(`${childIndent}compile_prompt ${quote(node.compile.prompt)}`);
+    if (node.compile && node.compile.onMissing && node.compile.onMissing !== "prompt") lines.push(`${childIndent}compile_on_missing ${quote(node.compile.onMissing)}`);
     lines.push(...serializePorts(node, childIndent));
     (node.artifacts || []).forEach((artifact) => lines.push(`${childIndent}artifact ${artifact.name}: ${artifact.type || "artifact"}${artifact.value ? ` = ${quote(artifact.value)}` : ""}${artifact.validation ? ` validate ${quote(artifact.validation)}` : ""}`));
     (node.exec || []).forEach((step) => {
@@ -676,6 +838,7 @@
     if (node.repair) lines.push(`${childIndent}repair true`);
     if (node.fallback) lines.push(`${childIndent}fallback ${quote(node.fallback)}`);
     (node.reviews || []).forEach((review) => lines.push(`${childIndent}review ${quote(review)}`));
+    (node.tests || []).forEach((test) => lines.push(`${childIndent}test ${test.key} = ${quote(test.value)}`));
     (node.notes || []).forEach((note) => lines.push(`${childIndent}note ${quote(note)}`));
     (node.children || []).forEach((child) => {
       lines.push("");
@@ -701,9 +864,19 @@
       .forEach((item) => lines.push(`  import ${item.kind || "block"} ${quote(item.path)}${item.as ? ` as ${item.as}` : ""}`));
     if (pipeline.requiredTools && pipeline.requiredTools.length) lines.push(`  requires_tools ${quote(pipeline.requiredTools.join(", "))}`);
     if (pipeline.requiredModels && pipeline.requiredModels.length) lines.push(`  requires_models ${quote(pipeline.requiredModels.join(", "))}`);
+    if (pipeline.requiredAgents && pipeline.requiredAgents.length) lines.push(`  requires_agents ${quote(pipeline.requiredAgents.join(", "))}`);
     if (pipeline.requiredCommands && pipeline.requiredCommands.length) lines.push(`  requires_commands ${quote(pipeline.requiredCommands.join(", "))}`);
     if (pipeline.requiredFiles && pipeline.requiredFiles.length) lines.push(`  requires_files ${quote(pipeline.requiredFiles.join(", "))}`);
     if (pipeline.requiredPythonPackages && pipeline.requiredPythonPackages.length) lines.push(`  requires_python_packages ${quote(pipeline.requiredPythonPackages.join(", "))}`);
+    if (pipeline.requiredNodePackages && pipeline.requiredNodePackages.length) lines.push(`  requires_node_packages ${quote(pipeline.requiredNodePackages.join(", "))}`);
+    const pipelineEnvironment = pipeline.environment || {};
+    if (pipelineEnvironment.python) lines.push(`  environment python = ${quote(pipelineEnvironment.python)}`);
+    if (pipelineEnvironment.requirements && pipelineEnvironment.requirements.length) lines.push(`  environment requirements = ${quote(pipelineEnvironment.requirements.join(", "))}`);
+    if (pipelineEnvironment.commands && pipelineEnvironment.commands.length) lines.push(`  environment commands = ${quote(pipelineEnvironment.commands.join(", "))}`);
+    if (pipelineEnvironment.nodePackages && pipelineEnvironment.nodePackages.length) lines.push(`  environment node_packages = ${quote(pipelineEnvironment.nodePackages.join(", "))}`);
+    if (pipelineEnvironment.files && pipelineEnvironment.files.length) lines.push(`  environment files = ${quote(pipelineEnvironment.files.join(", "))}`);
+    (pipelineEnvironment.setup || []).forEach((command) => lines.push(`  environment setup = ${quote(command)}`));
+    Object.entries(pipelineEnvironment.env || {}).forEach(([key, value]) => lines.push(`  env ${key} = ${quote(value)}`));
     if (pipeline.artifactDir) lines.push(`  artifact_dir ${quote(pipeline.artifactDir)}`);
     if (pipeline.databasePath) lines.push(`  database ${quote(pipeline.databasePath)}`);
     if (pipeline.logPath) lines.push(`  log_path ${quote(pipeline.logPath)}`);
@@ -741,6 +914,11 @@
     if (node.inputs && node.inputs.length) lines.push(`${prefix}  - Inputs: ${node.inputs.map((port) => `${port.name}:${port.type}`).join(", ")}`);
     if (node.outputs && node.outputs.length) lines.push(`${prefix}  - Outputs: ${node.outputs.map((port) => `${port.name}:${port.type}`).join(", ")}`);
     if (node.artifacts && node.artifacts.length) lines.push(`${prefix}  - Artifacts: ${node.artifacts.map((artifact) => artifact.name).join(", ")}`);
+    if (node.environment && node.environment.python) lines.push(`${prefix}  - Python: ${node.environment.python}`);
+    if (node.requirements && node.requirements.commands && node.requirements.commands.length) lines.push(`${prefix}  - Commands: ${node.requirements.commands.join(", ")}`);
+    if (node.requirements && node.requirements.tools && node.requirements.tools.length) lines.push(`${prefix}  - Tools: ${node.requirements.tools.join(", ")}`);
+    if (node.requirements && node.requirements.agents && node.requirements.agents.length) lines.push(`${prefix}  - Agents: ${node.requirements.agents.join(", ")}`);
+    if (node.compile && node.compile.agent) lines.push(`${prefix}  - Compile agent: ${node.compile.agent}`);
     (node.calls || []).forEach((call) => lines.push(`${prefix}  - Calls: ${call.skill}${call.as ? ` as ${call.as}` : ""}`));
     (node.exec || []).forEach((step) => lines.push(`${prefix}  - Exec: ${step.type} ${step.command || step.entry}`));
     (node.run || []).forEach((command) => lines.push(`${prefix}  - Run: \`${command}\``));
@@ -837,6 +1015,40 @@
       }));
   }
 
+  function nodeRequirements(node, pipeline) {
+    const local = node.requirements || {};
+    const environment = node.environment || {};
+    return {
+      tools: uniqueList([...(node.tools || []), ...(local.tools || [])]),
+      models: uniqueList([...(local.models || [])]),
+      agents: uniqueList([...(node.agent ? [node.agent] : []), ...(local.agents || []), ...(node.compile && node.compile.agent ? [node.compile.agent] : [])]),
+      commands: uniqueList([...(local.commands || []), ...(environment.commands || [])]),
+      files: uniqueList([...(local.files || []), ...(environment.files || [])]),
+      pythonPackages: uniqueList([...(local.pythonPackages || []), ...(environment.requirements || [])]),
+      nodePackages: uniqueList([...(local.nodePackages || []), ...(environment.nodePackages || [])]),
+      pipelineTools: uniqueList(pipeline.requiredTools || []),
+      pipelineModels: uniqueList(pipeline.requiredModels || []),
+      pipelineAgents: uniqueList(pipeline.requiredAgents || []),
+    };
+  }
+
+  function blockContract(node, pipeline) {
+    return {
+      inputs: node.inputs || [],
+      outputs: node.outputs || [],
+      parameters: node.params || {},
+      environment: node.environment || {},
+      requirements: nodeRequirements(node, pipeline),
+      tools: uniqueList(node.tools || []),
+      agent: node.agent || "",
+      scripts: (node.exec || []).map((step) => step.entry).filter(Boolean),
+      actions: nodeActions(node),
+      validation: node.validations || [],
+      recovery: node.recovery || [],
+      tests: node.tests || [],
+    };
+  }
+
   function indexDefinitions(pipeline) {
     const definitions = new Map();
     function walk(node) {
@@ -879,6 +1091,11 @@
         condition: node.condition || "",
         iterator: node.iterator || null,
         agent: node.agent || "",
+        tools: uniqueList(node.tools || []),
+        requirements: nodeRequirements(node, pipeline),
+        environment: node.environment || {},
+        compile: node.compile || {},
+        contract: blockContract(node, pipeline),
         sourceFile: node.sourceFile || pipeline.sourceFile || "",
         actions,
         executable: actions.length > 0,
@@ -895,6 +1112,7 @@
         repair: Boolean(node.repair),
         fallback: node.fallback || "",
         calls: node.calls || [],
+        tests: node.tests || [],
       };
       if (
         step.executable ||
@@ -937,6 +1155,16 @@
       logPath: pipeline.logPath || "",
       inputs: pipeline.inputPorts || [],
       outputs: pipeline.outputPorts || [],
+      requirements: {
+        tools: pipeline.requiredTools || [],
+        models: pipeline.requiredModels || [],
+        agents: pipeline.requiredAgents || [],
+        commands: pipeline.requiredCommands || [],
+        files: pipeline.requiredFiles || [],
+        pythonPackages: pipeline.requiredPythonPackages || [],
+        nodePackages: pipeline.requiredNodePackages || [],
+      },
+      environment: pipeline.environment || {},
       includes: pipeline.includes || [],
       imports: pipeline.imports || [],
       project: options.project || ir.project || null,
@@ -948,6 +1176,44 @@
       executableSteps: steps.filter((step) => step.executable).length,
       promptOnlySteps: steps.filter((step) => step.promptOnly).length,
     };
+  }
+
+  function buildAgentCompilePlan(plan, readiness = {}) {
+    const records = Array.isArray(readiness.blocks) ? readiness.blocks : [];
+    const byPath = new Map(records.map((record) => [record.path, record]));
+    const requests = [];
+    (plan.steps || []).forEach((step) => {
+      const record = byPath.get(step.path);
+      const missing = record ? (record.checks || []).filter((check) => !check.ok) : [];
+      const compileAgent = (step.compile && step.compile.agent) || step.agent || "codex_repair_agent";
+      const relevant = missing.filter((check) =>
+        ["script", "file", "tool", "agent", "python_package", "node_package", "command", "input"].includes(check.kind)
+      );
+      if (!relevant.length) return;
+      requests.push({
+        step: step.path,
+        block: step.id,
+        agent: compileAgent,
+        status: "prompt_required",
+        missing: relevant,
+        prompt: [
+          `You are ${compileAgent}. Prepare a safe compile/setup plan for AAPS block ${step.id}.`,
+          "",
+          `Block path: ${step.path}`,
+          `Source file: ${step.sourceFile || ""}`,
+          "",
+          "Missing requirements:",
+          ...relevant.map((item) => `- ${item.kind}: ${item.name || item.path || item.message}`),
+          "",
+          "Block contract:",
+          JSON.stringify(step.contract || {}, null, 2),
+          "",
+          "Rules: prefer project-local files, do not delete user data, do not install globally, and ask the user before risky setup.",
+          step.compile && step.compile.prompt ? `\nUser compile instruction: ${step.compile.prompt}` : "",
+        ].join("\n"),
+      });
+    });
+    return { version: "aaps_compile_plan/0.1", requests };
   }
 
   const samples = {
@@ -1136,6 +1402,9 @@
         modules: "modules",
         subworkflows: "subworkflows",
         workflows: "workflows",
+        environments: "environments",
+        tools: "tools",
+        agents: "agents",
         drafts: "drafts",
         archives: "archive",
         data: "data",
@@ -1150,6 +1419,15 @@
       variables: {},
       tools: [],
       models: [],
+      agents: [],
+      environment: {
+        python: "",
+        requirements: [],
+        commands: [],
+        nodePackages: [],
+        env: {},
+        setup: [],
+      },
       notes: [],
       files: {
         blocks: [],
@@ -1189,6 +1467,15 @@
       variables: { ...(manifest.variables || {}) },
       tools: uniqueList(manifest.tools || []),
       models: uniqueList(manifest.models || []),
+      agents: uniqueList(manifest.agents || []),
+      environment: {
+        python: (manifest.environment && manifest.environment.python) || "",
+        requirements: uniqueList((manifest.environment && manifest.environment.requirements) || []),
+        commands: uniqueList((manifest.environment && manifest.environment.commands) || []),
+        nodePackages: uniqueList((manifest.environment && manifest.environment.nodePackages) || []),
+        env: { ...((manifest.environment && manifest.environment.env) || {}) },
+        setup: Array.isArray(manifest.environment && manifest.environment.setup) ? manifest.environment.setup.map(String) : [],
+      },
       notes: Array.isArray(manifest.notes) ? manifest.notes.map(String) : [],
       files: {},
     };
@@ -1269,6 +1556,9 @@
       `  ${paths.skills || "skills"}/`,
       `  ${paths.modules || "modules"}/`,
       `  ${paths.workflows || "workflows"}/`,
+      `  ${paths.environments || "environments"}/`,
+      `  ${paths.tools || "tools"}/`,
+      `  ${paths.agents || "agents"}/`,
       `  ${paths.data || "data"}/`,
       `  ${project.artifactRoot || "artifacts"}/`,
       `  ${paths.runs || "runs"}/`,
@@ -1426,6 +1716,7 @@
     serializeAAPS,
     toMarkdown,
     buildExecutionPlan,
+    buildAgentCompilePlan,
     createProjectManifest,
     normalizeProjectManifest,
     validateProjectManifest,

@@ -1,0 +1,23 @@
+pipeline "Prepare Inputs Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "biology"
+  tags "block, data, fixture"
+  input image_folder: folder required = "data/demo_images"
+  output image_folder: folder = "data/demo_images"
+
+  block prepare_inputs {
+    purpose "Generate standard-library PGM demo images when the folder is empty."
+    input image_folder: folder required = "data/demo_images"
+    output image_folder: folder = "data/demo_images"
+    environment python = "python3"
+    requires_commands "python3"
+    requires_files "scripts/generate_synthetic_images.py"
+    compile_agent "codex_repair_agent"
+    exec python_script "scripts/generate_synthetic_images.py"
+    arg output_dir = "${input.image_folder}"
+    arg count = "4"
+    validate exists "${output.image_folder}"
+    test sample_input = "data/demo_images"
+  }
+}

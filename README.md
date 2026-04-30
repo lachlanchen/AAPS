@@ -25,7 +25,7 @@ The public product site is `https://aaps.lazying.art`. The broader agent portal 
 ## What This Repo Contains
 
 - `aaps.project.json`: project manifest for this repository.
-- `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for parsing scripts, resolving imports, building plans, and validating projects.
+- `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for parsing scripts, resolving imports, building execution plans, producing agent compile prompts, and validating projects.
 - `studio/`: AAPS Studio, a three-tab PWA with Block Lab chat, project management, block inspector, block-level code chat, source editing, tree visualization, runtime controls, and IR preview.
 - `backend/`: local Codex wrapper and project filesystem server for `/api/aaps/project`, `/api/aaps/block/chat`, `/api/aaps/run`, `/api/aaps/edit`, and `/api/codex/*`.
 - `website/`: bright landing page deployed by GitHub Pages.
@@ -86,6 +86,9 @@ my-aaps-project/
   subworkflows/
   workflows/
   scripts/
+  environments/
+  tools/
+  agents/
   drafts/
   archive/
   data/
@@ -95,7 +98,7 @@ my-aaps-project/
   notes/
 ```
 
-The manifest records project metadata, default and active `.aaps` files, data folders, artifact root, run database, variables, tools, models, notes, and file categories. Workflows can declare dependencies with project-root relative imports/includes:
+The manifest records project metadata, default and active `.aaps` files, data folders, artifact root, run database, variables, tools, models, agents, environment settings, notes, and file categories. Workflows can declare dependencies with project-root relative imports/includes:
 
 ```aaps
 import block "blocks/qc_image.aaps" as qc_image
@@ -110,6 +113,7 @@ AAPS keeps a clean boundary between intent and execution:
 
 - Prompts can inspect, decide, and synthesize.
 - Blocks must declare typed inputs, outputs, commands, checks, and artifacts.
+- Functional block contracts can also declare environment requirements, tool/agent dependencies, executable actions, tests, validation, recovery, and compile-agent repair prompts.
 - Method selection belongs in `choose`, `if`, `else`, `method`, and `guard` blocks.
 - Failure handling belongs in `validate`, `recover`, and `review` statements.
 - Chat follows the LazyBlog pattern: it can reply and route, but source mutation happens through bounded edit actions that reparse and redraw the program.
@@ -123,6 +127,7 @@ For biology, this means segmentation is modeled as inspect image -> build priors
 - [examples/book_writing_pipeline.aaps](examples/book_writing_pipeline.aaps): outline, chapter drafting, consistency/style checks, revision, and export.
 - [examples/general_agentic_workflow.aaps](examples/general_agentic_workflow.aaps): domain-neutral loops, routing, validation, recovery, artifacts, and review.
 - [examples/projects/organoid-analysis/workflows/executable_organoid_demo.aaps](examples/projects/organoid-analysis/workflows/executable_organoid_demo.aaps): local standard-library Python demo that generates an image, runs QC, thresholds a mask, quantifies objects, and writes a report.
+- [examples/projects/organoid-analysis/workflows/executable_folder_segmentation.aaps](examples/projects/organoid-analysis/workflows/executable_folder_segmentation.aaps): local folder demo that generates demo images, loops over every PGM image, runs QC/segmentation/quantification, and writes a combined report.
 - [examples/projects/app-development/workflows/executable_static_check.aaps](examples/projects/app-development/workflows/executable_static_check.aaps): local static app-project checker.
 
 ## Quick Start
@@ -180,13 +185,15 @@ Run locally:
 ```bash
 node scripts/aaps.js parse examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js plan examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js check workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
 node scripts/aaps.js run examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js run-block workflows/executable_organoid_demo.aaps --project examples/projects/organoid-analysis --block qc_image --json
+node scripts/aaps.js run workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
 node scripts/aaps.js validate --project examples/projects/organoid-analysis --json
 node scripts/aaps.js run workflows/executable_static_check.aaps --project examples/projects/app-development --json
 ```
 
-Runs write `run.json`, `events.jsonl`, stdout/stderr logs, repair requests, and `report.md` under `runtime/aaps-runs/<run-id>/`. See [docs/runtime.md](docs/runtime.md).
+Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, `agent_compile_plan.json`, stdout/stderr logs, repair/setup prompts, artifacts, and `report.md` under the run directory. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
 
 ## Codex Wrapper
 

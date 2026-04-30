@@ -47,6 +47,123 @@ function readManifest(projectDir) {
   return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 }
 
+function readJsonIfExists(file) {
+  if (!fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function loadRegistries(projectDir, manifest) {
+  const paths = (manifest && manifest.paths) || {};
+  const toolFile = path.join(projectDir, paths.tools || "tools", "tool_registry.json");
+  const agentFile = path.join(projectDir, paths.agents || "agents", "agent_registry.json");
+  const envFile = path.join(projectDir, paths.environments || "environments", "aaps_environment.json");
+  const toolsRaw = readJsonIfExists(toolFile) || {};
+  const agentsRaw = readJsonIfExists(agentFile) || {};
+  const envRaw = readJsonIfExists(envFile) || {};
+  const tools = {};
+  const agents = {};
+  function addTool(item) {
+    if (!item) return;
+    if (typeof item === "string") {
+      tools[item] = tools[item] || { name: item, type: "command", command: item };
+    } else if (item.name) {
+      tools[item.name] = { ...(tools[item.name] || {}), ...item };
+    }
+  }
+  function addAgent(item) {
+    if (!item) return;
+    if (typeof item === "string") {
+      agents[item] = agents[item] || { name: item, invocation: "prompt" };
+    } else if (item.name) {
+      agents[item.name] = { ...(agents[item.name] || {}), ...item };
+    }
+  }
+  (Array.isArray(toolsRaw.tools) ? toolsRaw.tools : Array.isArray(toolsRaw) ? toolsRaw : Object.values(toolsRaw)).forEach(addTool);
+  (Array.isArray(agentsRaw.agents) ? agentsRaw.agents : Array.isArray(agentsRaw) ? agentsRaw : Object.values(agentsRaw)).forEach(addAgent);
+  ((manifest && manifest.tools) || []).forEach(addTool);
+  ((manifest && manifest.agents) || []).forEach(addAgent);
+  return {
+    tools,
+    agents,
+    environment: { ...((manifest && manifest.environment) || {}), ...envRaw },
+    files: {
+      tools: fs.existsSync(toolFile) ? path.relative(projectDir, toolFile).split(path.sep).join("/") : "",
+      agents: fs.existsSync(agentFile) ? path.relative(projectDir, agentFile).split(path.sep).join("/") : "",
+      environment: fs.existsSync(envFile) ? path.relative(projectDir, envFile).split(path.sep).join("/") : "",
+    },
+  };
+}
+
+function commandExists(command, cwd) {
+  if (!command) return false;
+  const result = spawnSync("sh", ["-lc", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], { cwd });
+  return result.status === 0;
+}
+
+function pythonPackageExists(pkg, python, cwd) {
+  const packageName = String(pkg || "").split(/[<>=!~]/)[0].trim();
+  const aliases = {
+    "opencv-python": "cv2",
+    "scikit-image": "skimage",
+    "pillow": "PIL",
+    "pyyaml": "yaml",
+  };
+  const module = aliases[packageName] || packageName.replace(/-/g, "_");
+  if (!module) return true;
+  const result = spawnSync(python || "python3", ["-c", `import ${module}`], {
+    cwd,
+    encoding: "utf8",
+  });
+  return result.status === 0;
+}
+
+function globToRegex(pattern) {
+  const escaped = String(pattern || "*")
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "<<<GLOBSTAR>>>")
+    .replace(/\*/g, "[^/]*")
+    .replace(/<<<GLOBSTAR>>>/g, ".*");
+  return new RegExp(`^${escaped}$`);
+}
+
+function walkFiles(root) {
+  const out = [];
+  if (!fs.existsSync(root)) return out;
+  function walk(current) {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out.push(full);
+    }
+  }
+  if (fs.statSync(root).isDirectory()) walk(root);
+  else out.push(root);
+  return out;
+}
+
+function listFiles(projectDir, folderOrPattern, pattern = "") {
+  const normalized = String(folderOrPattern || "").replace(/\\/g, "/").replace(/^["']|["']$/g, "");
+  if (!normalized) return [];
+  const hasGlob = /[*?]/.test(normalized);
+  const imageExtensions = new Set([".pgm", ".png", ".jpg", ".jpeg", ".tif", ".tiff"]);
+  if (hasGlob) {
+    const basePart = normalized.split(/[*?]/)[0].replace(/[/\\][^/\\]*$/, "");
+    const base = basePart ? safeRelative(projectDir, basePart, "glob base") : projectDir;
+    const regex = globToRegex(normalized);
+    return walkFiles(base)
+      .map((file) => path.relative(projectDir, file).split(path.sep).join("/"))
+      .filter((file) => regex.test(file))
+      .sort();
+  }
+  const folder = safeRelative(projectDir, normalized, "iterator folder");
+  const files = walkFiles(folder).map((file) => path.relative(projectDir, file).split(path.sep).join("/"));
+  if (pattern) {
+    const regex = globToRegex(pattern);
+    return files.filter((file) => regex.test(path.basename(file))).sort();
+  }
+  return files.filter((file) => imageExtensions.has(path.extname(file).toLowerCase())).sort();
+}
+
 function collectAapsFiles(projectDir) {
   const files = {};
   const skip = new Set([".git", ".aaps-work", "node_modules", "vendor", "runtime"]);
@@ -98,13 +215,16 @@ function appendJsonl(file, value) {
   fs.appendFileSync(file, `${JSON.stringify(value)}\n`, "utf8");
 }
 
-function contextFrom(ir, manifest, runId, projectDir, runDir) {
+function contextFrom(ir, manifest, runId, projectDir, runDir, registries = {}) {
   const pipeline = ir.pipeline || {};
   const variables = (manifest && manifest.variables) || {};
   const artifactRoot = pipeline.artifactDir || (manifest && manifest.artifactRoot) || "artifacts";
   const dataRoot = manifest && manifest.paths && manifest.paths.data ? manifest.paths.data : "data";
   const scriptsRoot = manifest && manifest.paths && manifest.paths.scripts ? manifest.paths.scripts : "scripts";
   const logsRoot = manifest && manifest.paths && manifest.paths.runs ? manifest.paths.runs : "runs";
+  const environmentsRoot = manifest && manifest.paths && manifest.paths.environments ? manifest.paths.environments : "environments";
+  const toolsRoot = manifest && manifest.paths && manifest.paths.tools ? manifest.paths.tools : "tools";
+  const agentsRoot = manifest && manifest.paths && manifest.paths.agents ? manifest.paths.agents : "agents";
   const context = {
     ...variables,
     run_id: runId,
@@ -117,12 +237,24 @@ function contextFrom(ir, manifest, runId, projectDir, runDir) {
     "project.data": dataRoot,
     "project.artifacts": artifactRoot,
     "project.scripts": scriptsRoot,
+    "project.environments": environmentsRoot,
+    "project.tools": toolsRoot,
+    "project.agents": agentsRoot,
     "project.runs": logsRoot,
     "run.id": runId,
     "run.dir": runDir,
     "run.artifacts": path.join(runDir, "artifacts"),
     "run.logs": path.join(runDir, "block_logs"),
   };
+  Object.entries(registries.tools || {}).forEach(([name, tool]) => {
+    if (tool.path) context[`tool.${name}.path`] = tool.path;
+    if (tool.command) context[`tool.${name}.command`] = tool.command;
+    context[`tool.${name}.name`] = name;
+  });
+  Object.entries(registries.agents || {}).forEach(([name, agent]) => {
+    context[`agent.${name}.name`] = name;
+    if (agent.invocation) context[`agent.${name}.invocation`] = agent.invocation;
+  });
   (pipeline.inputPorts || []).forEach((port) => {
     context[port.name] = port.value || "";
     context[`input.${port.name}`] = port.value || "";
@@ -159,6 +291,10 @@ function unresolvedVariables(value, context) {
   return [...new Set(missing)];
 }
 
+function unescapeRuntimeString(value) {
+  return String(value || "").replace(/\\"/g, '"').replace(/\\'/g, "'");
+}
+
 function resolveRuntimePath(projectDir, value, context) {
   const expanded = expand(value, context);
   if (path.isAbsolute(expanded)) return expanded;
@@ -171,6 +307,8 @@ function parseValidation(raw) {
   if (match) return { kind: "exists", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
   match = text.match(/^nonempty\s+(.+)$/i);
   if (match) return { kind: "nonempty", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
+  match = text.match(/^mask_not_empty\s+(.+)$/i);
+  if (match) return { kind: "mask_not_empty", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
   match = text.match(/^(?:json|valid_json)\s+(.+)$/i);
   if (match) return { kind: "json", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
   return { kind: "manual", text };
@@ -197,10 +335,26 @@ function checkValidation(rule, projectDir, context) {
       return { ok: false, status: "failed", rule, path: target, message: error.message };
     }
   }
+  if (parsed.kind === "mask_not_empty") {
+    try {
+      const text = fs.readFileSync(target, "utf8");
+      const tokens = text
+        .split(/\s+/)
+        .filter((token) => token && !token.startsWith("#"));
+      const numeric = tokens.slice(4).map(Number).filter((value) => Number.isFinite(value));
+      const ok = numeric.some((value) => value > 0);
+      return { ok, status: ok ? "passed" : "failed", rule, path: target };
+    } catch (error) {
+      return { ok: false, status: "failed", rule, path: target, message: error.message };
+    }
+  }
   return { ok: true, status: "manual", rule };
 }
 
 function shellAction(command, projectDir, timeoutMs, dryRun) {
+  if (unsafeShellCommand(command)) {
+    return { status: "failed", code: 126, stdout: "", stderr: "Unsafe shell command blocked by AAPS runtime policy.", command };
+  }
   if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command };
   const result = spawnSync(command, {
     cwd: projectDir,
@@ -219,17 +373,32 @@ function shellAction(command, projectDir, timeoutMs, dryRun) {
   };
 }
 
+function unsafeShellCommand(command) {
+  const text = String(command || "").trim().toLowerCase();
+  if (!text) return false;
+  return [
+    /\brm\s+-[a-z]*r[f]?\s+(\/|\*|~|\$home)/,
+    /\bsudo\s+rm\b/,
+    /\bmkfs\b/,
+    /\bshutdown\b/,
+    /\breboot\b/,
+    /\bdd\s+if=/,
+    /:\(\)\s*\{/,
+  ].some((pattern) => pattern.test(text));
+}
+
 function pythonAction(action, projectDir, context, timeoutMs, dryRun) {
   const entry = expand(action.entry || "", context);
   if (!entry) return { status: "failed", code: 1, stdout: "", stderr: "python exec requires an entry" };
   const entryPath = safeRelative(projectDir, entry, "python entry");
+  const python = expand(context["block.python"] || context["project.python"] || context["env.PYTHON"] || "python3", context);
   const args = [];
   Object.entries(action.args || {}).forEach(([key, value]) => {
     args.push(`--${key.replace(/_/g, "-")}`, expand(value, context));
   });
-  const command = `python3 ${entry} ${args.map((arg) => JSON.stringify(arg)).join(" ")}`;
+  const command = `${python} ${entry} ${args.map((arg) => JSON.stringify(arg)).join(" ")}`;
   if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command };
-  const result = spawnSync("python3", [entryPath, ...args], {
+  const result = spawnSync(python, [entryPath, ...args], {
     cwd: projectDir,
     encoding: "utf8",
     timeout: timeoutMs || undefined,
@@ -249,9 +418,10 @@ function pythonInlineAction(action, projectDir, context, timeoutMs, dryRun, runD
   const code = expand(action.code || "", context);
   if (!code.trim()) return { status: "failed", code: 1, stdout: "", stderr: "python_inline exec requires code" };
   const script = path.join(runDir, `${stepSlug}.inline.py`);
+  const python = expand(context["block.python"] || context["project.python"] || context["env.PYTHON"] || "python3", context);
   fs.writeFileSync(script, code, "utf8");
-  if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command: `python3 ${script}` };
-  const result = spawnSync("python3", [script], {
+  if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command: `${python} ${script}` };
+  const result = spawnSync(python, [script], {
     cwd: projectDir,
     encoding: "utf8",
     timeout: timeoutMs || undefined,
@@ -264,7 +434,7 @@ function pythonInlineAction(action, projectDir, context, timeoutMs, dryRun, runD
     signal: result.signal || "",
     stdout: result.stdout || "",
     stderr: result.stderr || result.error?.message || "",
-    command: `python3 ${script}`,
+    command: `${python} ${script}`,
   };
 }
 
@@ -330,6 +500,257 @@ function checkRequirements(ir, projectDir) {
   return checks;
 }
 
+function projectPython(manifest, registries) {
+  return (
+    (registries.environment && registries.environment.python) ||
+    (manifest && manifest.environment && manifest.environment.python) ||
+    "python3"
+  );
+}
+
+function checkTool(name, registries, projectDir) {
+  const tool = (registries.tools || {})[name];
+  if (!tool) return { kind: "tool", name, ok: false, message: "Tool is not registered." };
+  const checks = [];
+  if (tool.path) {
+    try {
+      const ok = fs.existsSync(safeRelative(projectDir, tool.path, "tool path"));
+      checks.push({ ok, message: ok ? `path found: ${tool.path}` : `path not found: ${tool.path}` });
+    } catch (error) {
+      checks.push({ ok: false, message: error.message });
+    }
+  }
+  if (tool.command) {
+    const ok = commandExists(tool.command, projectDir);
+    checks.push({ ok, message: ok ? `command found: ${tool.command}` : `command not found: ${tool.command}` });
+  }
+  if (checks.length) {
+    const ok = checks.every((check) => check.ok) || Boolean(tool.optional);
+    return {
+      kind: "tool",
+      name,
+      ok,
+      optional: Boolean(tool.optional),
+      message: checks.map((check) => check.message).join("; "),
+      tool,
+    };
+  }
+  return { kind: "tool", name, ok: true, message: "registered", tool };
+}
+
+function checkAgent(name, registries) {
+  if (!name) return { kind: "agent", name, ok: true };
+  const agent = (registries.agents || {})[name];
+  if (!agent) {
+    return {
+      kind: "agent",
+      name,
+      ok: false,
+      message: "Agent is not registered; AAPS can still prepare a prompt but cannot invoke it automatically.",
+    };
+  }
+  return { kind: "agent", name, ok: true, message: "registered", agent };
+}
+
+function checkBlockReadiness(step, projectDir, manifest, registries, baseContext) {
+  const checks = [];
+  const stepContext = {
+    ...baseContext,
+    "block.name": step.id || "",
+    "block.kind": step.kind || "",
+    "block.path": step.path || "",
+    "block.python": (step.environment && step.environment.python) || projectPython(manifest, registries),
+  };
+  function deferredCheck(kind, name, value, missing) {
+    return {
+      kind,
+      name,
+      path: value,
+      ok: true,
+      status: "deferred",
+      deferred: true,
+      missingVariables: missing,
+      message: "resolved during loop execution or by an earlier runtime artifact",
+    };
+  }
+  function isDeferredRuntimeValue(raw, missing) {
+    const text = String(raw || "");
+    if (missing.length && step.path.includes("for_each:")) return true;
+    if (missing.some((key) => key === "item" || key.startsWith("item.") || key.startsWith("loop."))) return true;
+    if (/\$\{\s*run\.artifacts\s*\}|\$\{\s*run\.dir\s*\}|\$\{\s*run\.logs\s*\}/.test(text)) return true;
+    return false;
+  }
+  (step.inputs || []).forEach((port) => {
+    const raw = port.value || stepContext[port.name] || "";
+    const missing = unresolvedVariables(raw, stepContext);
+    if (raw && isDeferredRuntimeValue(raw, missing)) {
+      checks.push(deferredCheck("input", port.name, raw, missing));
+      return;
+    }
+    const value = expand(raw, stepContext);
+    if (port.required && !value) {
+      checks.push({ kind: "input", name: port.name, ok: false, message: "required input has no value" });
+      return;
+    }
+    if (value && ["file", "image", "json", "csv", "table", "folder", "path"].includes(String(port.type || "").toLowerCase())) {
+      try {
+        const full = resolveRuntimePath(projectDir, value, stepContext);
+        const exists = fs.existsSync(full);
+        const wantsFolder = String(port.type || "").toLowerCase() === "folder";
+        checks.push({
+          kind: "input",
+          name: port.name,
+          path: value,
+          ok: !port.required || (exists && (!wantsFolder || fs.statSync(full).isDirectory())),
+          message: exists ? "input exists" : "input does not exist yet",
+        });
+      } catch (error) {
+        checks.push({ kind: "input", name: port.name, ok: false, message: error.message });
+      }
+    }
+  });
+  (step.outputs || []).forEach((port) => {
+    if (!port.value) return;
+    const missing = unresolvedVariables(port.value, stepContext);
+    if (isDeferredRuntimeValue(port.value, missing)) {
+      checks.push(deferredCheck("output", port.name, port.value, missing));
+      return;
+    }
+    try {
+      const full = resolveRuntimePath(projectDir, port.value, stepContext);
+      const parent = path.dirname(full);
+      checks.push({
+        kind: "output",
+        name: port.name,
+        path: port.value,
+        ok: fs.existsSync(parent) ? fs.statSync(parent).isDirectory() : true,
+        message: fs.existsSync(parent) ? "output directory ready" : "output directory will be created if needed",
+      });
+    } catch (error) {
+      checks.push({ kind: "output", name: port.name, ok: false, message: error.message });
+    }
+  });
+  (step.actions || []).forEach((action) => {
+    if (["python", "python_script", "node_script"].includes(action.type)) {
+      const entry = expand(action.entry || "", stepContext);
+      if (entry) {
+        try {
+          const full = safeRelative(projectDir, entry, "script");
+          checks.push({ kind: "script", name: entry, path: entry, ok: fs.existsSync(full), message: fs.existsSync(full) ? "script exists" : "script missing" });
+        } catch (error) {
+          checks.push({ kind: "script", name: entry, ok: false, message: error.message });
+        }
+      }
+    }
+    if (["shell", "sh", "bash"].includes(action.type)) {
+      const command = expand(action.command || "", stepContext).trim().split(/\s+/)[0];
+      if (command) checks.push({ kind: "command", name: command, ok: commandExists(command, projectDir), message: commandExists(command, projectDir) ? "command found" : "command missing" });
+    }
+    if (action.type === "agent") {
+      checks.push(checkAgent(action.command || action.entry || step.agent, registries));
+    }
+  });
+  const requirements = step.requirements || {};
+  const python = (step.environment && step.environment.python) || projectPython(manifest, registries);
+  if (step.actions.some((action) => ["python", "python_script", "python_inline"].includes(action.type)) || (requirements.commands || []).includes("python")) {
+    checks.push({ kind: "command", name: python, ok: commandExists(python, projectDir), message: commandExists(python, projectDir) ? "python found" : "python interpreter missing" });
+  }
+  (requirements.commands || []).forEach((command) => {
+    checks.push({ kind: "command", name: command, ok: commandExists(command, projectDir), message: commandExists(command, projectDir) ? "command found" : "command missing" });
+  });
+  (requirements.files || []).forEach((file) => {
+    try {
+      const full = safeRelative(projectDir, expand(unescapeRuntimeString(file), stepContext), "required file");
+      checks.push({ kind: "file", name: file, path: file, ok: fs.existsSync(full), message: fs.existsSync(full) ? "file exists" : "file missing" });
+    } catch (error) {
+      checks.push({ kind: "file", name: file, path: file, ok: false, message: error.message });
+    }
+  });
+  (requirements.pythonPackages || []).forEach((pkg) => {
+    checks.push({ kind: "python_package", name: pkg, ok: pythonPackageExists(pkg, python, projectDir), message: pythonPackageExists(pkg, python, projectDir) ? "package import ok" : "package missing" });
+  });
+  (requirements.nodePackages || []).forEach((pkg) => {
+    checks.push({ kind: "node_package", name: pkg, ok: fs.existsSync(path.join(projectDir, "node_modules", pkg)), message: "checked node_modules" });
+  });
+  (requirements.tools || []).forEach((tool) => checks.push(checkTool(tool, registries, projectDir)));
+  (requirements.agents || []).forEach((agent) => checks.push(checkAgent(agent, registries)));
+  if (step.agent) checks.push(checkAgent(step.agent, registries));
+
+  const failed = checks.filter((check) => !check.ok);
+  const warnings = checks.filter((check) => !check.ok && ["tool", "agent", "node_package"].includes(check.kind));
+  const status = failed.length
+    ? warnings.length === failed.length
+      ? "ready_with_warning"
+      : `missing_${failed[0].kind}`
+    : step.reviews && step.reviews.length && !step.executable
+      ? "waiting_for_human_review"
+      : "ready";
+  return {
+    id: step.id,
+    path: step.path,
+    kind: step.kind,
+    status,
+    ready: failed.length === 0 || warnings.length === failed.length,
+    checks,
+    suggestions: failed.map((check) => suggestionForCheck(check, projectDir, manifest, registries)),
+  };
+}
+
+function suggestionForCheck(check, projectDir, manifest, registries) {
+  const python = projectPython(manifest, registries);
+  if (check.kind === "python_package") {
+    return `${python} -m pip install ${check.name}`;
+  }
+  if (check.kind === "script") {
+    return `Ask the compile agent to create ${check.path || check.name} from the block contract.`;
+  }
+  if (check.kind === "tool") {
+    const tool = (registries.tools || {})[check.name] || {};
+    return tool.install || tool.setup || `Register or install tool ${check.name}.`;
+  }
+  if (check.kind === "agent") {
+    return `Add ${check.name} to agents/agent_registry.json or use compile_agent to prepare a prompt-only handoff.`;
+  }
+  if (check.kind === "command") {
+    return `Install command ${check.name} in the project environment.`;
+  }
+  return check.message || `Resolve ${check.kind} ${check.name || ""}`.trim();
+}
+
+function buildReadiness(plan, projectDir, manifest, registries, context) {
+  const blocks = (plan.steps || []).map((step) => checkBlockReadiness(step, projectDir, manifest, registries, context));
+  const failed = blocks.filter((block) => !block.ready);
+  return {
+    version: "aaps_readiness/0.1",
+    ok: failed.length === 0,
+    status: failed.length ? "failed_preflight" : "ready",
+    project: projectDir,
+    registryFiles: registries.files || {},
+    blocks,
+  };
+}
+
+function filterPlanByBlock(plan, block, includeAncestors = false) {
+  if (!block) return plan;
+  const matched = (plan.steps || []).filter((step) => step.id === block || step.path.includes(block));
+  const keep = new Set(matched.map((step) => step.path));
+  if (includeAncestors) {
+    matched.forEach((step) => {
+      const parts = String(step.path || "").split("/");
+      for (let index = 1; index < parts.length; index += 1) {
+        keep.add(parts.slice(0, index).join("/"));
+      }
+    });
+  }
+  const steps = (plan.steps || []).filter((step) => keep.has(step.path));
+  return {
+    ...plan,
+    steps,
+    executableSteps: steps.filter((step) => step.executable).length,
+    promptOnlySteps: steps.filter((step) => step.promptOnly).length,
+  };
+}
+
 function timeoutMs(step) {
   const raw = String(step.timeout || "").trim();
   if (!raw) return 0;
@@ -345,13 +766,12 @@ function timeoutMs(step) {
 function run(options) {
   const projectDir = path.resolve(options.project || ".");
   const manifest = readManifest(projectDir);
+  const registries = loadRegistries(projectDir, manifest);
   const loaded = loadSource(options, projectDir, manifest);
   const ir = parseLoaded(options, projectDir, manifest, loaded);
   let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
   if (options.block) {
-    plan = { ...plan, steps: plan.steps.filter((step) => step.id === options.block || step.path.includes(options.block)) };
-    plan.executableSteps = plan.steps.filter((step) => step.executable).length;
-    plan.promptOnlySteps = plan.steps.filter((step) => step.promptOnly).length;
+    plan = filterPlanByBlock(plan, options.block, true);
   }
   const runId = options.runId || `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const runRoot = path.resolve(options.runRoot || path.join(projectDir, "runtime", "runs"));
@@ -362,10 +782,30 @@ function run(options) {
   ensureDir(path.join(runDir, "reports"));
   ensureDir(path.join(runDir, "errors"));
   ensureDir(path.join(runDir, "repair_prompts"));
+  ensureDir(path.join(runDir, "setup_prompts"));
   writeJson(path.join(runDir, "resolved_workflow.json"), ir);
   writeJson(path.join(runDir, "execution_plan.json"), plan);
 
-  const context = contextFrom(ir, manifest, runId, projectDir, runDir);
+  const context = contextFrom(ir, manifest, runId, projectDir, runDir, registries);
+  context["project.python"] = projectPython(manifest, registries);
+  const readiness = buildReadiness(plan, projectDir, manifest, registries, context);
+  const compilePlan = AAPS.buildAgentCompilePlan(plan, readiness);
+  writeJson(path.join(runDir, "block_readiness.json"), readiness);
+  writeJson(path.join(runDir, "tool_resolution.json"), {
+    version: "aaps_tool_resolution/0.1",
+    tools: registries.tools,
+    agents: registries.agents,
+    environment: registries.environment,
+    registryFiles: registries.files,
+  });
+  writeJson(path.join(runDir, "agent_compile_plan.json"), compilePlan);
+  compilePlan.requests.forEach((request, index) => {
+    fs.writeFileSync(
+      path.join(runDir, "setup_prompts", `${String(index + 1).padStart(2, "0")}-${AAPS.slug(request.block || "block")}.md`),
+      request.prompt,
+      "utf8"
+    );
+  });
   const dryRun = Boolean(options.dryRun);
   const eventsFile = path.join(runDir, "events.jsonl");
   const results = [];
@@ -394,30 +834,35 @@ function run(options) {
     return file;
   }
 
-  function contextForStep(step) {
+  function contextForStep(step, overrides = {}) {
     const local = {
       ...context,
+      ...overrides,
       "block.name": step.id || "",
       "block.kind": step.kind || "",
       "block.path": step.path || "",
+      "block.python": (step.environment && step.environment.python) || context["project.python"] || "python3",
     };
     (step.inputs || []).forEach((port) => {
-      local[port.name] = port.value || local[port.name] || "";
-      local[`input.${port.name}`] = port.value || local[`input.${port.name}`] || "";
+      const value = port.value ? expand(port.value, local) : local[port.name] || "";
+      local[port.name] = value;
+      local[`input.${port.name}`] = value;
     });
     (step.outputs || []).forEach((port) => {
-      local[port.name] = port.value || local[port.name] || "";
-      local[`output.${port.name}`] = port.value || local[`output.${port.name}`] || "";
+      const value = port.value ? expand(port.value, local) : local[port.name] || "";
+      local[port.name] = value;
+      local[`output.${port.name}`] = value;
     });
     (step.artifacts || []).forEach((artifact) => {
-      local[`artifact.${artifact.name}`] = artifact.path || "";
+      local[`artifact.${artifact.name}`] = artifact.path ? expand(artifact.path, local) : "";
     });
     return local;
   }
 
-  function executeAction(step, action, attempt) {
-    const stepSlug = AAPS.slug(`${step.id}-${action.id}-${attempt}`, "step");
-    const stepContext = contextForStep(step);
+  function executeAction(step, action, attempt, overrides = {}) {
+    const loopSuffix = overrides["loop.index"] !== undefined ? `-${overrides["loop.index"]}` : "";
+    const stepSlug = AAPS.slug(`${step.id}${loopSuffix}-${action.id}-${attempt}`, "step");
+    const stepContext = contextForStep(step, overrides);
     const expandedCommand = expand(action.command || "", stepContext);
     const missingVariables = [
       ...unresolvedVariables(action.command || "", stepContext),
@@ -451,6 +896,25 @@ function run(options) {
       outcome = { status: "succeeded", code: 0, stdout: "noop\n", stderr: "", command: "noop" };
     } else if (action.type === "manual") {
       outcome = { status: "manual_review", code: 0, stdout: "", stderr: "", command: action.command || "manual review" };
+    } else if (action.type === "agent") {
+      const agentName = action.command || action.entry || step.agent || "codex_repair_agent";
+      const promptFile = path.join(runDir, "repair_prompts", `${stepSlug}.agent.md`);
+      fs.writeFileSync(
+        promptFile,
+        [
+          `# AAPS Agent Task: ${agentName}`,
+          "",
+          `Block: ${step.id}`,
+          `Path: ${step.path}`,
+          "",
+          action.code || step.prompt || action.command || "Prepare or execute this agent-assisted block.",
+          "",
+          "## Context",
+          JSON.stringify(stepContext, null, 2),
+        ].join("\n"),
+        "utf8"
+      );
+      outcome = { status: "agent_prompt_prepared", code: 0, stdout: promptFile, stderr: "", command: `agent ${agentName}` };
     } else if (action.type === "internal") {
       outcome = { status: "skipped", code: 0, stdout: "", stderr: "Internal adapters are not registered in this runtime.", command: action.command || "" };
     } else {
@@ -468,12 +932,12 @@ function run(options) {
     return outcome;
   }
 
-  function executeStep(step) {
-    const stepContext = contextForStep(step);
-    event({ type: "step_start", step: step.path, executable: step.executable });
+  function executeStep(step, overrides = {}) {
+    const stepContext = contextForStep(step, overrides);
+    event({ type: "step_start", step: step.path, executable: step.executable, loop: overrides["loop.index"] ?? "" });
     if (!step.executable) {
       const status = step.promptOnly ? "prompt_only" : "planned";
-      const result = { step: step.path, id: step.id, status, actions: [], validations: [], repair: "" };
+      const result = { step: step.path, id: step.id, status, loop: overrides["loop.index"] ?? null, actions: [], validations: [], repair: "" };
       results.push(result);
       event({ type: "step_end", step: step.path, status });
       return result;
@@ -486,7 +950,7 @@ function run(options) {
       let outcome;
       do {
         attempt += 1;
-        outcome = executeAction(step, action, attempt);
+        outcome = executeAction(step, action, attempt, overrides);
       } while (outcome.status === "failed" && attempt <= step.retry);
       actions.push(outcome);
       if (outcome.status === "failed") ok = false;
@@ -520,7 +984,7 @@ function run(options) {
         const target = plan.steps.find((candidate) => candidate.id === step.fallback);
         if (target && target.path !== step.path && !fallbackVisited.has(target.path)) {
           fallbackVisited.add(target.path);
-          fallbackResult = executeStep(target);
+          fallbackResult = executeStep(target, overrides);
           ok = fallbackResult.status !== "failed";
         } else {
           fallbackResult = { status: "failed", error: `Fallback target not available: ${step.fallback}` };
@@ -534,9 +998,86 @@ function run(options) {
     }
 
     const status = ok ? (fallbackResult ? "recovered" : "succeeded") : "failed";
-    const result = { step: step.path, id: step.id, status, actions, validations, fallback: fallbackResult, repair };
+    const result = { step: step.path, id: step.id, status, loop: overrides["loop.index"] ?? null, item: overrides.item || "", actions, validations, fallback: fallbackResult, repair };
     results.push(result);
     event({ type: "step_end", step: step.path, status });
+    return result;
+  }
+
+  const stepByPath = new Map(plan.steps.map((step) => [step.path, step]));
+  function parentPath(stepPath) {
+    const parts = String(stepPath || "").split("/");
+    parts.pop();
+    return parts.join("/");
+  }
+  const childrenByPath = new Map();
+  plan.steps.forEach((step) => {
+    const parent = parentPath(step.path);
+    if (!childrenByPath.has(parent)) childrenByPath.set(parent, []);
+    childrenByPath.get(parent).push(step);
+  });
+  const rootSteps = plan.steps.filter((step) => !stepByPath.has(parentPath(step.path)));
+
+  function enumerateLoopItems(step, overrides) {
+    const iterator = step.iterator || {};
+    const source = unescapeRuntimeString(expand(iterator.source || "", { ...context, ...overrides }));
+    const listCall = source.match(/^list_files\((.+?)(?:,\s*pattern\s*=\s*["']([^"']+)["'])?\)$/i);
+    let files;
+    if (listCall) files = listFiles(projectDir, listCall[1].trim().replace(/^["']|["']$/g, ""), listCall[2] || "");
+    else files = listFiles(projectDir, source);
+    return files.map((file, index) => {
+      const parsed = path.parse(file);
+      return {
+        [iterator.item || "item"]: file,
+        item: file,
+        "item.path": file,
+        "item.basename": parsed.base,
+        "item.stem": parsed.name,
+        "item.ext": parsed.ext,
+        "item.index": index,
+        "loop.index": index,
+      };
+    });
+  }
+
+  function conditionPasses(step, overrides) {
+    if (!step.condition) return true;
+    const expanded = expand(step.condition, { ...context, ...overrides }).trim();
+    if (!expanded || /^(true|yes|1)$/i.test(expanded)) return true;
+    if (/^(false|no|0)$/i.test(expanded)) return false;
+    const exists = expanded.match(/^exists\s+(.+)$/i);
+    if (exists) {
+      try {
+        return fs.existsSync(resolveRuntimePath(projectDir, exists[1].replace(/^["']|["']$/g, ""), { ...context, ...overrides }));
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function executeTree(step, overrides = {}) {
+    if (step.kind === "for_each") {
+      const items = enumerateLoopItems(step, overrides);
+      event({ type: "loop_start", step: step.path, iterator: step.iterator, count: items.length });
+      const result = executeStep(step, overrides);
+      const children = childrenByPath.get(step.path) || [];
+      items.forEach((itemOverrides) => {
+        const merged = { ...overrides, ...itemOverrides };
+        event({ type: "loop_item", step: step.path, item: merged.item, index: merged["loop.index"] });
+        children.forEach((child) => executeTree(child, merged));
+      });
+      event({ type: "loop_end", step: step.path, count: items.length });
+      return result;
+    }
+    if (!conditionPasses(step, overrides)) {
+      const result = { step: step.path, id: step.id, status: "skipped", reason: "condition_false", loop: overrides["loop.index"] ?? null, item: overrides.item || "" };
+      results.push(result);
+      event({ type: "step_skipped", step: step.path, reason: "condition_false" });
+      return result;
+    }
+    const result = executeStep(step, overrides);
+    (childrenByPath.get(step.path) || []).forEach((child) => executeTree(child, overrides));
     return result;
   }
 
@@ -549,13 +1090,14 @@ function run(options) {
   requirements.filter((check) => !check.ok).forEach((check) => {
     event({ type: "missing_requirement", check });
   });
-  plan.steps.forEach(executeStep);
+  rootSteps.forEach((step) => executeTree(step));
 
   const failed = results.filter((item) => item.status === "failed");
   const missingRequirements = requirements.filter((item) => !item.ok);
-  const summaryStatus = ir.diagnostics.length || missingRequirements.length ? "failed" : failed.length ? "failed" : "succeeded";
+  const failedReadiness = (readiness.blocks || []).filter((item) => !item.ready);
+  const summaryStatus = ir.diagnostics.length || missingRequirements.length || failedReadiness.length ? "failed" : failed.length ? "failed" : "succeeded";
   const summary = {
-    ok: ir.diagnostics.length === 0 && failed.length === 0 && missingRequirements.length === 0,
+    ok: ir.diagnostics.length === 0 && failed.length === 0 && missingRequirements.length === 0 && failedReadiness.length === 0,
     runId,
     status: summaryStatus,
     file: loaded.file,
@@ -564,6 +1106,8 @@ function run(options) {
     dryRun,
     diagnostics: ir.diagnostics,
     requirements,
+    readiness,
+    compilePlan,
     plan: {
       steps: plan.steps.length,
       executableSteps: plan.executableSteps,
@@ -605,22 +1149,28 @@ function run(options) {
 
 function main() {
   const options = parseArgs(process.argv);
-  if (options.command !== "run" && options.command !== "plan") {
+  if (options.command !== "run" && options.command !== "plan" && options.command !== "check") {
     throw new Error(`Unknown command: ${options.command}`);
   }
   const projectDir = path.resolve(options.project || ".");
   const manifest = readManifest(projectDir);
+  const registries = loadRegistries(projectDir, manifest);
   const loaded = loadSource(options, projectDir, manifest);
   const ir = parseLoaded(options, projectDir, manifest, loaded);
-  if (options.command === "plan") {
+  if (options.command === "plan" || options.command === "check") {
     let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
     if (options.block) {
-      plan = { ...plan, steps: plan.steps.filter((step) => step.id === options.block || step.path.includes(options.block)) };
-      plan.executableSteps = plan.steps.filter((step) => step.executable).length;
-      plan.promptOnlySteps = plan.steps.filter((step) => step.promptOnly).length;
+      plan = filterPlanByBlock(plan, options.block, false);
     }
-    console.log(JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, plan }, null, 2));
-    process.exit(ir.diagnostics.length ? 1 : 0);
+    const runId = options.runId || `check-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const runRoot = path.resolve(options.runRoot || path.join(projectDir, "runtime", "runs"));
+    const runDir = path.join(runRoot, runId);
+    const context = contextFrom(ir, manifest, runId, projectDir, runDir, registries);
+    context["project.python"] = projectPython(manifest, registries);
+    const readiness = buildReadiness(plan, projectDir, manifest, registries, context);
+    const compilePlan = AAPS.buildAgentCompilePlan(plan, readiness);
+    console.log(JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, plan, readiness, compilePlan }, null, 2));
+    process.exit(ir.diagnostics.length || !readiness.ok ? 1 : 0);
   }
   const summary = run(options);
   if (options.json) console.log(JSON.stringify(summary, null, 2));

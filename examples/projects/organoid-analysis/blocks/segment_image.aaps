@@ -1,0 +1,32 @@
+pipeline "Segment Image Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "biology"
+  tags "block, segmentation, executable"
+
+  block segment_image {
+    purpose "Segment one microscopy PGM image with deterministic thresholding."
+    input image_path: image required
+    output mask_path: image
+    output overlay_path: image
+    output segmentation_report: json
+    environment python = "python3"
+    requires_commands "python3"
+    requires_tools "threshold_segmentation"
+    requires_files "scripts/threshold_segment.py"
+    compile_agent "codex_repair_agent"
+    tool "threshold_segmentation"
+    exec python_script "scripts/threshold_segment.py"
+    arg image_path = "${input.image_path}"
+    arg mask_path = "${output.mask_path}"
+    arg overlay_path = "${output.overlay_path}"
+    arg report_json = "${output.segmentation_report}"
+    validate exists "${output.mask_path}"
+    validate exists "${output.overlay_path}"
+    validate json "${output.segmentation_report}"
+    validate mask_not_empty "${output.mask_path}"
+    fallback "run: python3 scripts/threshold_segment.py --image-path ${input.image_path} --mask-path ${output.mask_path} --overlay-path ${output.overlay_path} --report-json ${output.segmentation_report} --threshold 70"
+    repair true
+    test sample_input = "data/demo_images/demo_01.pgm"
+  }
+}

@@ -22,8 +22,14 @@ Each project should have an `aaps.project.json` at its root:
   "variables": {
     "image_glob": "data/raw/**/*.tif"
   },
-  "tools": ["python", "cellpose", "codex"],
+  "tools": ["python3", "threshold_segmentation", "cellpose", "codex"],
   "models": ["gpt-5", "cellpose"],
+  "agents": ["codex_repair_agent", "segmentation_method_selector"],
+  "environment": {
+    "python": "python3",
+    "commands": ["python3"],
+    "setup": ["python3 -m venv .venv"]
+  },
   "files": {
     "blocks": ["blocks/qc_image.aaps"],
     "skills": ["skills/microscopy_qc.aaps"],
@@ -60,6 +66,13 @@ my-aaps-project/
   scripts/
     qc_image.py
     threshold_segment.py
+  environments/
+    requirements.txt
+    aaps_environment.json
+  tools/
+    tool_registry.json
+  agents/
+    agent_registry.json
   drafts/
   archive/
   data/
@@ -83,6 +96,19 @@ pipeline "Main Organoid Analysis" {
 
 The project-aware parser resolves imports, records each imported block source file, and reports missing or circular imports. Imported blocks are available to `call` statements and to the visual graph.
 
+## Registries
+
+Executable projects can declare registries next to the manifest:
+
+```text
+tools/tool_registry.json
+agents/agent_registry.json
+environments/aaps_environment.json
+environments/requirements.txt
+```
+
+Tool entries describe commands or script paths, optional setup commands, supported block types, and notes. Agent entries describe prompt-based or future API-backed agents such as `codex_repair_agent`. Environment files define the default Python interpreter, required commands, local setup commands, and optional package lists. The runtime resolves these registries before execution and writes `tool_resolution.json`, `block_readiness.json`, and `agent_compile_plan.json` into each run folder.
+
 ## Commands
 
 ```bash
@@ -90,10 +116,12 @@ npm run project:validate
 node scripts/aaps-project.js validate examples/projects/organoid-analysis
 node scripts/aaps-project.js init my-aaps-project "My AAPS Project" biology
 node scripts/aaps.js validate --project examples/projects/organoid-analysis --json
+node scripts/aaps.js check workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
 node scripts/aaps.js run workflows/executable_organoid_demo.aaps --project examples/projects/organoid-analysis --json
+node scripts/aaps.js run workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
 ```
 
-Validation checks manifest shape, relative paths, declared `.aaps` files, and parser diagnostics for project files.
+Validation checks manifest shape, relative paths, declared `.aaps` files, and parser diagnostics for project files. `check` builds a project-aware execution plan and block readiness report without running the workflow.
 
 ## Studio Behavior
 
@@ -102,11 +130,11 @@ AAPS Studio has a Project tab for:
 - editing `aaps.project.json`
 - validating manifest fields
 - viewing blocks, skills, modules, workflows, drafts, archives, and references
-- viewing script files used by executable blocks
+- viewing script, environment, tool registry, and agent registry files
 - loading a project file into the script editor
 - saving the active file through the local server
 - creating, duplicating, and archiving `.aaps` files
 - running or dry-running the active workflow
-- running or dry-running the selected block from the block inspector
+- checking readiness, running, or dry-running the selected block from the block inspector
 
 Static deployment can edit and export manifests in the browser. Local Studio adds filesystem-backed load/save APIs.

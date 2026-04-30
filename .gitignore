@@ -11,6 +11,7 @@ examples/projects/*/artifacts/**
 !examples/projects/*/artifacts/.gitkeep
 examples/projects/*/reports/*.md
 examples/projects/*/data/synthetic_*.pgm
+examples/projects/*/data/demo_images/*.pgm
 examples/projects/*/${run.artifacts}/
 
 # Dependencies and caches

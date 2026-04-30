@@ -1,0 +1,19 @@
+{
+  "agents": [
+    {
+      "name": "codex_repair_agent",
+      "purpose": "Repair Python or shell scripts after execution failure.",
+      "invocation": "prompt",
+      "supportedTasks": ["repair", "code_authoring", "setup_prompt"],
+      "safety": ["no destructive file operations", "project-local edits only", "ask before installing dependencies"],
+      "fallback": "prepare repair prompt"
+    },
+    {
+      "name": "segmentation_method_selector",
+      "purpose": "Select thresholding, Cellpose, SAM2, or manual review from QC evidence.",
+      "invocation": "prompt",
+      "supportedTasks": ["method_routing", "segmentation_review"],
+      "fallback": "threshold_segmentation"
+    }
+  ]
+}

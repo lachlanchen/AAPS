@@ -1,0 +1,34 @@
+{
+  "tools": [
+    {
+      "name": "python3",
+      "type": "system_command",
+      "command": "python3",
+      "supportedBlockTypes": ["python_script", "python_inline"],
+      "notes": "Default local interpreter for standard-library demos."
+    },
+    {
+      "name": "threshold_segmentation",
+      "type": "python_script",
+      "path": "scripts/threshold_segment.py",
+      "command": "python3",
+      "supportedBlockTypes": ["segmentation"],
+      "test": "python3 scripts/threshold_segment.py --help",
+      "notes": "Local deterministic fallback for microscopy segmentation."
+    },
+    {
+      "name": "batch_summary",
+      "type": "python_script",
+      "path": "scripts/summarize_batch.py",
+      "command": "python3",
+      "supportedBlockTypes": ["report"]
+    },
+    {
+      "name": "codex",
+      "type": "agent_wrapper",
+      "command": "codex",
+      "optional": true,
+      "notes": "Optional repair/code authoring agent. Missing command should prepare a prompt rather than block local demos."
+    }
+  ]
+}

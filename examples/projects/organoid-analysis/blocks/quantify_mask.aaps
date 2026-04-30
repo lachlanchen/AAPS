@@ -1,0 +1,24 @@
+pipeline "Quantify Mask Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "biology"
+  tags "block, quantification, executable"
+
+  block quantify_mask {
+    purpose "Quantify one binary mask and write per-image CSV and JSON metrics."
+    input mask_path: image required
+    output object_table: csv
+    output metrics_report: json
+    environment python = "python3"
+    requires_commands "python3"
+    requires_files "scripts/quantify_mask.py"
+    compile_agent "codex_repair_agent"
+    exec python_script "scripts/quantify_mask.py"
+    arg mask_path = "${input.mask_path}"
+    arg object_table = "${output.object_table}"
+    arg metrics_report = "${output.metrics_report}"
+    validate nonempty "${output.object_table}"
+    validate json "${output.metrics_report}"
+    repair true
+  }
+}

@@ -25,6 +25,7 @@ PROJECT_MANIFEST = "aaps.project.json"
 SKIP_SCAN_DIRS = {".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"}
 TEXT_FILE_EXTENSIONS = {".aaps", ".py", ".sh", ".js", ".mjs", ".cjs", ".json", ".md", ".txt", ".yaml", ".yml", ".toml"}
 SCRIPT_FILE_EXTENSIONS = {".py", ".sh", ".js", ".mjs", ".cjs"}
+ENVIRONMENT_FILE_EXTENSIONS = {".txt", ".json", ".yaml", ".yml"}
 SCHEMAS = {
     "response": ROOT / "schemas" / "aaps_response.schema.json",
     "aaps_edit": ROOT / "schemas" / "aaps_edit.schema.json",
@@ -160,6 +161,9 @@ def read_project(project_dir: Path) -> dict:
                 "runs": "runs",
                 "reports": "reports",
                 "notes": "notes",
+                "environments": "environments",
+                "tools": "tools",
+                "agents": "agents",
             },
             "dataFolders": ["data"],
             "artifactRoot": "artifacts",
@@ -167,6 +171,7 @@ def read_project(project_dir: Path) -> dict:
             "variables": {},
             "tools": [],
             "models": [],
+            "agents": [],
             "notes": [],
             "files": {
                 "blocks": [],
@@ -185,6 +190,21 @@ def read_project(project_dir: Path) -> dict:
         "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
         "files": scan_aaps_files(project_dir),
         "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
+        "environment_files": [
+            file
+            for file in scan_project_files(project_dir, ENVIRONMENT_FILE_EXTENSIONS)
+            if file.startswith("environments/")
+        ],
+        "tool_files": [
+            file
+            for file in scan_project_files(project_dir, {".json"})
+            if file.startswith("tools/")
+        ],
+        "agent_files": [
+            file
+            for file in scan_project_files(project_dir, {".json"})
+            if file.startswith("agents/")
+        ],
         "text_files": scan_project_files(project_dir, TEXT_FILE_EXTENSIONS),
     }
 
@@ -494,6 +514,42 @@ def build_block_chat_response(body: dict) -> dict:
         raise ValueError("message is required")
 
     lower = message.lower()
+    if any(word in lower for word in ["requirements", "dependency", "dependencies", "environment", "setup"]):
+        requirements = {"commands": ["python3"], "files": [], "pythonPackages": [], "tools": [], "agents": ["codex_repair_agent"]}
+        environment = {
+            "python": "python3",
+            "requirements": [],
+            "commands": ["python3"],
+            "nodePackages": [],
+            "files": [],
+            "env": {},
+            "setup": ["python3 -m venv .venv"],
+        }
+        append_provenance(
+            project_dir,
+            {
+                "block": block_id,
+                "message": message,
+                "mode": "requirements",
+                "action_type": "environment_update",
+            },
+        )
+        return {
+            "ok": True,
+            "mode": "requirements",
+            "summary": f"Prepared project-local Python readiness metadata for {block_id}.",
+            "action": {},
+            "requirements": requirements,
+            "environment": environment,
+            "compile": {
+                "agent": "codex_repair_agent",
+                "prompt": "Create project-local scripts or setup prompts when declared dependencies are missing.",
+                "onMissing": "prompt",
+            },
+            "validations": [],
+            "script": "",
+        }
+
     if "shell" in lower or "command" in lower:
         command = "echo AAPS block action"
         if ":" in message:
@@ -1007,6 +1063,21 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         "file": file_path.relative_to(project_dir).as_posix(),
                         "files": scan_aaps_files(project_dir),
                         "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
+                        "environment_files": [
+                            file
+                            for file in scan_project_files(project_dir, ENVIRONMENT_FILE_EXTENSIONS)
+                            if file.startswith("environments/")
+                        ],
+                        "tool_files": [
+                            file
+                            for file in scan_project_files(project_dir, {".json"})
+                            if file.startswith("tools/")
+                        ],
+                        "agent_files": [
+                            file
+                            for file in scan_project_files(project_dir, {".json"})
+                            if file.startswith("agents/")
+                        ],
                         "text_files": scan_project_files(project_dir, TEXT_FILE_EXTENSIONS),
                     },
                 )

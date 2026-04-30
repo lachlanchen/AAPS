@@ -1,0 +1,27 @@
+pipeline "Summarize Batch Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "biology"
+  tags "block, report, executable"
+
+  block summarize_batch {
+    purpose "Combine per-image metrics into batch CSV, JSON, and Markdown report artifacts."
+    input artifacts_dir: folder required = "${run.artifacts}"
+    output combined_csv: csv = "${run.artifacts}/batch_summary.csv"
+    output summary_json: json = "${run.artifacts}/batch_summary.json"
+    output report: markdown = "reports/executable-folder-segmentation.md"
+    environment python = "python3"
+    requires_commands "python3"
+    requires_tools "batch_summary"
+    requires_files "scripts/summarize_batch.py"
+    compile_agent "codex_repair_agent"
+    exec python_script "scripts/summarize_batch.py"
+    arg artifacts_dir = "${input.artifacts_dir}"
+    arg output_csv = "${output.combined_csv}"
+    arg output_json = "${output.summary_json}"
+    arg output_report = "${output.report}"
+    validate nonempty "${output.combined_csv}"
+    validate json "${output.summary_json}"
+    validate nonempty "${output.report}"
+  }
+}

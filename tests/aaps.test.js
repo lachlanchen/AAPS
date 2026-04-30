@@ -149,6 +149,37 @@ assert.strictEqual(executionPlan.version, "aaps_plan/0.1");
 assert.strictEqual(executionPlan.executableSteps, 1);
 assert(executionPlan.steps.some((step) => step.repair === true));
 
+const folderWorkflow = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "executable_folder_segmentation.aaps"));
+assert.strictEqual(folderWorkflow.diagnostics.length, 0, JSON.stringify(folderWorkflow.diagnostics));
+assert(folderWorkflow.pipeline.requiredAgents.includes("codex_repair_agent"));
+assert.strictEqual(folderWorkflow.pipeline.environment.python, "python3");
+const folderLoop = folderWorkflow.pipeline.tasks.find((task) => task.kind === "for_each");
+assert(folderLoop, "folder segmentation workflow should contain a for_each loop");
+assert.strictEqual(folderLoop.iterator.source.includes('pattern="*.pgm"'), true);
+const folderPlan = AAPS.buildExecutionPlan(folderWorkflow);
+assert(folderPlan.steps.some((step) => step.id === "segment_image" && step.requirements.tools.includes("threshold_segmentation")));
+assert(folderPlan.steps.some((step) => step.id === "segment_image" && step.compile.agent === "codex_repair_agent"));
+
+const missingScriptPlan = AAPS.buildExecutionPlan(
+  AAPS.parseAAPS(`pipeline "Compile Missing Script" {
+  task missing_script {
+    compile_agent "codex_repair_agent"
+    exec python_script "scripts/missing_script.py"
+  }
+}`)
+);
+const compilePlan = AAPS.buildAgentCompilePlan(missingScriptPlan, {
+  blocks: [
+    {
+      id: "missing_script",
+      path: "task:missing_script",
+      checks: [{ kind: "script", name: "scripts/missing_script.py", ok: false, message: "script missing" }],
+    },
+  ],
+});
+assert.strictEqual(compilePlan.requests.length, 1);
+assert(compilePlan.requests[0].prompt.includes("scripts/missing_script.py"));
+
 const inlineFile = path.join(__dirname, "..", ".aaps-work", "tests", "inline.aaps");
 fs.mkdirSync(path.dirname(inlineFile), { recursive: true });
 fs.writeFileSync(
@@ -287,6 +318,46 @@ const blockRun = childProcess.spawnSync(
 );
 assert.strictEqual(blockRun.status, 0, blockRun.stderr || blockRun.stdout);
 assert.strictEqual(JSON.parse(blockRun.stdout).plan.executableSteps, 1);
+
+const folderCheck = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "check",
+    "workflows/executable_folder_segmentation.aaps",
+    "--project",
+    "examples/projects/organoid-analysis",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(folderCheck.status, 0, folderCheck.stderr || folderCheck.stdout);
+const folderCheckSummary = JSON.parse(folderCheck.stdout);
+assert.strictEqual(folderCheckSummary.readiness.ok, true);
+assert(folderCheckSummary.readiness.blocks.every((block) => block.ready));
+
+const folderDemoRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run",
+    "workflows/executable_folder_segmentation.aaps",
+    "--project",
+    "examples/projects/organoid-analysis",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "test-folder-segmentation",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(folderDemoRun.status, 0, folderDemoRun.stderr || folderDemoRun.stdout);
+const folderRunSummary = JSON.parse(folderDemoRun.stdout);
+assert.strictEqual(folderRunSummary.status, "succeeded");
+assert(folderRunSummary.results.filter((result) => result.id === "segment_image" && result.status === "succeeded").length >= 4);
+assert(fs.existsSync(path.join(folderRunSummary.runDir, "artifacts", "batch_summary.csv")));
+assert(fs.existsSync(path.join(folderRunSummary.runDir, "block_readiness.json")));
 
 const appDemoRun = childProcess.spawnSync(
   "node",

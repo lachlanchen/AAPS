@@ -1,0 +1,2 @@
+# The executable demos use only the Python standard library.
+# Optional real-world extensions can add opencv-python, scikit-image, cellpose, or sam2 here.

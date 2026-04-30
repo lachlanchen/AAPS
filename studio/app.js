@@ -28,6 +28,7 @@ const runSummaryEl = document.getElementById("run-summary");
 const runLogEl = document.getElementById("run-log");
 const blockChatInputEl = document.getElementById("block-chat-input");
 const blockLogEl = document.getElementById("block-log");
+const blockReadinessEl = document.getElementById("block-readiness");
 const projectFileTargetEl = document.getElementById("project-file-target");
 
 const fields = {
@@ -40,6 +41,10 @@ const fields = {
   artifacts: document.getElementById("field-artifacts"),
   exec: document.getElementById("field-exec"),
   args: document.getElementById("field-args"),
+  requirements: document.getElementById("field-requirements"),
+  environment: document.getElementById("field-environment"),
+  compileAgent: document.getElementById("field-compile-agent"),
+  compilePrompt: document.getElementById("field-compile-prompt"),
   code: document.getElementById("field-code"),
   run: document.getElementById("field-run"),
   validations: document.getElementById("field-validations"),
@@ -62,6 +67,7 @@ let currentProjectPayload = {
 let activeRunId = "";
 let chatMessageCount = 0;
 let activeTab = "lab";
+let lastRuntimeResult = null;
 
 function escapeHtml(value) {
   return String(value || "")
@@ -88,6 +94,9 @@ function renderProject(payload = currentProjectPayload) {
   const manifest = AAPS.normalizeProjectManifest(payload.manifest || AAPS.sampleProject);
   const files = payload.files && payload.files.length ? payload.files : AAPS.projectFileIndex(manifest);
   const scriptFiles = payload.script_files || [];
+  const environmentFiles = payload.environment_files || [];
+  const toolFiles = payload.tool_files || [];
+  const agentFiles = payload.agent_files || [];
   const validation = AAPS.validateProjectManifest(manifest, files);
   const diagnostics = validation.diagnostics;
   const errorCount = diagnostics.filter((item) => item.severity === "error").length;
@@ -110,6 +119,8 @@ function renderProject(payload = currentProjectPayload) {
       <div class="project-kpi"><strong>${AAPS.projectFileIndex(manifest).length}</strong>manifest files</div>
       <div class="project-kpi"><strong>${scriptFiles.length}</strong>scripts</div>
       <div class="project-kpi"><strong>${manifest.tools.length}</strong>tools</div>
+      <div class="project-kpi"><strong>${manifest.agents.length}</strong>agents</div>
+      <div class="project-kpi"><strong>${environmentFiles.length}</strong>env files</div>
     </div>
     ${
       diagnostics.length
@@ -156,30 +167,64 @@ function renderProject(payload = currentProjectPayload) {
       </section>
     `
     : "";
-  projectFilesEl.innerHTML = aapsSections || scriptSection ? `${aapsSections}${scriptSection}` : '<div class="message">No project files found.</div>';
+  const textSection = [
+    ["environments", environmentFiles, "env"],
+    ["tools", toolFiles, "tool"],
+    ["agents", agentFiles, "agent"],
+  ]
+    .map(([title, categoryFiles, label]) =>
+      categoryFiles.length
+        ? `
+      <section class="project-category">
+        <h3>${escapeHtml(title)}</h3>
+        ${categoryFiles
+          .map(
+            (file) => `
+              <button class="project-file${file === openTextFile ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
+                <span>${escapeHtml(file)}</span>
+                <span>${label}</span>
+              </button>
+            `
+          )
+          .join("")}
+      </section>
+    `
+        : ""
+    )
+    .join("");
+  projectFilesEl.innerHTML = aapsSections || scriptSection || textSection ? `${aapsSections}${scriptSection}${textSection}` : '<div class="message">No project files found.</div>';
 }
 
 function renderRuntime(record) {
   if (!record) {
+    lastRuntimeResult = null;
     runStatusEl.textContent = "idle";
     runSummaryEl.innerHTML = '<div>No run has started.</div>';
     runLogEl.textContent = "";
+    renderSelectedReadiness(null);
     return;
   }
   const result = record.result || record;
+  lastRuntimeResult = result;
   runStatusEl.textContent = record.status || result.status || "unknown";
   const plan = result.plan || {};
   const failed = (result.results || []).filter((item) => item.status === "failed").length;
+  const readiness = result.readiness || {};
+  const readyBlocks = (readiness.blocks || []).filter((item) => item.ready).length;
+  const compileRequests = result.compilePlan?.requests?.length || 0;
   runSummaryEl.innerHTML = `
     <div><strong>${escapeHtml(result.runId || record.id || "")}</strong> · ${escapeHtml(result.file || record.file || "")}</div>
     <div class="project-kpis">
       <div class="project-kpi"><strong>${plan.steps || 0}</strong>steps</div>
       <div class="project-kpi"><strong>${plan.executableSteps || 0}</strong>exec</div>
       <div class="project-kpi"><strong>${failed}</strong>failed</div>
+      <div class="project-kpi"><strong>${readyBlocks}/${(readiness.blocks || []).length || 0}</strong>ready</div>
+      <div class="project-kpi"><strong>${compileRequests}</strong>compile prompts</div>
     </div>
     <div>${escapeHtml(result.runDir || "")}</div>
   `;
   runLogEl.textContent = JSON.stringify(result, null, 2);
+  renderSelectedReadiness(result);
 }
 
 function getIr() {
@@ -229,6 +274,68 @@ function parseKeyValues(text) {
   return values;
 }
 
+function parseCommaValues(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseRequirements(text) {
+  const requirements = {
+    tools: [],
+    models: [],
+    agents: [],
+    commands: [],
+    files: [],
+    pythonPackages: [],
+    nodePackages: [],
+  };
+  parseLines(text).forEach((line) => {
+    const match = line.match(/^([A-Za-z_][\w.-]*)\s*(?:=|:)\s*(.+)$/);
+    if (!match) return;
+    const key = match[1].toLowerCase().replace(/[-.]/g, "_");
+    const values = parseCommaValues(match[2]);
+    if (["tool", "tools"].includes(key)) requirements.tools.push(...values);
+    else if (["model", "models"].includes(key)) requirements.models.push(...values);
+    else if (["agent", "agents"].includes(key)) requirements.agents.push(...values);
+    else if (["command", "commands", "system_command"].includes(key)) requirements.commands.push(...values);
+    else if (["file", "files"].includes(key)) requirements.files.push(...values);
+    else if (["python", "python_package", "python_packages"].includes(key)) requirements.pythonPackages.push(...values);
+    else if (["node", "node_package", "node_packages"].includes(key)) requirements.nodePackages.push(...values);
+  });
+  Object.keys(requirements).forEach((key) => {
+    requirements[key] = [...new Set(requirements[key])];
+  });
+  return requirements;
+}
+
+function parseEnvironment(text) {
+  const environment = {
+    python: "",
+    requirements: [],
+    commands: [],
+    nodePackages: [],
+    files: [],
+    env: {},
+    setup: [],
+  };
+  parseLines(text).forEach((line) => {
+    const match = line.match(/^([A-Za-z_][\w.-]*)\s*(?:=|:)\s*(.+)$/);
+    if (!match) return;
+    const key = match[1].toLowerCase().replace(/-/g, "_");
+    const value = match[2].trim();
+    if (key === "python") environment.python = value;
+    else if (["requirement", "requirements", "python_package"].includes(key)) environment.requirements.push(...parseCommaValues(value));
+    else if (["command", "commands"].includes(key)) environment.commands.push(...parseCommaValues(value));
+    else if (["node", "node_package", "node_packages"].includes(key)) environment.nodePackages.push(...parseCommaValues(value));
+    else if (["file", "files"].includes(key)) environment.files.push(...parseCommaValues(value));
+    else if (["setup", "setup_command"].includes(key)) environment.setup.push(value);
+    else if (key.startsWith("env.")) environment.env[key.slice(4)] = value;
+  });
+  return environment;
+}
+
 function parseExecActions(text) {
   return parseLines(text).map((line, index) => {
     const match = line.match(/^([A-Za-z_][\w.-]*)\s*=\s*(.+)$/);
@@ -261,6 +368,33 @@ function execLines(steps) {
   return (steps || [])
     .map((step) => `${step.type || "shell"} = ${step.command || step.entry || ""}`)
     .join("\n");
+}
+
+function requirementsLines(requirements) {
+  const lines = [];
+  const mapping = [
+    ["tool", requirements?.tools],
+    ["model", requirements?.models],
+    ["agent", requirements?.agents],
+    ["command", requirements?.commands],
+    ["file", requirements?.files],
+    ["python_package", requirements?.pythonPackages],
+    ["node_package", requirements?.nodePackages],
+  ];
+  mapping.forEach(([key, values]) => (values || []).forEach((value) => lines.push(`${key} = ${value}`)));
+  return lines.join("\n");
+}
+
+function environmentLines(environment) {
+  const lines = [];
+  if (environment?.python) lines.push(`python = ${environment.python}`);
+  (environment?.requirements || []).forEach((value) => lines.push(`requirement = ${value}`));
+  (environment?.commands || []).forEach((value) => lines.push(`command = ${value}`));
+  (environment?.nodePackages || []).forEach((value) => lines.push(`node_package = ${value}`));
+  (environment?.files || []).forEach((value) => lines.push(`file = ${value}`));
+  Object.entries(environment?.env || {}).forEach(([key, value]) => lines.push(`env.${key} = ${value}`));
+  (environment?.setup || []).forEach((value) => lines.push(`setup = ${value}`));
+  return lines.join("\n");
 }
 
 function tabLabel(tab) {
@@ -328,6 +462,9 @@ function renderNode(node, ref, depth = 0) {
   if (node.validations && node.validations.length) meta.push(`${node.validations.length} validation`);
   if (node.recovery && node.recovery.length) meta.push(`${node.recovery.length} recovery`);
   if (node.reviews && node.reviews.length) meta.push(`${node.reviews.length} review`);
+  if (node.exec && node.exec.length) meta.push(`exec ${node.exec.map((action) => action.type).join(", ")}`);
+  if (node.requirements && node.requirements.commands && node.requirements.commands.length) meta.push(`cmd ${node.requirements.commands.join(", ")}`);
+  if (node.requirements && node.requirements.tools && node.requirements.tools.length) meta.push(`tool ${node.requirements.tools.join(", ")}`);
   const children = (node.children || [])
     .map((child, index) => renderNode(child, `${ref}/children:${index}`, depth + 1))
     .join("");
@@ -357,6 +494,33 @@ function renderSection(title, nodes, prefix) {
   `;
 }
 
+function renderSelectedReadiness(result = lastRuntimeResult) {
+  const selected = nodeRefs.get(selectedRef);
+  if (!blockReadinessEl) return;
+  if (!selected) {
+    blockReadinessEl.textContent = "Select a block, then check readiness.";
+    return;
+  }
+  const records = result?.readiness?.blocks || [];
+  const record = records.find((item) => item.id === selected.id || item.path === selected.path);
+  if (!record) {
+    blockReadinessEl.innerHTML = `<strong>Block Readiness</strong><span>No readiness record yet for ${escapeHtml(selected.id)}.</span>`;
+    return;
+  }
+  const checks = (record.checks || [])
+    .map(
+      (check) =>
+        `<li class="${check.ok ? "ok" : "bad"}">${escapeHtml(check.kind)} ${escapeHtml(check.name || check.path || "")}: ${escapeHtml(check.message || check.status || "")}</li>`
+    )
+    .join("");
+  const suggestions = (record.suggestions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  blockReadinessEl.innerHTML = `
+    <strong>Block Readiness: ${escapeHtml(record.status)}</strong>
+    <ul>${checks || "<li>No checks were required.</li>"}</ul>
+    ${suggestions ? `<strong>Suggested Fixes</strong><ul>${suggestions}</ul>` : ""}
+  `;
+}
+
 function fillInspector(node) {
   if (!node) {
     selectedLabelEl.textContent = "none";
@@ -364,6 +528,7 @@ function fillInspector(node) {
       field.value = "";
       field.disabled = field === fields.kind;
     });
+    renderSelectedReadiness(lastRuntimeResult);
     return;
   }
   selectedLabelEl.textContent = `${node.kind} ${node.id}`;
@@ -376,6 +541,10 @@ function fillInspector(node) {
   fields.artifacts.value = portLines(node.artifacts || []);
   fields.exec.value = execLines(node.exec || []);
   fields.args.value = keyValueLines(node.args || {});
+  fields.requirements.value = requirementsLines(node.requirements || {});
+  fields.environment.value = environmentLines(node.environment || {});
+  fields.compileAgent.value = node.compile?.agent || "";
+  fields.compilePrompt.value = node.compile?.prompt || "";
   fields.code.value = node.code || (node.exec && node.exec[0] && node.exec[0].code) || "";
   fields.run.value = (node.run || []).join("\n");
   fields.validations.value = (node.validations || []).join("\n");
@@ -384,6 +553,7 @@ function fillInspector(node) {
   fields.repair.value = node.repair ? "true" : "false";
   fields.fallback.value = node.fallback || "";
   fields.reviews.value = (node.reviews || []).join("\n");
+  renderSelectedReadiness(lastRuntimeResult);
 }
 
 function render() {
@@ -420,6 +590,9 @@ function templateNode(kind, ir) {
       model: "gpt-5",
       role: "General autonomous pipeline agent.",
       tools: ["shell", "git", "browser"],
+      requirements: { tools: [], models: [], agents: [], commands: [], files: [], pythonPackages: [], nodePackages: [] },
+      environment: { python: "", requirements: [], commands: [], nodePackages: [], files: [], env: {}, setup: [] },
+      compile: { agent: "", prompt: "", onMissing: "prompt" },
       prompt: "",
       condition: "",
       iterator: null,
@@ -456,6 +629,9 @@ function templateNode(kind, ir) {
       model: "",
       role: "",
       tools: [],
+      requirements: { tools: [], models: [], agents: [], commands: [], files: [], pythonPackages: [], nodePackages: [] },
+      environment: { python: "", requirements: [], commands: [], nodePackages: [], files: [], env: {}, setup: [] },
+      compile: { agent: "codex_repair_agent", prompt: "", onMissing: "prompt" },
       prompt: "Reusable typed block.",
       condition: "",
       iterator: null,
@@ -489,6 +665,9 @@ function templateNode(kind, ir) {
     model: "",
     role: "",
     tools: [],
+    requirements: { tools: [], models: [], agents: [], commands: [], files: [], pythonPackages: [], nodePackages: [] },
+    environment: { python: "", requirements: [], commands: [], nodePackages: [], files: [], env: {}, setup: [] },
+    compile: { agent: "", prompt: "", onMissing: "prompt" },
     prompt: "Describe what this block should do.",
     condition: kind === "if" ? "condition" : "",
     iterator: kind === "for_each" ? { item: "item", source: "items" } : null,
@@ -576,6 +755,14 @@ function applyInspector() {
   node.artifacts = parsePorts(fields.artifacts.value);
   node.exec = parseExecActions(fields.exec.value);
   node.args = parseKeyValues(fields.args.value);
+  node.requirements = parseRequirements(fields.requirements.value);
+  node.environment = parseEnvironment(fields.environment.value);
+  node.compile = {
+    ...(node.compile || {}),
+    agent: fields.compileAgent.value.trim(),
+    prompt: fields.compilePrompt.value.trim(),
+    onMissing: (node.compile && node.compile.onMissing) || "prompt",
+  };
   if (node.exec.length) node.exec[node.exec.length - 1].args = { ...node.args };
   node.code = fields.code.value.trim();
   if (node.code && node.exec.length) node.exec[node.exec.length - 1].code = node.code;
@@ -891,6 +1078,18 @@ async function startRuntimeRun(dryRun, blockId = "") {
     runStatusEl.textContent = "poll failed";
     runLogEl.textContent = error.message;
   });
+  return record;
+}
+
+async function checkSelectedBlockReadiness() {
+  const id = selectedNodeId();
+  if (!id) {
+    blockLogEl.textContent = "Select a block first.";
+    return;
+  }
+  blockReadinessEl.textContent = `Checking readiness for ${id}...`;
+  blockLogEl.textContent = "Building dry-run execution plan and block preflight.";
+  await startRuntimeRun(true, id);
 }
 
 function selectedNodeId() {
@@ -957,6 +1156,24 @@ async function applyBlockChat() {
       });
       target.args = { ...(target.args || {}), ...(action.args || {}) };
       if (action.code) target.code = action.code;
+    }
+    if (payload.requirements) {
+      target.requirements = {
+        ...(target.requirements || {}),
+        ...payload.requirements,
+      };
+    }
+    if (payload.environment) {
+      target.environment = {
+        ...(target.environment || {}),
+        ...payload.environment,
+      };
+    }
+    if (payload.compile) {
+      target.compile = {
+        ...(target.compile || {}),
+        ...payload.compile,
+      };
     }
     target.validations = [...new Set([...(target.validations || []), ...((payload.validations || []))])];
     target.repair = true;
@@ -1045,6 +1262,15 @@ function prepareRepairPrompt() {
     "",
     "## Actions",
     execLines(node.exec || []) || "(none)",
+    "",
+    "## Requirements",
+    requirementsLines(node.requirements || {}) || "(none)",
+    "",
+    "## Environment",
+    environmentLines(node.environment || {}) || "(none)",
+    "",
+    "## Compile Agent",
+    node.compile?.agent || "(none)",
     "",
     "## Validations",
     (node.validations || []).join("\n") || "(none)",
@@ -1250,6 +1476,13 @@ document.getElementById("externalize-block-code-btn").addEventListener("click", 
   externalizeBlockCode().catch((error) => {
     blockLogEl.textContent = error.message;
     addMessage("assistant", `Could not save inline code as script: ${error.message}`);
+  });
+});
+
+document.getElementById("check-block-btn").addEventListener("click", () => {
+  checkSelectedBlockReadiness().catch((error) => {
+    blockLogEl.textContent = error.message;
+    addMessage("assistant", `Could not check block readiness: ${error.message}`);
   });
 });
 

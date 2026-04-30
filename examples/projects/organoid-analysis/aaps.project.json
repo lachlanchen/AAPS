@@ -20,6 +20,9 @@
     "modules": "modules",
     "subworkflows": "workflows",
     "workflows": "workflows",
+    "environments": "environments",
+    "tools": "tools",
+    "agents": "agents",
     "scripts": "scripts",
     "drafts": "drafts",
     "archives": "archive",
@@ -31,7 +34,8 @@
   },
   "dataFolders": [
     "data/raw",
-    "data/processed"
+    "data/processed",
+    "data/demo_images"
   ],
   "artifactRoot": "artifacts",
   "runDatabase": "runs/organoid-aaps-runs.jsonl",
@@ -42,7 +46,8 @@
   },
   "tools": [
     "python3",
-    "python",
+    "threshold_segmentation",
+    "batch_summary",
     "cellpose",
     "scikit-image",
     "opencv",
@@ -53,6 +58,22 @@
     "cellpose",
     "vision-mask"
   ],
+  "agents": [
+    "codex_repair_agent",
+    "segmentation_method_selector"
+  ],
+  "environment": {
+    "python": "python3",
+    "requirements": [],
+    "commands": [
+      "python3"
+    ],
+    "nodePackages": [],
+    "setup": [
+      "python3 -m venv .venv",
+      ".venv/bin/python -m pip install -r environments/requirements.txt"
+    ]
+  },
   "notes": [
     "Every reusable block declares typed inputs, outputs, artifacts, validation, and recovery.",
     "Workflows include block and skill files by project-root relative path."
@@ -62,7 +83,11 @@
       "blocks/qc_image.aaps",
       "blocks/segment_organoid.aaps",
       "blocks/quantify_growth.aaps",
-      "blocks/generate_report.aaps"
+      "blocks/generate_report.aaps",
+      "blocks/prepare_inputs.aaps",
+      "blocks/segment_image.aaps",
+      "blocks/quantify_mask.aaps",
+      "blocks/summarize_batch.aaps"
     ],
     "skills": [
       "skills/microscopy_qc.aaps",
@@ -75,7 +100,8 @@
     "workflows": [
       "workflows/main.aaps",
       "workflows/batch_analysis.aaps",
-      "workflows/executable_organoid_demo.aaps"
+      "workflows/executable_organoid_demo.aaps",
+      "workflows/executable_folder_segmentation.aaps"
     ],
     "drafts": [],
     "archives": [],

@@ -13,6 +13,8 @@ function usage() {
     "Usage:",
     "  aaps parse <file> [--project .]",
     "  aaps plan <file> [--project .] [--json]",
+    "  aaps check <file> [--project .] [--json]",
+    "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
     "  aaps validate [file] [--project .] [--json]",
@@ -23,6 +25,9 @@ function usage() {
     "  --block <id>      Block ID or execution-plan path fragment for run-block.",
     "  --host <host>     Studio host for `aaps studio`.",
     "  --port <port>     Studio port for `aaps studio`.",
+    "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
+    "  --run-id <id>     Stable run identifier for reproducible test runs.",
+    "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
     "  --json            Print machine-readable JSON where supported.",
   ].join("\n");
@@ -129,6 +134,9 @@ function runRunner(command, file, options) {
     runnerFile,
   ];
   if (options.block) args.push("--block", options.block);
+  if (options.runRoot) args.push("--run-root", options.runRoot);
+  if (options.runId) args.push("--run-id", options.runId);
+  if (options.dryRun) args.push("--dry-run");
   if (options.json) args.push("--json");
   const result = childProcess.spawnSync("node", args, {
     cwd: projectDir,
@@ -232,9 +240,15 @@ function main() {
     commandStudio(options);
     return;
   }
-  if (command === "plan" || command === "run") {
+  if (command === "plan" || command === "check" || command === "run") {
     if (!file) throw new Error(`aaps ${command} requires a .aaps file.`);
     runRunner(command, file, options);
+    return;
+  }
+  if (command === "check-block") {
+    if (!file) throw new Error("aaps check-block requires a .aaps file.");
+    if (!options.block) throw new Error("aaps check-block requires --block <id>.");
+    runRunner("check", file, options);
     return;
   }
   if (command === "run-block") {

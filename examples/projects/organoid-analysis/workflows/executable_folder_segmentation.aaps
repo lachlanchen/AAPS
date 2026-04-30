@@ -1,0 +1,122 @@
+pipeline "Executable Folder Segmentation" {
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "biology"
+  tags "executable, folder, loop, segmentation, quantification"
+  execution_mode "local_deterministic"
+  artifact_dir "artifacts"
+  database "runs/executable-folder-segmentation.jsonl"
+  log_path "runs/executable-folder-segmentation.log"
+  requires_commands "python3"
+  requires_tools "threshold_segmentation, batch_summary"
+  requires_agents "codex_repair_agent, segmentation_method_selector"
+  requires_files "scripts/generate_synthetic_images.py, scripts/qc_image.py, scripts/threshold_segment.py, scripts/quantify_mask.py, scripts/summarize_batch.py"
+  environment python = "python3"
+  environment requirements = ""
+  safety allow_destructive_shell = "false"
+  goal "Generate demo images if needed, loop through every image, run QC, segment, quantify, validate masks, and summarize the batch."
+  input image_folder: folder required = "data/demo_images"
+  output batch_report: markdown = "reports/executable-folder-segmentation.md"
+
+  agent segmentation_method_selector {
+    role "Select deterministic thresholding for the local demo and prepare advanced tool prompts when needed."
+    model "prompt"
+    tools "threshold_segmentation"
+  }
+
+  task prepare_inputs {
+    input image_folder: folder required = "data/demo_images"
+    output image_folder: folder = "data/demo_images"
+    environment python = "python3"
+    requires_commands "python3"
+    requires_files "scripts/generate_synthetic_images.py"
+    compile_agent "codex_repair_agent"
+    exec python_script "scripts/generate_synthetic_images.py"
+    arg output_dir = "${input.image_folder}"
+    arg count = "4"
+    validate exists "${output.image_folder}"
+  }
+
+  for_each image_path in "list_files(data/demo_images, pattern=\"*.pgm\")" {
+    action qc_image {
+      input image_path: image required = "${image_path}"
+      output qc_report: json = "${run.artifacts}/${item.stem}.qc.json"
+      output qc_preview: image = "${run.artifacts}/${item.stem}.preview.pgm"
+      environment python = "python3"
+      requires_commands "python3"
+      requires_files "scripts/qc_image.py"
+      compile_agent "codex_repair_agent"
+      exec python_script "scripts/qc_image.py"
+      arg image_path = "${input.image_path}"
+      arg output_json = "${output.qc_report}"
+      arg preview_path = "${output.qc_preview}"
+      validate json "${output.qc_report}"
+      validate exists "${output.qc_preview}"
+      retry 1
+      repair true
+    }
+
+    action segment_image {
+      uses segmentation_method_selector
+      input image_path: image required = "${image_path}"
+      output mask_path: image = "${run.artifacts}/${item.stem}.mask.pgm"
+      output overlay_path: image = "${run.artifacts}/${item.stem}.overlay.pgm"
+      output segmentation_report: json = "${run.artifacts}/${item.stem}.segmentation.json"
+      environment python = "python3"
+      requires_commands "python3"
+      requires_tools "threshold_segmentation"
+      requires_files "scripts/threshold_segment.py"
+      compile_agent "codex_repair_agent"
+      tool "threshold_segmentation"
+      exec python_script "scripts/threshold_segment.py"
+      arg image_path = "${input.image_path}"
+      arg mask_path = "${output.mask_path}"
+      arg overlay_path = "${output.overlay_path}"
+      arg report_json = "${output.segmentation_report}"
+      validate exists "${output.mask_path}"
+      validate exists "${output.overlay_path}"
+      validate json "${output.segmentation_report}"
+      validate mask_not_empty "${output.mask_path}"
+      fallback "run: python3 scripts/threshold_segment.py --image-path ${input.image_path} --mask-path ${output.mask_path} --overlay-path ${output.overlay_path} --report-json ${output.segmentation_report} --threshold 70"
+      repair true
+    }
+
+    action quantify_mask {
+      input mask_path: image required = "${run.artifacts}/${item.stem}.mask.pgm"
+      output object_table: csv = "${run.artifacts}/${item.stem}.objects.csv"
+      output metrics_report: json = "${run.artifacts}/${item.stem}.metrics.json"
+      environment python = "python3"
+      requires_commands "python3"
+      requires_files "scripts/quantify_mask.py"
+      compile_agent "codex_repair_agent"
+      exec python_script "scripts/quantify_mask.py"
+      arg mask_path = "${input.mask_path}"
+      arg object_table = "${output.object_table}"
+      arg metrics_report = "${output.metrics_report}"
+      validate nonempty "${output.object_table}"
+      validate json "${output.metrics_report}"
+      repair true
+    }
+  }
+
+  task summarize_batch {
+    input artifacts_dir: folder required = "${run.artifacts}"
+    output combined_csv: csv = "${run.artifacts}/batch_summary.csv"
+    output summary_json: json = "${run.artifacts}/batch_summary.json"
+    output report: markdown = "reports/executable-folder-segmentation.md"
+    environment python = "python3"
+    requires_commands "python3"
+    requires_tools "batch_summary"
+    requires_files "scripts/summarize_batch.py"
+    compile_agent "codex_repair_agent"
+    exec python_script "scripts/summarize_batch.py"
+    arg artifacts_dir = "${input.artifacts_dir}"
+    arg output_csv = "${output.combined_csv}"
+    arg output_json = "${output.summary_json}"
+    arg output_report = "${output.report}"
+    validate nonempty "${output.combined_csv}"
+    validate json "${output.summary_json}"
+    validate nonempty "${output.report}"
+    review "Human reviews the combined report and overlays before adapting this workflow to real microscopy data."
+  }
+}

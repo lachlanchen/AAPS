@@ -13,7 +13,7 @@ Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.proje
 - Treat prompts as first-class code while making inputs and outputs explicit.
 - Represent reusable work as `skill` blocks and orchestration as `task` blocks.
 - Support nested `stage`, `action`, `method`, `choose`, `guard`, `if`, `else`, and `for_each` blocks.
-- Preserve enough structure for future Codex and AgInTiFlow runners to pause, resume, audit, and visualize work.
+- Preserve enough structure for Codex, agent wrappers, and future AgInTiFlow runners to preflight, compile missing code/setup, execute, recover, pause, resume, audit, and visualize work.
 
 ## Core Blocks
 
@@ -58,6 +58,13 @@ Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.proje
 | `requires_commands` | `requires_commands "python3, git"` |
 | `requires_files` | `requires_files "scripts/qc_image.py"` |
 | `requires_python_packages` | `requires_python_packages "numpy, scikit-image"` |
+| `requires_agents` | `requires_agents "codex_repair_agent"` |
+| `requires_tools` | `requires_tools "threshold_segmentation"` |
+| `environment` | `environment python = "python3"` |
+| `compile_agent` | `compile_agent "codex_repair_agent"` |
+| `compile_prompt` | `compile_prompt "Create missing project-local scripts safely."` |
+| `tool` | `tool "threshold_segmentation"` |
+| `test` | `test sample_input = "data/demo/example.pgm"` |
 | `execution_mode` | `execution_mode "local_deterministic"` |
 | `safety` | `safety allow_destructive_shell = "false"` |
 
@@ -75,7 +82,32 @@ Path("runtime/report.json").write_text('{"ok": true}\\n', encoding="utf-8")
 }
 ```
 
-Supported executable action types in the current runtime are `shell`, `sh`, `bash`, `python_script`, `python`, `python_inline`, `node_script`, `npm_script`, `manual`, `noop`, and `internal` (recorded unless an adapter is registered).
+Supported executable action types in the current runtime are `shell`, `sh`, `bash`, `python_script`, `python`, `python_inline`, `node_script`, `npm_script`, `agent`, `manual`, `noop`, and `internal` (recorded unless an adapter is registered).
+
+## Functional Block Contract
+
+A reusable block is executable when its contract is complete:
+
+```aaps
+block segment_image {
+  purpose "Segment one microscopy image."
+  input image_path: image required
+  output mask_path: image = "${run.artifacts}/${item.stem}.mask.pgm"
+  environment python = "python3"
+  requires_commands "python3"
+  requires_tools "threshold_segmentation"
+  requires_files "scripts/threshold_segment.py"
+  compile_agent "codex_repair_agent"
+  exec python_script "scripts/threshold_segment.py"
+  arg image_path = "${input.image_path}"
+  arg mask_path = "${output.mask_path}"
+  validate exists "${output.mask_path}"
+  validate mask_not_empty "${output.mask_path}"
+  repair true
+}
+```
+
+The plan records inputs, outputs, parameters, environment, tools, agents, scripts, executable actions, validation rules, recovery, tests, and source file for each block.
 
 ## Example
 
@@ -145,10 +177,11 @@ An AAPS runtime should:
 
 1. Parse `.aaps` into `aaps_ir/0.2`.
 2. Validate ports, dependencies, calls, and branch structure.
-3. Resolve project `include` dependencies, task dependencies, and loop expansion.
-4. Execute prompts and commands through bounded adapters.
-5. Persist every block state, selected method, output artifact, and QC result.
-6. Require `validate`, `verify`, and `guard` checks before advancing.
-7. Apply `recover` policies or `review` checkpoints when confidence is low or validation fails.
+3. Resolve project `include` dependencies, task dependencies, loop iterators, registries, and runtime variables.
+4. Preflight block readiness for inputs, scripts, commands, packages, tools, agents, and output paths.
+5. Execute prompts and commands through bounded adapters.
+6. Persist every block state, selected method, output artifact, and QC result.
+7. Require `validate`, `verify`, and `guard` checks before advancing.
+8. Apply `recover` policies or `review` checkpoints when confidence is low or validation fails.
 
-The current runtime implements project-aware imports, shell/Python/Node/noop/manual adapters, run logs, artifact existence checks, `exists` / `nonempty` / `json` validation, retry, fallback commands or fallback block IDs, and repair request files. See [runtime.md](runtime.md).
+The current runtime implements project-aware imports, loop execution over `list_files(...)`, shell/Python/Node/noop/manual/agent-prompt adapters, run logs, artifact checks, `exists` / `nonempty` / `json` / `mask_not_empty` validation, retry, fallback commands or fallback block IDs, readiness reports, setup prompts, and repair request files. See [runtime.md](runtime.md).
