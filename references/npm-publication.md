@@ -6,7 +6,7 @@ This note records the public, non-secret publication setup for AAPS.
 
 - npm package: `@lazyingart/aaps`
 - Initial release: `0.1.0`
-- Current package version: follows `package.json`
+- Current package version: follows `package.json`; check npm with `npm view @lazyingart/aaps version license dist-tags`
 - Homepage: `https://aaps.lazying.art`
 - Repository: `https://github.com/lachlanchen/AAPS`
 - CLI binary: `aaps`

@@ -24,6 +24,7 @@ AAPS is split into a language core, a local Studio app, and a landing website.
 - `npm run studio`: starts the local Studio plus Codex wrapper at `http://127.0.0.1:8796`.
 - `npm run build:website`: copies `src/aaps.js` into Studio and stages Studio under `website/studio/` for static deployment.
 - `python3 -m py_compile backend/aaps_codex_server.py`: checks the wrapper server syntax.
+- `npm pack --dry-run`: verifies the npm package contents before publishing.
 
 ## Coding Style & Naming Conventions
 
@@ -39,6 +40,17 @@ Add tests under `tests/` when changing parser behavior or serialization. Keep ex
 
 Use concise imperative commits such as `Add AAPS Studio` or `Fix parser diagnostics`. Pull requests should summarize language, Studio, wrapper, and deployment changes separately when they cross those boundaries. Include test commands and deployment notes for GitHub Pages changes.
 
+## Release & npm Publishing
+
+The public package is `@lazyingart/aaps`. After any minor or major functional edit to the CLI, parser, runtime, Studio, examples, package metadata, or public docs, keep the npm package valid and publish a new version.
+
+- Choose the version deliberately: patch for fixes/docs/package metadata, minor for compatible features, major for breaking CLI/language/runtime changes.
+- Update `package.json` before release; never republish an existing version.
+- Run `npm test`, `npm run project:validate`, `python3 -m py_compile backend/aaps_codex_server.py`, and `npm pack --dry-run`.
+- If `website/` or `studio/` changed, run `npm run build:website`, commit the main branch, then deploy `website/` to `gh-pages`.
+- Push `main`, then publish through GitHub Actions Trusted Publishing using `.github/workflows/npm-publish.yml`. Verify `npm view @lazyingart/aaps version license dist-tags`.
+- Record release-relevant npm notes in `references/npm-publication.md` without adding secrets.
+
 ## Security & Configuration
 
-Do not commit tokens or local runtime data. Codex wrapper jobs are written under `runtime/codex-jobs/`, which is ignored. Use `AAPS_MOCK_CODEX=1` for wrapper smoke tests without model calls.
+Do not commit tokens, OTPs, `.env`, `.npmrc`, `.aaps-work/`, npm debug logs, or local runtime data. Codex wrapper jobs are written under `runtime/codex-jobs/`, which is ignored. Use `AAPS_MOCK_CODEX=1` for wrapper smoke tests without model calls.

@@ -1,6 +1,6 @@
 {
   "name": "@lazyingart/aaps",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Autonomous Agentic Pipeline Script: prompt-native skills, tasks, loops, guards, and Studio.",
   "type": "commonjs",
   "private": false,
@@ -8,7 +8,7 @@
     "aaps": "scripts/aaps.js"
   },
   "files": [
-    "backend/",
+    "backend/aaps_codex_server.py",
     "docs/",
     "examples/*.aaps",
     "examples/projects/*/README.md",
