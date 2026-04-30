@@ -442,6 +442,8 @@ main {
 
 .project-summary,
 .project-files,
+#run-summary,
+#run-log,
 #project-structure {
   overflow: auto;
   min-height: 0;
@@ -450,6 +452,15 @@ main {
 }
 
 .project-summary {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#run-summary {
   display: grid;
   gap: 8px;
   border-bottom: 1px solid var(--line);
@@ -511,6 +522,7 @@ main {
   border-color: var(--violet);
 }
 
+#run-log,
 #project-structure {
   color: #f7f5ff;
   background: #171321;

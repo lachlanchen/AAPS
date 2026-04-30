@@ -276,7 +276,7 @@ h2 {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
 }
 
@@ -338,6 +338,12 @@ code {
   background:
     linear-gradient(90deg, rgba(255, 159, 28, 0.12), rgba(40, 199, 111, 0.1)),
     #fffdf8;
+}
+
+.runtime-band {
+  background:
+    linear-gradient(90deg, rgba(124, 58, 237, 0.1), rgba(0, 188, 212, 0.12)),
+    #ffffff;
 }
 
 .studio-preview {

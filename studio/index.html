@@ -92,10 +92,14 @@
             <label>Inputs <textarea id="field-inputs" rows="4" placeholder="image: image = path"></textarea></label>
             <label>Outputs <textarea id="field-outputs" rows="4" placeholder="mask: image = runtime/mask.png"></textarea></label>
             <label>Artifacts <textarea id="field-artifacts" rows="3" placeholder="overlay: image = runtime/overlay.png"></textarea></label>
+            <label>Exec Actions <textarea id="field-exec" rows="3" placeholder="shell = npm test&#10;python = scripts/qc_image.py"></textarea></label>
+            <label>Args <textarea id="field-args" rows="3" placeholder="image_path = data/raw/example.tif"></textarea></label>
             <label>Run Commands <textarea id="field-run" rows="3" placeholder="npm test"></textarea></label>
             <label>Validation Rules <textarea id="field-validations" rows="3" placeholder="output file exists"></textarea></label>
             <label>Verify Checks <textarea id="field-verify" rows="3" placeholder="All checks pass."></textarea></label>
             <label>Recovery Policies <textarea id="field-recovery" rows="3" placeholder="fallback to thresholding"></textarea></label>
+            <label>Repair <input id="field-repair" placeholder="true or false" /></label>
+            <label>Fallback <input id="field-fallback" placeholder="fallback block id or run: command" /></label>
             <label>Human Review <textarea id="field-reviews" rows="3" placeholder="approve overlay if confidence is low"></textarea></label>
             <div class="form-actions">
               <button type="submit">Save Block</button>
@@ -157,6 +161,8 @@
               <button id="validate-project-btn" type="button">Validate</button>
               <button id="save-project-btn" type="button">Save Manifest</button>
               <button id="save-active-file-btn" type="button">Save Active File</button>
+              <button id="dry-run-active-file-btn" type="button">Dry Run</button>
+              <button id="run-active-file-btn" type="button">Run</button>
             </div>
           </div>
           <textarea id="project-manifest" spellcheck="false"></textarea>
@@ -172,6 +178,18 @@
           </div>
           <div id="project-summary" class="project-summary"></div>
           <div id="project-files" class="project-files"></div>
+        </section>
+
+        <section class="panel project-structure-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Runtime</h2>
+              <p>Execution plan, action logs, artifact checks, recovery, and repair state.</p>
+            </div>
+            <span id="run-status">idle</span>
+          </div>
+          <div id="run-summary" class="run-summary"></div>
+          <pre id="run-log"></pre>
         </section>
 
         <section class="panel project-structure-panel">
