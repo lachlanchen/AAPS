@@ -66,6 +66,7 @@
           </div>
           <div class="library-grid">
             <button class="block block-agent" type="button" data-template="agent">Agent</button>
+            <button class="block block-task" type="button" data-template="block">Reusable Block</button>
             <button class="block block-skill" type="button" data-template="skill_appdev">AppDev Skill</button>
             <button class="block block-segment" type="button" data-template="skill_segment">Segmentation Skill</button>
             <button class="block block-writing" type="button" data-template="skill_writing">Writing Skill</button>
@@ -94,6 +95,7 @@
             <label>Artifacts <textarea id="field-artifacts" rows="3" placeholder="overlay: image = runtime/overlay.png"></textarea></label>
             <label>Exec Actions <textarea id="field-exec" rows="3" placeholder="shell = npm test&#10;python = scripts/qc_image.py"></textarea></label>
             <label>Args <textarea id="field-args" rows="3" placeholder="image_path = data/raw/example.tif"></textarea></label>
+            <label>Action Code <textarea id="field-code" rows="8" placeholder="Python inline code, shell script notes, or loaded external script preview"></textarea></label>
             <label>Run Commands <textarea id="field-run" rows="3" placeholder="npm test"></textarea></label>
             <label>Validation Rules <textarea id="field-validations" rows="3" placeholder="output file exists"></textarea></label>
             <label>Verify Checks <textarea id="field-verify" rows="3" placeholder="All checks pass."></textarea></label>
@@ -105,6 +107,23 @@
               <button type="submit">Save Block</button>
               <button id="delete-block" type="button">Delete</button>
             </div>
+            <section class="block-chat-box" aria-label="Block chat and code authoring">
+              <h3>Block Chat / Code</h3>
+              <textarea
+                id="block-chat-input"
+                rows="4"
+                placeholder="Try: write Python code for threshold segmentation, create shell command: npm test, inline QC Python"
+              ></textarea>
+              <div class="form-actions">
+                <button id="block-chat-btn" type="button">Apply Block Chat</button>
+                <button id="save-block-code-btn" type="button">Save Code</button>
+                <button id="externalize-block-code-btn" type="button">Inline → Script</button>
+                <button id="dry-run-block-btn" type="button">Dry Run Block</button>
+                <button id="run-block-btn" type="button">Run Block</button>
+                <button id="repair-prompt-btn" type="button">Repair Prompt</button>
+              </div>
+              <pre id="block-log"></pre>
+            </section>
           </form>
         </section>
       </section>
@@ -163,6 +182,13 @@
               <button id="save-active-file-btn" type="button">Save Active File</button>
               <button id="dry-run-active-file-btn" type="button">Dry Run</button>
               <button id="run-active-file-btn" type="button">Run</button>
+            </div>
+            <label>File Action Target <input id="project-file-target" placeholder="workflows/new_workflow.aaps or scripts/helper.py" /></label>
+            <div class="form-actions">
+              <button id="new-workflow-btn" type="button">New Workflow</button>
+              <button id="duplicate-active-file-btn" type="button">Duplicate Active</button>
+              <button id="archive-active-file-btn" type="button">Archive Active</button>
+              <button id="save-open-text-file-btn" type="button">Save Open Script</button>
             </div>
           </div>
           <textarea id="project-manifest" spellcheck="false"></textarea>
