@@ -239,14 +239,16 @@
             <h2>Designed for npm installation</h2>
             <p>
               AAPS is prepared as a scoped npm package so one install can provide the parser,
-              compiler/planner, CLI runner, and local Studio server. Publishing still requires
-              npm registry access for the `@lazyingart` scope.
+              compiler/planner, CLI runner, and local Studio server. Release publishing is
+              prepared for GitHub Actions Trusted Publishing, so npm can accept the workflow
+              through OIDC instead of a long-lived registry token.
             </p>
             <ul class="check-list">
               <li>CLI binary: `aaps`.</li>
               <li>Local webapp: `aaps studio --host 127.0.0.1 --port 8796`.</li>
               <li>Parser/compiler: `aaps parse`, `aaps plan`, and `aaps validate`.</li>
               <li>Runtime: `aaps run` and `aaps run-block`.</li>
+              <li>Publisher: GitHub `lachlanchen/AAPS`, workflow `npm-publish.yml`.</li>
             </ul>
           </div>
           <pre class="code-card"><code>npm install -g @lazyingart/aaps
