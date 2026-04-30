@@ -1,4 +1,5 @@
 const assert = require("assert");
+const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const AAPS = require("../src/aaps");
@@ -25,7 +26,7 @@ function findManifests(dir) {
   const manifests = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory() && ![".git", "node_modules", "vendor", "runtime"].includes(entry.name)) {
+    if (entry.isDirectory() && ![".git", ".aaps-work", "node_modules", "vendor", "runtime"].includes(entry.name)) {
       manifests.push(...findManifests(full));
     }
     else if (entry.name === "aaps.project.json") manifests.push(full);
@@ -80,6 +81,75 @@ assert(AAPS.projectStructureText(AAPS.sampleProject).includes("aaps.project.json
 const projectMain = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "main.aaps"));
 assert.strictEqual(projectMain.pipeline.includes.includes("blocks/qc_image.aaps"), true);
 assert.strictEqual(projectMain.diagnostics.length, 0, JSON.stringify(projectMain.diagnostics));
+
+const executable = parseFile(path.join(__dirname, "..", "examples", "executable_runtime.aaps"));
+assert.strictEqual(executable.pipeline.tasks[0].exec.length, 1);
+const executionPlan = AAPS.buildExecutionPlan(executable);
+assert.strictEqual(executionPlan.version, "aaps_plan/0.1");
+assert.strictEqual(executionPlan.executableSteps, 1);
+assert(executionPlan.steps.some((step) => step.repair === true));
+
+const runtimeResult = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    "examples/executable_runtime.aaps",
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "test-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(runtimeResult.status, 0, runtimeResult.stderr || runtimeResult.stdout);
+const runtimeSummary = JSON.parse(runtimeResult.stdout);
+assert.strictEqual(runtimeSummary.status, "succeeded");
+assert.strictEqual(runtimeSummary.plan.executableSteps, 1);
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "executable", "qc.json")));
+
+const fallbackDir = path.join(__dirname, "..", ".aaps-work", "tests");
+fs.mkdirSync(fallbackDir, { recursive: true });
+const fallbackFile = path.join(fallbackDir, "fallback.aaps");
+fs.writeFileSync(
+  fallbackFile,
+  `pipeline "Fallback Runtime Test" {
+  domain "runtime"
+  database "runtime/runs/fallback_runtime.jsonl"
+  task primary {
+    retry 0
+    fallback "run: mkdir -p runtime/artifacts/executable && printf fallback > runtime/artifacts/executable/fallback.txt"
+    exec shell "false"
+  }
+}
+`,
+  "utf8"
+);
+const fallbackResult = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    fallbackFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "test-runtime-fallback",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(fallbackResult.status, 0, fallbackResult.stderr || fallbackResult.stdout);
+const fallbackSummary = JSON.parse(fallbackResult.stdout);
+assert.strictEqual(fallbackSummary.results[0].status, "recovered");
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "executable", "fallback.txt")));
 
 const badProject = AAPS.validateProjectManifest({
   ...AAPS.sampleProject,

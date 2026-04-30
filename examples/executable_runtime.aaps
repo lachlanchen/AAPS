@@ -1,0 +1,31 @@
+pipeline "Executable Runtime Smoke Test" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "runtime"
+  tags "runtime, executable, validation, repair"
+  artifact_dir "runtime/artifacts/executable"
+  database "runtime/runs/executable_runtime.jsonl"
+  log_path "runtime/logs/executable_runtime.log"
+  goal "Demonstrate that AAPS can execute shell actions, generate artifacts, validate outputs, and record run state."
+  output qc_report: json = "runtime/artifacts/executable/qc.json"
+  output preview: text = "runtime/artifacts/executable/preview.txt"
+
+  agent runner {
+    role "Local runtime executor for deterministic AAPS actions."
+    model "local"
+    tools "shell, filesystem"
+  }
+
+  task qc_image {
+    uses runner
+    retry 1
+    repair true
+    exec shell "mkdir -p runtime/artifacts/executable && printf '%s\n' '{"ok":true,"stage":"qc"}' > runtime/artifacts/executable/qc.json && printf '%s\n' 'preview ok' > runtime/artifacts/executable/preview.txt"
+    output qc_report: json = "runtime/artifacts/executable/qc.json"
+    output preview: text = "runtime/artifacts/executable/preview.txt"
+    validate exists "runtime/artifacts/executable/qc.json"
+    validate json "runtime/artifacts/executable/qc.json"
+    validate nonempty "runtime/artifacts/executable/preview.txt"
+    recover "Retry once, then emit a repair request with stdout, stderr, and failed validation context."
+  }
+}

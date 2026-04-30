@@ -138,6 +138,30 @@ For wrapper smoke tests without model calls:
 AAPS_MOCK_CODEX=1 npm run studio
 ```
 
+## Executable Runtime
+
+AAPS can execute deterministic actions today. Use `run` for shell commands or `exec` for typed actions:
+
+```aaps
+task qc_image {
+  retry 1
+  repair true
+  exec shell "python3 scripts/qc_image.py --image data/raw/example.tif --out artifacts/qc.json"
+  validate exists "artifacts/qc.json"
+  validate json "artifacts/qc.json"
+  fallback "run: python3 scripts/basic_qc.py --out artifacts/qc.json"
+}
+```
+
+Run locally:
+
+```bash
+node scripts/aaps-runner.js plan --source examples/executable_runtime.aaps --project . --json
+node scripts/aaps-runner.js run --source examples/executable_runtime.aaps --project . --json
+```
+
+Runs write `run.json`, `events.jsonl`, stdout/stderr logs, repair requests, and `report.md` under `runtime/aaps-runs/<run-id>/`. See [docs/runtime.md](docs/runtime.md).
+
 ## Codex Wrapper
 
 AAPS currently uses Codex as the primary local agent executor. The wrapper exposes:
@@ -150,6 +174,8 @@ GET  /api/aaps/project
 POST /api/aaps/project
 GET  /api/aaps/project/file
 POST /api/aaps/project/file
+POST /api/aaps/run
+GET  /api/aaps/run?id=<run-id>
 POST /api/codex/respond
 POST /api/codex/jobs
 GET  /api/codex/job?id=<job-id>
@@ -183,6 +209,7 @@ aaps.lazying.art
 npm test
 python3 -m py_compile backend/aaps_codex_server.py
 npm run project:validate
+node scripts/aaps-runner.js run --source examples/executable_runtime.aaps --project . --json
 npm run build:website
 ```
 

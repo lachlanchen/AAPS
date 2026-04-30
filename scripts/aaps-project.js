@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const AAPS = require("../src/aaps");
 
-const SKIP_DIRS = new Set([".git", "node_modules", "vendor", "runtime"]);
+const SKIP_DIRS = new Set([".git", ".aaps-work", "node_modules", "vendor", "runtime"]);
 
 function toProjectPath(file) {
   return file.split(path.sep).join("/");

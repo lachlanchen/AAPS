@@ -40,9 +40,13 @@ Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.proje
 | `artifact` | `artifact overlay: image = "runtime/overlay.png"` |
 | `prompt` | `prompt "Inspect the image and choose a method."` |
 | `run` | `run "npm test"` |
+| `exec` | `exec shell "python3 scripts/qc.py --out artifacts/qc.json"` |
+| `arg` | `arg image_path = "data/raw/example.tif"` |
 | `validate` | `validate "mask is non-empty"` |
 | `verify` | `verify "Mask boundaries match visible objects."` |
 | `recover` | `recover "fallback to thresholding"` |
+| `repair` | `repair true` |
+| `fallback` | `fallback "run: python3 scripts/basic_qc.py"` |
 | `review` | `review "human approves low-confidence overlay"` |
 | `call` | `call segment_image as segmentation` |
 | `param` | `param diameter = "auto"` |
@@ -124,3 +128,5 @@ An AAPS runtime should:
 5. Persist every block state, selected method, output artifact, and QC result.
 6. Require `validate`, `verify`, and `guard` checks before advancing.
 7. Apply `recover` policies or `review` checkpoints when confidence is low or validation fails.
+
+The current runtime implements a minimal subset: shell and Python execution, run logs, artifact existence checks, `exists` / `nonempty` / `json` validation, retry, fallback commands or fallback block IDs, and repair request files. See [runtime.md](runtime.md).

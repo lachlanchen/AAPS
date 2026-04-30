@@ -20,8 +20,9 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO_DIR = ROOT / "studio"
 RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
+RUN_DIR = ROOT / "runtime" / "aaps-runs"
 PROJECT_MANIFEST = "aaps.project.json"
-SKIP_SCAN_DIRS = {".git", "node_modules", "vendor", "runtime", "__pycache__"}
+SKIP_SCAN_DIRS = {".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"}
 SCHEMAS = {
     "response": ROOT / "schemas" / "aaps_response.schema.json",
     "aaps_edit": ROOT / "schemas" / "aaps_edit.schema.json",
@@ -159,6 +160,26 @@ def read_job(job_id: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def run_dir(run_id: str) -> Path:
+    return RUN_DIR / run_id
+
+
+def write_run_record(run_id: str, payload: dict) -> None:
+    folder = run_dir(run_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "api-run.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def read_run_record(run_id: str) -> dict | None:
+    path = run_dir(run_id) / "api-run.json"
+    if not path.exists():
+        summary = run_dir(run_id) / "run.json"
+        if summary.exists():
+            return json.loads(summary.read_text(encoding="utf-8"))
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def codex_command(schema: str, output_path: Path) -> list[str]:
     model = os.environ.get("AAPS_CODEX_MODEL", "gpt-5.3-codex")
     reasoning = os.environ.get("AAPS_CODEX_REASONING", "medium")
@@ -226,7 +247,9 @@ Return JSON matching the schema:
 AAPS v0.2 supports:
 - `pipeline`, `agent`, `skill`, `task`, `stage`, `method`, `action`, `guard`, `choose`, `if`, `else`, `for_each`
 - typed `input` and `output` ports
-- `prompt`, `run`, `verify`, `call`, `param`, `metric`, and `policy`
+- `prompt`, `run`, `exec`, `arg`, `verify`, `call`, `param`, `metric`, and `policy`
+- executable validation with `validate exists`, `validate nonempty`, and `validate json`
+- runtime recovery with `retry`, `fallback`, `repair true`, `recover`, and `review`
 - project-root relative `include` statements
 - AAPS projects with `aaps.project.json` for blocks, skills, modules, subworkflows, workflows, drafts, archives, artifacts, and runs
 
@@ -346,6 +369,91 @@ def start_job(body: dict, schema: str = "response", prompt: str | None = None) -
     return record
 
 
+def start_aaps_run(body: dict) -> dict:
+    run_id = uuid.uuid4().hex[:16]
+    folder = run_dir(run_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    project_dir = safe_repo_path(str(body.get("path") or "."))
+    project_arg = project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else "."
+    dry_run = bool(body.get("dryRun") or body.get("dry_run"))
+    source = str(body.get("source") or "")
+    file_name = str(body.get("file") or "").strip()
+    source_path = ""
+    if source:
+        source_path = str(folder / "input.aaps")
+        (folder / "input.aaps").write_text(source, encoding="utf-8")
+    elif file_name:
+        relative_to_project(project_dir, file_name)
+    else:
+        project = read_project(project_dir)["manifest"]
+        file_name = str(project.get("activeFile") or project.get("defaultMain") or "")
+        if file_name:
+            relative_to_project(project_dir, file_name)
+
+    record = {
+        "id": run_id,
+        "status": "running",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "project": project_arg,
+        "file": file_name,
+        "dryRun": dry_run,
+        "result": None,
+        "error": "",
+    }
+    write_run_record(run_id, record)
+
+    def worker() -> None:
+        current = read_run_record(run_id) or record
+        command = [
+            "node",
+            str(ROOT / "scripts" / "aaps-runner.js"),
+            "run",
+            "--project",
+            project_arg,
+            "--run-root",
+            str(RUN_DIR),
+            "--run-id",
+            run_id,
+            "--json",
+        ]
+        if source_path:
+            command.extend(["--source", source_path])
+        elif file_name:
+            command.extend(["--file", file_name])
+        if dry_run:
+            command.append("--dry-run")
+        try:
+            process = subprocess.run(
+                command,
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                timeout=int(os.environ.get("AAPS_RUNTIME_TIMEOUT", "1800")),
+                check=False,
+            )
+            (folder / "api-stdout.log").write_text(process.stdout or "", encoding="utf-8")
+            (folder / "api-stderr.log").write_text(process.stderr or "", encoding="utf-8")
+            try:
+                result = json.loads(process.stdout)
+            except json.JSONDecodeError:
+                result = {"message": process.stdout.strip()}
+            current.update(
+                {
+                    "status": "succeeded" if result.get("ok") else "failed",
+                    "updated_at": now_iso(),
+                    "result": result,
+                    "error": process.stderr.strip() if process.returncode and not result.get("ok") else "",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            current.update({"status": "failed", "updated_at": now_iso(), "error": str(exc)})
+        write_run_record(run_id, current)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return record
+
+
 class AAPSHandler(SimpleHTTPRequestHandler):
     server_version = "AAPSStudio/0.1"
 
@@ -417,6 +525,11 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(self, {"error": "job not found"}, 404)
                 return
             write_json(self, {"id": job_id, "status": record["status"], "result": record.get("result")})
+            return
+        if parsed.path == "/api/aaps/run":
+            run_id = parse_qs(parsed.query).get("id", [""])[0]
+            record = read_run_record(run_id)
+            write_json(self, record or {"error": "run not found"}, 200 if record else 404)
             return
         super().do_GET()
 
@@ -526,6 +639,13 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(self, {"error": str(exc)}, 400)
             return
 
+        if parsed.path == "/api/aaps/run":
+            try:
+                write_json(self, start_aaps_run(body), 202)
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
         if parsed.path == "/api/codex/respond":
             schema = str(body.get("schema") or "response")
             job_id = uuid.uuid4().hex[:16]
@@ -550,7 +670,7 @@ def main() -> None:
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/project, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/project, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 

@@ -62,6 +62,7 @@
       "examples/organoid_segmentation.aaps",
       "examples/app_development_review.aaps",
       "examples/book_writing_pipeline.aaps",
+      "examples/executable_runtime.aaps",
       "examples/hello.aaps"
     ],
     "drafts": [],

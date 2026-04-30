@@ -15,13 +15,22 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
   - agents, skills, tasks, stages, actions, methods, guards, handoffs, choose blocks
   - `if`, `else`, and `for_each`
   - project-root relative `include` dependencies
-  - `param`, `metric`, `policy`, `artifact`, `validate`, `verify`, `recover`, and `review`
+  - `param`, `metric`, `policy`, `artifact`, `exec`, `arg`, `validate`, `verify`, `recover`, `repair`, `fallback`, and `review`
 - AAPS Project support:
   - `aaps.project.json` manifest format
   - shared manifest normalization and validation helpers
   - file categories for blocks, skills, modules, subworkflows, workflows, drafts, archives, and references
   - local `/api/aaps/project` and `/api/aaps/project/file` APIs
   - example multi-file project under `examples/projects/organoid-analysis`
+- Minimal executable runtime:
+  - `aaps_plan/0.1` execution plan generation
+  - `run` and `exec shell` / `exec python` action execution
+  - `arg`, `retry`, `repair true`, and `fallback` runtime declarations
+  - stdout/stderr logs, `events.jsonl`, `run.json`, and Markdown run reports
+  - executable `validate exists`, `validate nonempty`, and `validate json` checks
+  - fallback command and fallback block recovery
+  - local `/api/aaps/run` start/poll API
+  - Studio Project tab dry-run/run controls and runtime status panel
 - Reference source scripts copied under `references/pipeline-scripts/sources/`.
 - General converted `.aaps` scripts under `references/pipeline-scripts/converted/`.
 - Required named examples:
@@ -41,6 +50,7 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
   - tool routing
   - validation/recovery/review
   - project manifests and multi-file example projects
+  - executable runtime success and fallback recovery
   - invalid syntax/missing pipeline
   - every example `.aaps`
   - every converted reference `.aaps`
@@ -50,26 +60,28 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
 - Visualization is a structured nested tree, not a graph canvas with edges.
 - Parser diagnostics currently include line numbers, not columns.
 - Chat local fallback supports common edit commands; full natural-language editing depends on the Codex wrapper.
-- Human review, recovery, artifact tracking, database paths, and execution logs are represented in grammar/IR but are not yet executed by a runtime.
+- Prompt-only/model-only steps are recorded by the runtime but not executed unless they declare supported executable actions.
+- Human review checkpoints are represented and logged, but there is not yet a dedicated review queue UI.
 - `include` dependencies are parsed and validated as relative paths, but they are not yet resolved into a merged executable module graph.
+- Conditional expressions are preserved in execution plans, but advanced data-dependent branch evaluation is still future runtime work.
 - Source references are selective and strongest for AutoAppDev, LazyBlog, OrganoidQuant, and OrganoidCompactnessAnalysis. Broader repos were inspected for relevant files, but not every listed project produced a copied source reference.
 
 ## Not Yet Implemented
 
-- Real block execution engine.
-- Run state machine with pause/resume/repair.
-- Artifact database writer.
-- Validation runner that checks files, masks, plots, screenshots, or manuscript outputs.
+- Full block execution engine for model/API/internal tools.
+- Run state machine with pause/resume and human approval checkpoints.
+- Rich artifact database writer beyond JSONL summaries.
+- Domain-specific validation runner for masks, plots, screenshots, or manuscript outputs.
 - Human review UI queue.
 - Import/conversion CLI for arbitrary old pipeline scripts.
 - Graph layout with explicit dependency edges.
 
 ## Next Implementation Step
 
-Build the minimal runtime:
+Build the fuller runtime:
 
 ```text
-.aaps -> parse -> execution plan -> run executable blocks -> write artifacts/logs -> validate -> recover/review -> report
+.aaps -> parse -> resolve includes -> evaluate branches/loops -> run executable/model blocks -> write artifacts/logs -> validate -> recover/review -> report
 ```
 
-The smallest useful version should execute `run` commands, record per-block status in `runtime/runs/*.jsonl`, check declared artifacts, and stop or recover according to `validate`, `recover`, and `review` statements.
+The next useful version should resolve multi-file includes into a module graph, evaluate branch conditions from runtime state, add review pause/resume, and attach model/tool adapters beyond shell and Python.

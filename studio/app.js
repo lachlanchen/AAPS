@@ -16,6 +16,9 @@ const projectStructureEl = document.getElementById("project-structure");
 const projectStatusEl = document.getElementById("project-status");
 const projectFileCountEl = document.getElementById("project-file-count");
 const projectPathEl = document.getElementById("project-path");
+const runStatusEl = document.getElementById("run-status");
+const runSummaryEl = document.getElementById("run-summary");
+const runLogEl = document.getElementById("run-log");
 
 const fields = {
   kind: document.getElementById("field-kind"),
@@ -25,10 +28,14 @@ const fields = {
   inputs: document.getElementById("field-inputs"),
   outputs: document.getElementById("field-outputs"),
   artifacts: document.getElementById("field-artifacts"),
+  exec: document.getElementById("field-exec"),
+  args: document.getElementById("field-args"),
   run: document.getElementById("field-run"),
   validations: document.getElementById("field-validations"),
   verify: document.getElementById("field-verify"),
   recovery: document.getElementById("field-recovery"),
+  repair: document.getElementById("field-repair"),
+  fallback: document.getElementById("field-fallback"),
   reviews: document.getElementById("field-reviews"),
 };
 
@@ -40,6 +47,7 @@ let currentProjectPayload = {
   files: AAPS.projectFileIndex(AAPS.sampleProject),
   manifest_exists: false,
 };
+let activeRunId = "";
 
 function escapeHtml(value) {
   return String(value || "")
@@ -118,6 +126,29 @@ function renderProject(payload = currentProjectPayload) {
   }).join("") || '<div class="message">No `.aaps` files listed in this project.</div>';
 }
 
+function renderRuntime(record) {
+  if (!record) {
+    runStatusEl.textContent = "idle";
+    runSummaryEl.innerHTML = '<div>No run has started.</div>';
+    runLogEl.textContent = "";
+    return;
+  }
+  const result = record.result || record;
+  runStatusEl.textContent = record.status || result.status || "unknown";
+  const plan = result.plan || {};
+  const failed = (result.results || []).filter((item) => item.status === "failed").length;
+  runSummaryEl.innerHTML = `
+    <div><strong>${escapeHtml(result.runId || record.id || "")}</strong> · ${escapeHtml(result.file || record.file || "")}</div>
+    <div class="project-kpis">
+      <div class="project-kpi"><strong>${plan.steps || 0}</strong>steps</div>
+      <div class="project-kpi"><strong>${plan.executableSteps || 0}</strong>exec</div>
+      <div class="project-kpi"><strong>${failed}</strong>failed</div>
+    </div>
+    <div>${escapeHtml(result.runDir || "")}</div>
+  `;
+  runLogEl.textContent = JSON.stringify(result, null, 2);
+}
+
 function getIr() {
   return AAPS.parseAAPS(sourceEl.value);
 }
@@ -156,9 +187,46 @@ function parsePorts(text) {
   });
 }
 
+function parseKeyValues(text) {
+  const values = {};
+  parseLines(text).forEach((line) => {
+    const match = line.match(/^([A-Za-z_][\w.-]*)\s*=\s*(.+)$/);
+    if (match) values[match[1]] = match[2];
+  });
+  return values;
+}
+
+function parseExecActions(text) {
+  return parseLines(text).map((line, index) => {
+    const match = line.match(/^([A-Za-z_][\w.-]*)\s*=\s*(.+)$/);
+    const type = match ? match[1].toLowerCase() : "shell";
+    const value = match ? match[2] : line;
+    return {
+      id: `exec_${index + 1}`,
+      type,
+      command: ["shell", "sh", "bash"].includes(type) ? value : "",
+      entry: ["shell", "sh", "bash"].includes(type) ? "" : value,
+      args: {},
+      source: "exec",
+    };
+  });
+}
+
 function portLines(ports) {
   return (ports || [])
     .map((port) => `${port.name}: ${port.type || "artifact"}${port.value ? ` = ${port.value}` : ""}`)
+    .join("\n");
+}
+
+function keyValueLines(values) {
+  return Object.entries(values || {})
+    .map(([key, value]) => `${key} = ${value}`)
+    .join("\n");
+}
+
+function execLines(steps) {
+  return (steps || [])
+    .map((step) => `${step.type || "shell"} = ${step.command || step.entry || ""}`)
     .join("\n");
 }
 
@@ -245,10 +313,14 @@ function fillInspector(node) {
   fields.inputs.value = portLines(node.inputs || []);
   fields.outputs.value = portLines(node.outputs || []);
   fields.artifacts.value = portLines(node.artifacts || []);
+  fields.exec.value = execLines(node.exec || []);
+  fields.args.value = keyValueLines(node.args || {});
   fields.run.value = (node.run || []).join("\n");
   fields.validations.value = (node.validations || []).join("\n");
   fields.verify.value = (node.verify || []).join("\n");
   fields.recovery.value = (node.recovery || []).join("\n");
+  fields.repair.value = node.repair ? "true" : "false";
+  fields.fallback.value = node.fallback || "";
   fields.reviews.value = (node.reviews || []).join("\n");
 }
 
@@ -296,6 +368,10 @@ function templateNode(kind, ir) {
       recovery: [],
       reviews: [],
       artifacts: [],
+      exec: [],
+      args: {},
+      repair: false,
+      fallback: "",
       calls: [],
       run: [],
       verify: [],
@@ -323,6 +399,10 @@ function templateNode(kind, ir) {
     params: {},
     metrics: {},
     policies: {},
+    exec: [],
+    args: {},
+    repair: false,
+    fallback: "",
     calls: [],
     run: [],
     verify: ["The block result is reviewed."],
@@ -393,10 +473,15 @@ function applyInspector() {
   node.inputs = parsePorts(fields.inputs.value);
   node.outputs = parsePorts(fields.outputs.value);
   node.artifacts = parsePorts(fields.artifacts.value);
+  node.exec = parseExecActions(fields.exec.value);
+  node.args = parseKeyValues(fields.args.value);
+  if (node.exec.length) node.exec[node.exec.length - 1].args = { ...node.args };
   node.run = parseLines(fields.run.value);
   node.validations = parseLines(fields.validations.value);
   node.verify = parseLines(fields.verify.value);
   node.recovery = parseLines(fields.recovery.value);
+  node.repair = /^(true|yes|on|1)$/i.test(fields.repair.value.trim());
+  node.fallback = fields.fallback.value.trim();
   node.reviews = parseLines(fields.reviews.value);
   const ir = getIr();
   const replacement = clone(node);
@@ -578,6 +663,53 @@ async function saveActiveProjectFile() {
   addMessage("assistant", `Saved ${file}.`);
 }
 
+async function pollRun(id) {
+  const response = await fetch(`/api/aaps/run?id=${encodeURIComponent(id)}`);
+  if (!response.ok) throw new Error(`run status returned ${response.status}`);
+  const record = await response.json();
+  renderRuntime(record);
+  if (record.status === "running") {
+    window.setTimeout(() => {
+      pollRun(id).catch((error) => {
+        runStatusEl.textContent = "poll failed";
+        runLogEl.textContent = error.message;
+      });
+    }, 1200);
+  } else {
+    addMessage("assistant", `AAPS run ${id} ${record.status}.`);
+  }
+}
+
+async function startRuntimeRun(dryRun) {
+  const manifest = getProjectManifest();
+  if (manifest.error) {
+    projectStatusEl.textContent = "invalid JSON";
+    throw new Error(manifest.error);
+  }
+  const file = manifest.activeFile || manifest.defaultMain || "pipeline.aaps";
+  runStatusEl.textContent = dryRun ? "dry run starting" : "run starting";
+  runSummaryEl.innerHTML = '<div>Submitting AAPS runtime job...</div>';
+  runLogEl.textContent = "";
+  const response = await fetch("/api/aaps/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: projectPathEl.value || ".",
+      file,
+      source: sourceEl.value,
+      dryRun,
+    }),
+  });
+  if (!response.ok) throw new Error(`run API returned ${response.status}`);
+  const record = await response.json();
+  activeRunId = record.id;
+  renderRuntime(record);
+  pollRun(record.id).catch((error) => {
+    runStatusEl.textContent = "poll failed";
+    runLogEl.textContent = error.message;
+  });
+}
+
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll("[data-tab]").forEach((item) => item.classList.remove("is-active"));
@@ -700,10 +832,23 @@ document.getElementById("save-active-file-btn").addEventListener("click", () => 
   });
 });
 
+document.getElementById("dry-run-active-file-btn").addEventListener("click", () => {
+  startRuntimeRun(true).catch((error) => {
+    addMessage("assistant", `Could not dry run active file: ${error.message}`);
+  });
+});
+
+document.getElementById("run-active-file-btn").addEventListener("click", () => {
+  startRuntimeRun(false).catch((error) => {
+    addMessage("assistant", `Could not run active file: ${error.message}`);
+  });
+});
+
 sourceEl.value = AAPS.samples.biology;
 addMessage("assistant", "AAPS Studio is ready. Use chat to prepare skills or edit source directly.");
 render();
 renderProject(currentProjectPayload);
+renderRuntime(null);
 loadProject().catch(() => {});
 
 if ("serviceWorker" in navigator) {

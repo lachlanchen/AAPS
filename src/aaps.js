@@ -147,6 +147,10 @@
       recovery: [],
       reviews: [],
       artifacts: [],
+      exec: [],
+      args: {},
+      repair: false,
+      fallback: "",
       calls: [],
       run: [],
       verify: [],
@@ -389,6 +393,33 @@
         return;
       }
 
+      match = line.match(/^arg\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        const kv = parseKeyValue(match[1]);
+        if (!kv) {
+          diagnostic(lineNumber, "arg must use name = value.");
+          return;
+        }
+        target.args[kv.key] = kv.value;
+        if (target.exec && target.exec.length) {
+          target.exec[target.exec.length - 1].args[kv.key] = kv.value;
+        }
+        return;
+      }
+
+      match = line.match(/^(exec|execute)\s+([A-Za-z_][\w.-]*)(?:\s+(.+))?$/i);
+      if (match && target !== ir.pipeline) {
+        const type = match[2].toLowerCase();
+        const value = unquote(match[3] || "");
+        target.exec.push({
+          type,
+          command: ["shell", "sh", "bash"].includes(type) ? value : "",
+          entry: ["shell", "sh", "bash"].includes(type) ? "" : value,
+          args: {},
+        });
+        return;
+      }
+
       match = line.match(/^(validate|validation|verify_rule)\s+(.+)$/i);
       if (match) {
         target.validations.push(unquote(match[2]));
@@ -398,6 +429,18 @@
       match = line.match(/^(recover|recovery|on_error)\s+(.+)$/i);
       if (match) {
         target.recovery.push(unquote(match[2]));
+        return;
+      }
+
+      match = line.match(/^repair\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.repair = /^(true|yes|on|1)$/i.test(unquote(match[1]));
+        return;
+      }
+
+      match = line.match(/^fallback\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.fallback = unquote(match[1]);
         return;
       }
 
@@ -550,6 +593,13 @@
     if (node.agent) lines.push(`${childIndent}uses ${node.agent}`);
     lines.push(...serializePorts(node, childIndent));
     (node.artifacts || []).forEach((artifact) => lines.push(`${childIndent}artifact ${artifact.name}: ${artifact.type || "artifact"}${artifact.value ? ` = ${quote(artifact.value)}` : ""}${artifact.validation ? ` validate ${quote(artifact.validation)}` : ""}`));
+    (node.exec || []).forEach((step) => {
+      const executable = step.command || step.entry || "";
+      lines.push(`${childIndent}exec ${step.type || "shell"} ${quote(executable)}`);
+      Object.entries(step.args || {}).forEach(([key, value]) => {
+        lines.push(`${childIndent}arg ${key} = ${quote(value)}`);
+      });
+    });
     Object.entries(node.params || {}).forEach(([key, value]) => lines.push(`${childIndent}param ${key} = ${quote(value)}`));
     Object.entries(node.metrics || {}).forEach(([key, value]) => lines.push(`${childIndent}metric ${key} = ${quote(value)}`));
     Object.entries(node.policies || {}).forEach(([key, value]) => lines.push(`${childIndent}policy ${key} = ${quote(value)}`));
@@ -563,6 +613,8 @@
     (node.validations || []).forEach((check) => lines.push(`${childIndent}validate ${quote(check)}`));
     (node.verify || []).forEach((check) => lines.push(`${childIndent}verify ${quote(check)}`));
     (node.recovery || []).forEach((step) => lines.push(`${childIndent}recover ${quote(step)}`));
+    if (node.repair) lines.push(`${childIndent}repair true`);
+    if (node.fallback) lines.push(`${childIndent}fallback ${quote(node.fallback)}`);
     (node.reviews || []).forEach((review) => lines.push(`${childIndent}review ${quote(review)}`));
     (node.notes || []).forEach((note) => lines.push(`${childIndent}note ${quote(note)}`));
     (node.children || []).forEach((child) => {
@@ -622,10 +674,13 @@
     if (node.outputs && node.outputs.length) lines.push(`${prefix}  - Outputs: ${node.outputs.map((port) => `${port.name}:${port.type}`).join(", ")}`);
     if (node.artifacts && node.artifacts.length) lines.push(`${prefix}  - Artifacts: ${node.artifacts.map((artifact) => artifact.name).join(", ")}`);
     (node.calls || []).forEach((call) => lines.push(`${prefix}  - Calls: ${call.skill}${call.as ? ` as ${call.as}` : ""}`));
+    (node.exec || []).forEach((step) => lines.push(`${prefix}  - Exec: ${step.type} ${step.command || step.entry}`));
     (node.run || []).forEach((command) => lines.push(`${prefix}  - Run: \`${command}\``));
     (node.validations || []).forEach((check) => lines.push(`${prefix}  - Validate: ${check}`));
     (node.verify || []).forEach((check) => lines.push(`${prefix}  - Verify: ${check}`));
     (node.recovery || []).forEach((step) => lines.push(`${prefix}  - Recovery: ${step}`));
+    if (node.repair) lines.push(`${prefix}  - Repair: enabled`);
+    if (node.fallback) lines.push(`${prefix}  - Fallback: ${node.fallback}`);
     (node.reviews || []).forEach((review) => lines.push(`${prefix}  - Human review: ${review}`));
     (node.children || []).forEach((child) => nodeSummary(child, depth + 1, lines));
   }
@@ -669,6 +724,148 @@
     lines.push("## Program", "");
     (pipeline.tasks || []).forEach((task) => nodeSummary(task, 0, lines));
     return lines.join("\n");
+  }
+
+  function nodeActions(node) {
+    const actions = [];
+    (node.run || []).forEach((command, index) => {
+      actions.push({
+        id: `${node.id || node.kind}_run_${index + 1}`,
+        type: "shell",
+        command,
+        entry: "",
+        args: {},
+        source: "run",
+      });
+    });
+    (node.exec || []).forEach((step, index) => {
+      actions.push({
+        id: `${node.id || node.kind}_exec_${index + 1}`,
+        type: step.type || "shell",
+        command: step.command || "",
+        entry: step.entry || "",
+        args: { ...(node.args || {}), ...(step.args || {}) },
+        source: "exec",
+      });
+    });
+    return actions;
+  }
+
+  function nodeArtifacts(node) {
+    const ports = [...(node.outputs || []), ...(node.artifacts || [])];
+    return ports
+      .filter((port) => port && port.value)
+      .map((port) => ({
+        name: port.name,
+        type: port.type || "artifact",
+        path: port.value,
+        validation: port.validation || "",
+      }));
+  }
+
+  function indexDefinitions(pipeline) {
+    const definitions = new Map();
+    function walk(node) {
+      if (node && node.id && !definitions.has(node.id)) definitions.set(node.id, node);
+      (node.children || []).forEach(walk);
+    }
+    [...(pipeline.agents || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach(walk);
+    return definitions;
+  }
+
+  function buildExecutionPlan(ir, options = {}) {
+    const pipeline = ir.pipeline || createPipeline();
+    const definitions = indexDefinitions(pipeline);
+    const steps = [];
+    const warnings = [];
+    const roots =
+      options.roots ||
+      (pipeline.tasks && pipeline.tasks.length
+        ? pipeline.tasks
+        : pipeline.skills && pipeline.skills.length
+          ? pipeline.skills
+          : []);
+
+    function addWarning(message, path) {
+      warnings.push({ message, path: path.join("/") });
+    }
+
+    function walkNode(node, path, callStack) {
+      const actions = nodeActions(node);
+      const artifacts = nodeArtifacts(node);
+      const step = {
+        key: path.join("/"),
+        id: node.id,
+        kind: node.kind,
+        title: node.title || "",
+        path: path.join("/"),
+        prompt: node.prompt || "",
+        condition: node.condition || "",
+        iterator: node.iterator || null,
+        agent: node.agent || "",
+        actions,
+        executable: actions.length > 0,
+        promptOnly: Boolean(node.prompt && actions.length === 0),
+        inputs: node.inputs || [],
+        outputs: node.outputs || [],
+        artifacts,
+        validations: node.validations || [],
+        verify: node.verify || [],
+        recovery: node.recovery || [],
+        reviews: node.reviews || [],
+        retry: Number(node.params && node.params.retry ? node.params.retry : 0),
+        timeout: node.params && node.params.timeout ? node.params.timeout : "",
+        repair: Boolean(node.repair),
+        fallback: node.fallback || "",
+        calls: node.calls || [],
+      };
+      if (
+        step.executable ||
+        step.promptOnly ||
+        step.validations.length ||
+        step.verify.length ||
+        step.recovery.length ||
+        step.reviews.length ||
+        step.artifacts.length ||
+        ["task", "action", "method", "guard", "stage", "for_each", "if", "else"].includes(node.kind)
+      ) {
+        steps.push(step);
+      }
+
+      (node.calls || []).forEach((call) => {
+        const target = definitions.get(call.skill);
+        if (!target) {
+          addWarning(`Call target not found: ${call.skill}`, path);
+          return;
+        }
+        if (callStack.includes(call.skill)) {
+          addWarning(`Recursive call skipped: ${call.skill}`, path);
+          return;
+        }
+        walkNode(target, path.concat(`call:${call.skill}${call.as ? `:${call.as}` : ""}`), callStack.concat(call.skill));
+      });
+      (node.children || []).forEach((child, index) => {
+        walkNode(child, path.concat(`${child.kind}:${child.id || index}`), callStack);
+      });
+    }
+
+    roots.forEach((node) => walkNode(node, [`${node.kind}:${node.id}`], [node.id]));
+
+    return {
+      version: "aaps_plan/0.1",
+      pipeline: pipeline.name || "Untitled Pipeline",
+      domain: pipeline.domain || "general",
+      artifactDir: pipeline.artifactDir || "",
+      databasePath: pipeline.databasePath || "",
+      logPath: pipeline.logPath || "",
+      inputs: pipeline.inputPorts || [],
+      outputs: pipeline.outputPorts || [],
+      includes: pipeline.includes || [],
+      steps,
+      warnings,
+      executableSteps: steps.filter((step) => step.executable).length,
+      promptOnlySteps: steps.filter((step) => step.promptOnly).length,
+    };
   }
 
   const samples = {
@@ -1043,6 +1240,7 @@
     parseAAPS,
     serializeAAPS,
     toMarkdown,
+    buildExecutionPlan,
     createProjectManifest,
     normalizeProjectManifest,
     validateProjectManifest,

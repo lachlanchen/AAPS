@@ -4,11 +4,12 @@
 
 - AAPS v0.2 syntax, parser, serializer, and Markdown compiler.
 - Static AAPS Studio with Block Lab, Program tab, Project tab, nested block visualization, source preview, manifest validation, and chat-routed edits.
+- Minimal runtime for `run`, `exec shell`, `exec python`, artifact validation, retries, fallback, repair requests, and run reports.
 - Multilingual README and GitHub Pages product site.
 
 ## 0.2 Runtime
 
-- Dependency graph runner with resumable local state.
+- Include-resolving dependency graph runner with resumable local state.
 - Agent adapter interface for Codex, browser tools, shell commands, and external APIs.
 - Importers for shell scripts, Markdown runbooks, and AutoAppDev-style pipelines.
 - Reference pipeline conversion helpers for AutoAppDev, LazyBlog, biology, app development, and writing workflows.
