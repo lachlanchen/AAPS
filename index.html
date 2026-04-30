@@ -23,6 +23,7 @@
       <nav class="site-nav" aria-label="Primary navigation">
         <a href="#language">Language</a>
         <a href="#project">Project</a>
+        <a href="#runtime">Runtime</a>
         <a href="#studio">Studio</a>
         <a href="#deploy">Deploy</a>
         <a href="https://github.com/lachlanchen/AAPS">GitHub</a>
@@ -75,6 +76,10 @@
           <article>
             <h2>Project-Native</h2>
             <p>Manage many block, skill, workflow, draft, archive, artifact, and run files through one manifest.</p>
+          </article>
+          <article>
+            <h2>Executable</h2>
+            <p>Run shell or Python actions, validate artifacts, retry, fall back, and emit repair reports.</p>
           </article>
         </div>
       </section>
@@ -156,6 +161,35 @@
         </div>
       </section>
 
+      <section class="section runtime-band" id="runtime">
+        <div class="section-inner two-col">
+          <div>
+            <p class="eyebrow">Runtime</p>
+            <h2>Readable workflows that can actually run</h2>
+            <p>
+              AAPS now compiles scripts into an execution plan and runs supported local actions.
+              The first runtime executes shell and Python steps, writes stdout/stderr logs,
+              checks artifacts, validates JSON and non-empty files, retries failures, runs fallback
+              commands or fallback blocks, and creates repair request files when recovery is needed.
+            </p>
+            <ul class="check-list">
+              <li>Generate `aaps_plan/0.1` from the same parser used by Studio.</li>
+              <li>Execute `run`, `exec shell`, and `exec python` blocks.</li>
+              <li>Record `run.json`, `events.jsonl`, logs, repair notes, and Markdown reports.</li>
+              <li>Start dry-runs or real runs from the Studio Project tab.</li>
+            </ul>
+          </div>
+          <pre class="code-card"><code>task qc_image {
+  retry 1
+  repair true
+  exec shell "python3 scripts/qc.py --out artifacts/qc.json"
+  validate exists "artifacts/qc.json"
+  validate json "artifacts/qc.json"
+  fallback "run: python3 scripts/basic_qc.py"
+}</code></pre>
+        </div>
+      </section>
+
       <section class="section studio-band" id="studio">
         <div class="section-inner studio-grid">
           <div>
@@ -164,7 +198,8 @@
             <p>
               The Studio webapp is separate from this landing page. It has a Block Lab for
               chat-driven skill preparation, a Program tab for source editing, and a Project tab
-              for manifest validation and multi-file workflow management. It supports block inspection,
+              for manifest validation, multi-file workflow management, dry-runs, and real runtime runs.
+              It supports block inspection,
               typed ports, artifacts, validations, recovery policies, human review markers,
               tree visualization, loops, conditions, functional blocks, and JSON IR preview.
             </p>
