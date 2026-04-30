@@ -53,6 +53,19 @@ The public package is `@lazyingart/aaps`. After any minor or major functional ed
 - Push `main`, then publish through GitHub Actions Trusted Publishing using `.github/workflows/npm-publish.yml`. Verify `npm view @lazyingart/aaps version license dist-tags`.
 - Record release-relevant npm notes in `references/npm-publication.md` without adding secrets.
 
+## AgInTiFlow Agent Workflow
+
+AAPS uses `AgInTiFlow` as the long-term backend agent candidate. Keep the persistent tmux Codex helper session named `aaps-agent-codexr` available as the main agent workflow for this repo when coordinating AgInTiFlow work.
+
+- The tmux session should start as a shell, then launch Codex through `tmux send-keys` so `Ctrl+C` exits Codex without closing the pane.
+- Preferred launch command: `codex -m gpt-5.5 -c model_reasoning_effort="high" -s danger-full-access -a never --cd /home/lachlan/ProjectsLFS/Agent resume 019da8c5-6cd9-7602-bc14-aafa6206fe5d`.
+- The session working root is always `/home/lachlan/ProjectsLFS/Agent`.
+- The primary implementation repo under that root is `/home/lachlan/ProjectsLFS/Agent/AgInTiFlow`.
+- AgInTiFlow should become a web-first agent platform with an `aginti-cli` command.
+- AgInTiFlow should learn from Codex, Claude Code, Gemini CLI, Copilot, LazyBlog Studio, AAPS, AutoAppDev, and AutoNovelWriter, but avoid rebuilding working tools when wrappers can orchestrate them.
+- Default routing philosophy: DeepSeek v4 flash is the fast base model, DeepSeek v4 pro handles complex reasoning, Codex wrapper with GPT-5.5 medium and GPT-5.4-mini high remains an enhancement/spare tool, and external agents are orchestrated as toolsets rather than treated as the only brain.
+- The agent must commit and push AgInTiFlow changes when edits are complete, using the `github-lazyingart` SSH alias if needed.
+
 ## Security & Configuration
 
 Do not commit tokens, OTPs, `.env`, `.npmrc`, `.aaps-work/`, npm debug logs, or local runtime data. Use `.env.example` for public configuration shape only. Codex wrapper jobs are written under `runtime/codex-jobs/`, which is ignored. Use `AAPS_MOCK_CODEX=1` for wrapper smoke tests without model calls. Studio backend settings may select Codex or DeepSeek, but API keys stay in the ignored `.env` or the shell.
