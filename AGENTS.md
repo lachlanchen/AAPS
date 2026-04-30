@@ -58,7 +58,7 @@ The public package is `@lazyingart/aaps`. After any minor or major functional ed
 AAPS uses `AgInTiFlow` as the long-term backend agent candidate. Keep the persistent tmux Codex helper session named `aaps-agent-codexr` available as the main agent workflow for this repo when coordinating AgInTiFlow work.
 
 - The tmux session should start as a shell, then launch Codex through `tmux send-keys` so `Ctrl+C` exits Codex without closing the pane.
-- Preferred launch command: `codex -m gpt-5.5 -c model_reasoning_effort="high" -s danger-full-access -a never --cd /home/lachlan/ProjectsLFS/Agent resume 019da8c5-6cd9-7602-bc14-aafa6206fe5d`.
+- Preferred launch command: `codex -m gpt-5.5 -c model_reasoning_effort="xhigh" -s danger-full-access -a never --cd /home/lachlan/ProjectsLFS/Agent resume 019da8c5-6cd9-7602-bc14-aafa6206fe5d`.
 - The session working root is always `/home/lachlan/ProjectsLFS/Agent`.
 - The primary implementation repo under that root is `/home/lachlan/ProjectsLFS/Agent/AgInTiFlow`.
 - AgInTiFlow should become a web-first agent platform with an `aginti-cli` command.
