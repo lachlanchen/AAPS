@@ -76,6 +76,10 @@
             <label>Artifacts <textarea id="field-artifacts" rows="3" placeholder="overlay: image = runtime/overlay.png"></textarea></label>
             <label>Exec Actions <textarea id="field-exec" rows="3" placeholder="shell = npm test&#10;python = scripts/qc_image.py"></textarea></label>
             <label>Args <textarea id="field-args" rows="3" placeholder="image_path = data/raw/example.tif"></textarea></label>
+            <label>Requirements <textarea id="field-requirements" rows="4" placeholder="command = python3&#10;file = scripts/qc_image.py&#10;tool = threshold_segmentation&#10;agent = codex_repair_agent"></textarea></label>
+            <label>Environment <textarea id="field-environment" rows="3" placeholder="python = python3&#10;setup = python3 -m venv .venv"></textarea></label>
+            <label>Compile Agent <input id="field-compile-agent" placeholder="codex_repair_agent" /></label>
+            <label>Compile Prompt <textarea id="field-compile-prompt" rows="3" placeholder="Create project-local code or setup prompts when this block is missing scripts/tools."></textarea></label>
             <label>Action Code <textarea id="field-code" rows="8" placeholder="Python inline code, shell script notes, or loaded external script preview"></textarea></label>
             <label>Run Commands <textarea id="field-run" rows="3" placeholder="npm test"></textarea></label>
             <label>Validation Rules <textarea id="field-validations" rows="3" placeholder="output file exists"></textarea></label>
@@ -99,10 +103,12 @@
                 <button id="block-chat-btn" type="button">Apply Block Chat</button>
                 <button id="save-block-code-btn" type="button">Save Code</button>
                 <button id="externalize-block-code-btn" type="button">Inline → Script</button>
+                <button id="check-block-btn" type="button">Check Readiness</button>
                 <button id="dry-run-block-btn" type="button">Dry Run Block</button>
                 <button id="run-block-btn" type="button">Run Block</button>
                 <button id="repair-prompt-btn" type="button">Repair Prompt</button>
               </div>
+              <div id="block-readiness" class="block-readiness">Select a block, then check readiness.</div>
               <pre id="block-log"></pre>
             </section>
           </form>

@@ -475,6 +475,35 @@ main {
   line-height: 1.5;
 }
 
+.block-readiness {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fffd;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.block-readiness strong {
+  color: var(--ink);
+}
+
+.block-readiness ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.block-readiness li.ok {
+  color: #0f766e;
+}
+
+.block-readiness li.bad {
+  color: #b91c1c;
+}
+
 #delete-block {
   color: #b91c1c;
 }
@@ -623,7 +652,7 @@ main {
 
 .project-kpis {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   gap: 8px;
 }
 
