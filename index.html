@@ -21,11 +21,11 @@
         <span>AAPS</span>
       </a>
       <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#install">Install</a>
+        <a href="#studio">Studio</a>
         <a href="#language">Language</a>
         <a href="#project">Project</a>
         <a href="#runtime">Runtime</a>
-        <a href="#studio">Studio</a>
-        <a href="#install">Install</a>
         <a href="#examples">Examples</a>
         <a href="#deploy">Deploy</a>
         <a href="https://github.com/lachlanchen/AAPS">GitHub</a>
@@ -57,6 +57,75 @@
             <a class="button button-primary" href="./studio/">Open Studio</a>
             <a class="button" href="https://agent.lazying.art">Agent Portal</a>
             <a class="button" href="https://github.com/lachlanchen/AAPS/blob/main/docs/language-spec.md">Read Spec</a>
+          </div>
+          <div class="hero-install" aria-label="Install command">
+            <code id="hero-install-command">npm install -g @lazyingart/aaps</code>
+            <button class="copy-install-button" type="button" data-copy-target="hero-install-command">Copy</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section install-band" id="install">
+        <div class="section-inner two-col">
+          <div>
+            <p class="eyebrow">Install Path</p>
+            <h2>Install AAPS from npm</h2>
+            <p>
+              AAPS is published as a scoped npm package so one install can provide the parser,
+              compiler/planner, CLI runner, and local Studio server. Release publishing is
+              configured for GitHub Actions Trusted Publishing, so npm accepts the release
+              workflow through OIDC.
+            </p>
+            <ul class="check-list">
+              <li>CLI binary: `aaps`.</li>
+              <li>Local webapp: `aaps studio --host 127.0.0.1 --port 8796`.</li>
+              <li>Parser/compiler: `aaps parse`, `aaps plan`, and `aaps validate`.</li>
+              <li>Runtime: `aaps run` and `aaps run-block`.</li>
+              <li>License: Apache-2.0 for research, commercial use, and company-backed development.</li>
+              <li>Publisher: GitHub `lachlanchen/AAPS`, workflow `npm-publish.yml`.</li>
+            </ul>
+          </div>
+          <pre class="code-card"><code>npm install -g @lazyingart/aaps
+aaps studio --host 127.0.0.1 --port 8796
+aaps parse workflows/main.aaps --project .
+aaps run workflows/main.aaps --project . --json</code></pre>
+        </div>
+      </section>
+
+      <section class="section studio-band" id="studio">
+        <div class="section-inner studio-grid">
+          <div>
+            <p class="eyebrow">AAPS Studio</p>
+            <h2>Visual editing plus chat-directed changes</h2>
+            <p>
+              The Studio webapp is separate from this landing page. It has a Block Lab for
+              chat-driven skill preparation, a Program tab for source editing, and a Project tab
+              for manifest validation, multi-file workflow management, dry-runs, and real runtime runs.
+              It now keeps chat in a fixed bottom dock available on every tab, with the transcript
+              tucked behind a History button and colored user/AAPS messages. It supports project file actions, script browsing, block inspection, block-level chat,
+              inline/external code editing,
+              typed ports, artifacts, validations, recovery policies, human review markers,
+              tree visualization, loops, conditions, functional blocks, and JSON IR preview.
+            </p>
+            <a class="button button-primary" href="./studio/">Launch Studio</a>
+          </div>
+          <div class="studio-preview" aria-label="AAPS Studio preview">
+            <div class="preview-top"></div>
+            <div class="preview-layout">
+              <div class="preview-palette">
+                <span class="mini-block pink"></span>
+                <span class="mini-block yellow"></span>
+                <span class="mini-block green"></span>
+              </div>
+              <div class="preview-canvas">
+                <span class="flow-block">discover</span>
+                <span class="flow-block">implement</span>
+                <span class="flow-block">publish</span>
+              </div>
+              <div class="preview-chat">
+                <span></span><span></span><span></span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -191,71 +260,6 @@
   validate json "${run.artifacts}/qc.json"
   fallback "run: python3 scripts/basic_qc.py"
 }</code></pre>
-        </div>
-      </section>
-
-      <section class="section studio-band" id="studio">
-        <div class="section-inner studio-grid">
-          <div>
-            <p class="eyebrow">AAPS Studio</p>
-            <h2>Visual editing plus chat-directed changes</h2>
-            <p>
-              The Studio webapp is separate from this landing page. It has a Block Lab for
-              chat-driven skill preparation, a Program tab for source editing, and a Project tab
-              for manifest validation, multi-file workflow management, dry-runs, and real runtime runs.
-              It now keeps chat in a fixed bottom dock available on every tab, with the transcript
-              tucked behind a History button and colored user/AAPS messages. It supports project file actions, script browsing, block inspection, block-level chat,
-              inline/external code editing,
-              typed ports, artifacts, validations, recovery policies, human review markers,
-              tree visualization, loops, conditions, functional blocks, and JSON IR preview.
-            </p>
-            <a class="button button-primary" href="./studio/">Launch Studio</a>
-          </div>
-          <div class="studio-preview" aria-label="AAPS Studio preview">
-            <div class="preview-top"></div>
-            <div class="preview-layout">
-              <div class="preview-palette">
-                <span class="mini-block pink"></span>
-                <span class="mini-block yellow"></span>
-                <span class="mini-block green"></span>
-              </div>
-              <div class="preview-canvas">
-                <span class="flow-block">discover</span>
-                <span class="flow-block">implement</span>
-                <span class="flow-block">publish</span>
-              </div>
-              <div class="preview-chat">
-                <span></span><span></span><span></span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section install-band" id="install">
-        <div class="section-inner two-col">
-          <div>
-            <p class="eyebrow">Install Path</p>
-            <h2>Install AAPS from npm</h2>
-            <p>
-              AAPS is published as a scoped npm package so one install can provide the parser,
-              compiler/planner, CLI runner, and local Studio server. Release publishing is
-              configured for GitHub Actions Trusted Publishing, so npm accepts the release
-              workflow through OIDC.
-            </p>
-            <ul class="check-list">
-              <li>CLI binary: `aaps`.</li>
-              <li>Local webapp: `aaps studio --host 127.0.0.1 --port 8796`.</li>
-              <li>Parser/compiler: `aaps parse`, `aaps plan`, and `aaps validate`.</li>
-              <li>Runtime: `aaps run` and `aaps run-block`.</li>
-              <li>License: Apache-2.0 for research, commercial use, and company-backed development.</li>
-              <li>Publisher: GitHub `lachlanchen/AAPS`, workflow `npm-publish.yml`.</li>
-            </ul>
-          </div>
-          <pre class="code-card"><code>npm install -g @lazyingart/aaps
-aaps studio --host 127.0.0.1 --port 8796
-aaps parse workflows/main.aaps --project .
-aaps run workflows/main.aaps --project . --json</code></pre>
         </div>
       </section>
 
