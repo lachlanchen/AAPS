@@ -143,7 +143,7 @@ aaps studio --host 127.0.0.1 --port 8796
 aaps parse examples/hello.aaps --project .
 ```
 
-The package metadata is already scoped as `@lazyingart/aaps`. Publishing requires an npm account with access to the `@lazyingart` scope. A GitHub Actions publisher can be added later with an `NPM_TOKEN` secret and a token that has workflow permission.
+The package metadata is already scoped as `@lazyingart/aaps`. Publishing is configured through GitHub Actions Trusted Publishing in `.github/workflows/npm-publish.yml`, so the release workflow uses GitHub OIDC instead of a long-lived npm token. In npm package settings, connect the trusted publisher to GitHub owner `lachlanchen`, repository `AAPS`, workflow filename `npm-publish.yml`.
 
 Studio tabs:
 
