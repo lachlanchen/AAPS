@@ -16,10 +16,14 @@ function usage() {
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
     "  aaps validate [file] [--project .] [--json]",
+    "  aaps studio [--host 127.0.0.1] [--port 8796] [--mock-codex]",
     "",
     "Options:",
     "  --project <dir>   AAPS project root. Defaults to current directory.",
     "  --block <id>      Block ID or execution-plan path fragment for run-block.",
+    "  --host <host>     Studio host for `aaps studio`.",
+    "  --port <port>     Studio port for `aaps studio`.",
+    "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
     "  --json            Print machine-readable JSON where supported.",
   ].join("\n");
 }
@@ -188,6 +192,27 @@ function commandValidate(fileArg, options) {
   process.exit(ok ? 0 : 1);
 }
 
+function commandStudio(options) {
+  const root = path.resolve(__dirname, "..");
+  const host = String(options.host || "127.0.0.1");
+  const port = String(options.port || "8796");
+  const env = { ...process.env };
+  if (options.mockCodex) env.AAPS_MOCK_CODEX = "1";
+  const args = [
+    path.join(root, "backend", "aaps_codex_server.py"),
+    "--host",
+    host,
+    "--port",
+    port,
+  ];
+  const result = childProcess.spawnSync("python3", args, {
+    cwd: root,
+    env,
+    stdio: "inherit",
+  });
+  process.exit(result.status || 0);
+}
+
 function main() {
   const { command, positional, options } = parseArgs(process.argv);
   const file = positional[0];
@@ -201,6 +226,10 @@ function main() {
   }
   if (command === "validate") {
     commandValidate(file, options);
+    return;
+  }
+  if (command === "studio") {
+    commandStudio(options);
     return;
   }
   if (command === "plan" || command === "run") {

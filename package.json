@@ -1,11 +1,36 @@
 {
-  "name": "aaps",
+  "name": "@lazyingart/aaps",
   "version": "0.1.0",
   "description": "Autonomous Agentic Pipeline Script: prompt-native skills, tasks, loops, guards, and Studio.",
   "type": "commonjs",
+  "private": false,
   "bin": {
     "aaps": "scripts/aaps.js"
   },
+  "files": [
+    "backend/",
+    "docs/",
+    "examples/*.aaps",
+    "examples/projects/*/README.md",
+    "examples/projects/*/aaps.project.json",
+    "examples/projects/*/blocks/*.aaps",
+    "examples/projects/*/skills/*.aaps",
+    "examples/projects/*/workflows/*.aaps",
+    "examples/projects/*/scripts/*.py",
+    "examples/projects/*/data/.gitkeep",
+    "examples/projects/*/artifacts/.gitkeep",
+    "examples/projects/*/runs/.gitkeep",
+    "examples/projects/*/reports/.gitkeep",
+    "examples/projects/*/notes/.gitkeep",
+    "references/pipeline-scripts/README.md",
+    "schemas/",
+    "scripts/",
+    "src/",
+    "studio/",
+    "README.md",
+    "AGENTS.md",
+    "aaps.project.json"
+  ],
   "scripts": {
     "test": "node tests/aaps.test.js",
     "project:validate": "node scripts/aaps-project.js validate .",
@@ -14,6 +39,20 @@
     "aaps:run": "node scripts/aaps-runner.js run --project . --json",
     "studio": "python3 backend/aaps_codex_server.py --host 127.0.0.1 --port 8796",
     "build:website": "cp src/aaps.js studio/aaps.js && rm -rf website/studio && mkdir -p website/studio && cp -R studio/. website/studio/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lachlanchen/AAPS.git"
+  },
+  "homepage": "https://aaps.lazying.art",
+  "bugs": {
+    "url": "https://github.com/lachlanchen/AAPS/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "agent",

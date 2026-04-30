@@ -290,7 +290,8 @@ User instruction:
 """
 
 
-def build_chat_prompt(source: str, message: str) -> str:
+def build_chat_prompt(source: str, message: str, context: dict | None = None) -> str:
+    context_payload = context or {}
     return f"""You are the AAPS Studio chat router.
 
 Follow the LazyBlog Studio rule: chat may explain and remember, but source mutation must be an explicit bounded edit.
@@ -314,6 +315,11 @@ AAPS v0.2 supports:
 Current source:
 ```aaps
 {source}
+```
+
+Studio context:
+```json
+{json.dumps(context_payload, ensure_ascii=False, indent=2)}
 ```
 
 User message:
@@ -915,6 +921,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/aaps/chat":
             source = str(body.get("source") or "")
             message = str(body.get("message") or body.get("instruction") or "").strip()
+            context = body.get("context") if isinstance(body.get("context"), dict) else {}
             if not message:
                 write_json(self, {"error": "message is required"}, 400)
                 return
@@ -935,7 +942,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 )
                 return
             job_id = uuid.uuid4().hex[:16]
-            outcome = run_codex(job_id, build_chat_prompt(source, message), "aaps_chat")
+            outcome = run_codex(job_id, build_chat_prompt(source, message, context), "aaps_chat")
             status = 200 if outcome["status"] == "succeeded" else 500
             write_json(self, {"id": job_id, **outcome}, status)
             return

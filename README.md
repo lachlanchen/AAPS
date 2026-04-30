@@ -135,9 +135,20 @@ npm run studio
 
 Open `http://127.0.0.1:8796`.
 
+Future package install target:
+
+```bash
+npm install -g @lazyingart/aaps
+aaps studio --host 127.0.0.1 --port 8796
+aaps parse examples/hello.aaps --project .
+```
+
+The package metadata is already scoped as `@lazyingart/aaps`. Publishing requires an npm account with access to the `@lazyingart` scope. A GitHub Actions publisher can be added later with an `NPM_TOKEN` secret and a token that has workflow permission.
+
 Studio tabs:
 
-- **Block Lab**: chat to create blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions.
+- **Bottom Chat Dock**: available on every tab. It routes messages through the Codex wrapper when available and keeps the transcript behind the History button.
+- **Block Lab**: create blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions.
 - **Program**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
 - **Project**: load a project, edit `aaps.project.json`, browse `.aaps` and script files, create/duplicate/archive workflow files, dry-run or run workflows.
 

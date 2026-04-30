@@ -7,6 +7,13 @@ const blockCountEl = document.getElementById("block-count");
 const chatLogEl = document.getElementById("chat-log");
 const chatFormEl = document.getElementById("chat-form");
 const chatInputEl = document.getElementById("chat-input");
+const chatContextEl = document.getElementById("chat-context");
+const chatStatusEl = document.getElementById("chat-status");
+const chatCountEl = document.getElementById("chat-count");
+const chatHistoryToggleEl = document.getElementById("chat-history-toggle");
+const chatHistoryCloseEl = document.getElementById("chat-history-close");
+const chatHistoryPanelEl = document.getElementById("chat-history-panel");
+const chatHistoryOverlayEl = document.getElementById("chat-history-overlay");
 const selectedLabelEl = document.getElementById("selected-label");
 const inspectorFormEl = document.getElementById("inspector-form");
 const projectManifestEl = document.getElementById("project-manifest");
@@ -53,6 +60,8 @@ let currentProjectPayload = {
   manifest_exists: false,
 };
 let activeRunId = "";
+let chatMessageCount = 0;
+let activeTab = "lab";
 
 function escapeHtml(value) {
   return String(value || "")
@@ -254,12 +263,39 @@ function execLines(steps) {
     .join("\n");
 }
 
+function tabLabel(tab) {
+  return {
+    lab: "Block Lab",
+    program: "Program",
+    project: "Project",
+  }[tab] || "Studio";
+}
+
+function setChatStatus(text) {
+  chatStatusEl.textContent = text;
+}
+
+function updateChatContext() {
+  const selected = nodeRefs.get(selectedRef);
+  const suffix = selected ? ` · ${selected.kind} ${selected.id}` : "";
+  chatContextEl.textContent = `${tabLabel(activeTab)}${suffix}`;
+}
+
+function setHistoryOpen(open) {
+  chatHistoryPanelEl.classList.toggle("is-open", open);
+  chatHistoryPanelEl.setAttribute("aria-hidden", open ? "false" : "true");
+  chatHistoryOverlayEl.hidden = !open;
+}
+
 function addMessage(role, text) {
   const node = document.createElement("div");
   node.className = `message ${role}`;
-  node.textContent = text;
+  const who = role === "user" ? "You" : "AAPS";
+  node.innerHTML = `<strong>${who}</strong><span>${escapeHtml(text)}</span>`;
   chatLogEl.appendChild(node);
   chatLogEl.scrollTop = chatLogEl.scrollHeight;
+  chatMessageCount += 1;
+  chatCountEl.textContent = String(chatMessageCount);
 }
 
 function nodeColor(kind) {
@@ -370,6 +406,7 @@ function render() {
     : "Ready";
   irEl.textContent = JSON.stringify(ir, null, 2);
   fillInspector(nodeRefs.get(selectedRef));
+  updateChatContext();
 }
 
 function templateNode(kind, ir) {
@@ -666,7 +703,17 @@ async function requestChatEdit(instruction) {
   const response = await fetch("/api/aaps/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source: sourceEl.value, message: instruction }),
+    body: JSON.stringify({
+      source: sourceEl.value,
+      message: instruction,
+      context: {
+        tab: activeTab,
+        projectPath: projectPathEl.value || ".",
+        selectedBlock: nodeRefs.get(selectedRef) || null,
+        activeRunId,
+        diagnostics: getIr().diagnostics,
+      },
+    }),
   });
   if (!response.ok) throw new Error(`router returned ${response.status}`);
   const payload = await response.json();
@@ -1013,7 +1060,9 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
     document.querySelectorAll("[data-tab]").forEach((item) => item.classList.remove("is-active"));
     document.querySelectorAll("[data-panel]").forEach((item) => item.classList.remove("is-active"));
     button.classList.add("is-active");
+    activeTab = button.dataset.tab;
     document.querySelector(`[data-panel="${button.dataset.tab}"]`).classList.add("is-active");
+    updateChatContext();
   });
 });
 
@@ -1036,15 +1085,22 @@ chatFormEl.addEventListener("submit", (event) => {
   if (!text) return;
   addMessage("user", text);
   chatInputEl.value = "";
-  addMessage("assistant", "Routing...");
+  setChatStatus("routing through Codex wrapper");
   requestChatEdit(text)
     .then((message) => {
-      chatLogEl.lastElementChild.textContent = message;
+      addMessage("assistant", message);
+      setChatStatus("ready");
     })
     .catch(() => {
-      chatLogEl.lastElementChild.textContent = localChatEdit(text);
+      const fallback = localChatEdit(text);
+      addMessage("assistant", fallback);
+      setChatStatus("local fallback");
     });
 });
+
+chatHistoryToggleEl.addEventListener("click", () => setHistoryOpen(true));
+chatHistoryCloseEl.addEventListener("click", () => setHistoryOpen(false));
+chatHistoryOverlayEl.addEventListener("click", () => setHistoryOpen(false));
 
 inspectorFormEl.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1226,6 +1282,7 @@ addMessage("assistant", "AAPS Studio is ready. Use chat to prepare skills or edi
 render();
 renderProject(currentProjectPayload);
 renderRuntime(null);
+setHistoryOpen(false);
 loadProject().catch(() => {});
 
 if ("serviceWorker" in navigator) {
