@@ -129,6 +129,7 @@ AAPS Studio has a Project tab for one topic workspace. A project can be a lectur
 
 The tab supports:
 
+- creating a starter project with basic blocks, tool/agent/environment registries, a main workflow, and a minimal executable script
 - editing `aaps.project.json`
 - validating manifest fields
 - viewing workflow/block/script/tool/agent/environment counts
@@ -143,5 +144,6 @@ The tab supports:
 - creating, duplicating, and archiving `.aaps` files
 - running or dry-running the active workflow
 - checking readiness, running, or dry-running the selected block from the block inspector
+- configuring the local backend agent provider. Codex is the default; DeepSeek v4 pro is available when `AAPS_DEEPSEEK_API_KEY` is present in the ignored `.env` or shell.
 
 Static deployment can edit and export manifests in the browser. Local Studio adds filesystem-backed load/save APIs.

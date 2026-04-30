@@ -156,10 +156,11 @@ The package is published as `@lazyingart/aaps`. Future releases use GitHub Actio
 Studio tabs:
 
 - **Bottom Chat Dock**: available on every tab. It routes messages through the Codex wrapper when available and keeps the transcript behind the History button.
-- **Block Lab**: create blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions.
-- **Program**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
-- **Project**: load a project, edit `aaps.project.json`, browse `.aaps` and script files, create/duplicate/archive workflow files, dry-run or run workflows.
-- **Project**: load a topic workspace, see workflows/blocks/scripts/tools/agents/env counts, view the active and main `.aaps`, run compile checks, apply safe generated files, copy a tmux command, and dry-run or run the current workflow.
+- **Project**: first tab. Create a starter topic workspace, edit `aaps.project.json`, browse `.aaps` and script files, configure Codex/DeepSeek backend settings, run compile checks, copy a tmux command, and dry-run or run the active workflow.
+- **Blocks**: create reusable blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions.
+- **Programs**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
+
+Local backend settings live in `.env` and `.aaps-work/aaps-settings.json`. Copy `.env.example` to `.env`; keep secrets uncommitted. Codex is the default backend agent. The Studio settings panel can switch to DeepSeek's OpenAI-compatible API with `deepseek-v4-pro` or `deepseek-v4-flash` when `AAPS_DEEPSEEK_API_KEY` is configured.
 
 For wrapper smoke tests without model calls:
 
@@ -228,10 +229,13 @@ AAPS currently uses Codex as the primary local agent executor. The wrapper expos
 
 ```text
 GET  /api/health
+GET  /api/aaps/settings
+POST /api/aaps/settings
 POST /api/aaps/chat
 POST /api/aaps/edit
 GET  /api/aaps/project
 POST /api/aaps/project
+POST /api/aaps/project/create
 GET  /api/aaps/project/file
 POST /api/aaps/project/file
 GET  /api/aaps/project/text-file

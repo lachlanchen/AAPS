@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +24,7 @@ STUDIO_DIR = ROOT / "studio"
 RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
 RUN_DIR = ROOT / "runtime" / "aaps-runs"
 COMPILE_DIR = ROOT / "runtime" / "aaps-compiles"
+SETTINGS_PATH = ROOT / ".aaps-work" / "aaps-settings.json"
 PROJECT_MANIFEST = "aaps.project.json"
 SKIP_SCAN_DIRS = {".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"}
 TEXT_FILE_EXTENSIONS = {".aaps", ".py", ".sh", ".js", ".mjs", ".cjs", ".json", ".md", ".txt", ".yaml", ".yml", ".toml"}
@@ -32,10 +35,94 @@ SCHEMAS = {
     "aaps_edit": ROOT / "schemas" / "aaps_edit.schema.json",
     "aaps_chat": ROOT / "schemas" / "aaps_chat.schema.json",
 }
+DEFAULT_SETTINGS = {
+    "agentProvider": "codex",
+    "codexModel": "gpt-5.3-codex",
+    "codexReasoning": "medium",
+    "codexTimeout": 240,
+    "deepseekBaseUrl": "https://api.deepseek.com",
+    "deepseekModel": "deepseek-v4-pro",
+    "deepseekTimeout": 180,
+    "autoCompileAfterChat": True,
+}
+
+
+def load_dotenv() -> None:
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv()
 
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def read_settings() -> dict:
+    settings = dict(DEFAULT_SETTINGS)
+    env_defaults = {
+        "agentProvider": os.environ.get("AAPS_AGENT_PROVIDER"),
+        "codexModel": os.environ.get("AAPS_CODEX_MODEL"),
+        "codexReasoning": os.environ.get("AAPS_CODEX_REASONING"),
+        "deepseekBaseUrl": os.environ.get("AAPS_DEEPSEEK_BASE_URL"),
+        "deepseekModel": os.environ.get("AAPS_DEEPSEEK_MODEL"),
+    }
+    settings.update({key: value for key, value in env_defaults.items() if value})
+    if SETTINGS_PATH.exists():
+        try:
+            loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                settings.update({key: value for key, value in loaded.items() if key in DEFAULT_SETTINGS})
+        except json.JSONDecodeError:
+            pass
+    if settings.get("agentProvider") not in {"codex", "deepseek"}:
+        settings["agentProvider"] = "codex"
+    if settings.get("codexReasoning") not in {"low", "medium", "high", "xhigh"}:
+        settings["codexReasoning"] = "medium"
+    return settings
+
+
+def public_settings() -> dict:
+    settings = read_settings()
+    settings["codexAvailable"] = bool(shutil.which("codex"))
+    settings["deepseekKeyAvailable"] = bool(os.environ.get("AAPS_DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_API_KEY"))
+    settings["openaiKeyAvailable"] = bool(os.environ.get("OPENAI_API_KEY"))
+    settings["agintiflowAvailable"] = (ROOT / "vendor" / "AgInTiFlow").exists()
+    return settings
+
+
+def write_settings(payload: dict) -> dict:
+    settings = read_settings()
+    allowed_provider = {"codex", "deepseek"}
+    text_fields = ["codexModel", "codexReasoning", "deepseekBaseUrl", "deepseekModel"]
+    for key in text_fields:
+        if key in payload:
+            settings[key] = str(payload.get(key) or DEFAULT_SETTINGS[key]).strip() or DEFAULT_SETTINGS[key]
+    if "agentProvider" in payload:
+        provider = str(payload.get("agentProvider") or "codex").strip().lower()
+        settings["agentProvider"] = provider if provider in allowed_provider else "codex"
+    if "autoCompileAfterChat" in payload:
+        settings["autoCompileAfterChat"] = bool(payload.get("autoCompileAfterChat"))
+    for key in ["codexTimeout", "deepseekTimeout"]:
+        if key in payload:
+            try:
+                settings[key] = max(10, int(payload.get(key)))
+            except (TypeError, ValueError):
+                settings[key] = DEFAULT_SETTINGS[key]
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_PATH.write_text(json.dumps({key: settings[key] for key in DEFAULT_SETTINGS}, indent=2) + "\n", encoding="utf-8")
+    return public_settings()
 
 
 def read_json(handler: SimpleHTTPRequestHandler) -> dict:
@@ -103,6 +190,10 @@ def slug(value: str, fallback: str = "block") -> str:
     return text[:48] or fallback
 
 
+def aaps_literal(value: str) -> str:
+    return json.dumps(str(value or ""), ensure_ascii=False)
+
+
 def default_aaps_source(kind: str, name: str) -> str:
     block_id = slug(name or kind)
     title = block_id.replace("_", " ").title()
@@ -131,6 +222,323 @@ def default_aaps_source(kind: str, name: str) -> str:
   }}
 }}
 '''
+
+
+def starter_project_manifest(project_dir: Path, name: str, domain: str, goal: str) -> dict:
+    project_path = project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else "."
+    return {
+        "schema": "aaps_project/0.1",
+        "name": name,
+        "path": project_path,
+        "description": goal or f"{name} AAPS workspace.",
+        "domain": domain or "general",
+        "tags": [domain or "general", "starter"],
+        "defaultMain": "workflows/main.aaps",
+        "activeFile": "workflows/main.aaps",
+        "created": now_iso(),
+        "updated": now_iso(),
+        "paths": {
+            "blocks": "blocks",
+            "skills": "skills",
+            "modules": "modules",
+            "subworkflows": "subworkflows",
+            "workflows": "workflows",
+            "drafts": "drafts",
+            "archives": "archive",
+            "data": "data",
+            "artifacts": "artifacts",
+            "runs": "runs",
+            "reports": "reports",
+            "notes": "notes",
+            "environments": "environments",
+            "tools": "tools",
+            "agents": "agents",
+        },
+        "dataFolders": ["data"],
+        "artifactRoot": "artifacts",
+        "runDatabase": "runs/aaps-runs.jsonl",
+        "variables": {"goal": goal},
+        "tools": ["python3", "aaps_compiler", "noop"],
+        "models": ["codex", "deepseek-v4-pro"],
+        "agents": ["codex_repair_agent", "deepseek_v4_pro_prompt_agent"],
+        "notes": [
+            "Use this project as one topic workspace with many workflows, reusable blocks, scripts, tools, and agents.",
+            "Codex is the default backend agent. DeepSeek v4 pro is available when selected in Studio settings.",
+        ],
+        "safety": {
+            "defaultBackendAgent": "codex",
+            "allowGlobalInstalls": False,
+            "requireApprovalForShell": True,
+            "preferProjectLocalEnvironment": True,
+        },
+        "execution": {
+            "defaultMode": "dry-run",
+            "runCommand": "aaps run workflows/main.aaps --project . --json",
+            "tmuxHint": f"tmux new-session -d -s aaps-{slug(name)} 'aaps run workflows/main.aaps --project . --json'",
+        },
+        "files": {
+            "blocks": [
+                "blocks/define_goal.aaps",
+                "blocks/plan_workflow.aaps",
+                "blocks/write_status.aaps",
+            ],
+            "skills": [],
+            "modules": [],
+            "subworkflows": [],
+            "workflows": ["workflows/main.aaps"],
+            "drafts": [],
+            "archives": [],
+            "references": [],
+        },
+    }
+
+
+def starter_block_source(block_id: str, project_name: str, goal: str) -> str:
+    if block_id == "define_goal":
+        goal_value = aaps_literal(goal)
+        return f'''pipeline "Define Goal Block" {{
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "general"
+  goal "Clarify the project goal and convert it into an auditable AAPS brief."
+
+  block define_goal {{
+    input project_goal: text required = {goal_value}
+    compile_agent "codex_repair_agent"
+    prompt """
+Clarify the project topic, desired outputs, reusable blocks, tools, agents, and first runnable workflow.
+Keep the result short enough to guide a compile pass.
+"""
+    exec noop "document goal"
+    validate "goal brief is reviewable"
+    review "Approve or edit the project goal before expanding the workflow."
+  }}
+}}
+'''
+    if block_id == "plan_workflow":
+        return '''pipeline "Plan Workflow Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "general"
+  goal "Turn a project goal into a runnable workflow plan."
+
+  block plan_workflow {
+    input project_goal: text optional
+    required_agent "codex_repair_agent"
+    required_agent "deepseek_v4_pro_prompt_agent"
+    compile_agent "codex_repair_agent"
+    compile_prompt "Create missing blocks, scripts, requirements, setup prompts, and tests from the approved project goal."
+    prompt """
+Design small functional blocks with typed inputs, typed outputs, executable actions, validation, recovery, and artifacts.
+Prefer local scripts first; prepare agent prompts when external APIs or risky setup are required.
+"""
+    exec agent "codex_repair_agent"
+    validate "workflow plan lists blocks, scripts, tools, agents, and checks"
+  }
+}
+'''
+    return '''pipeline "Write Status Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain "general"
+  goal "Minimal executable starter block for a new AAPS project."
+
+  block write_status {
+    input message: text optional = "AAPS starter project is ready"
+    output status_json: json = "${run.artifacts}/starter_status.json"
+    environment python = "python3"
+    required_tool "python3"
+    required_file "scripts/write_status.py"
+    compile_agent "codex_repair_agent"
+    exec python_script "scripts/write_status.py"
+    arg message = "${input.message}"
+    arg output_json = "${output.status_json}"
+    validate "json ${output.status_json}"
+    repair true
+    recover "Prepare a Codex repair prompt if the script fails."
+  }
+}
+'''
+
+
+def starter_workflow_source(name: str, domain: str, goal: str) -> str:
+    title = aaps_literal(f"{name} Starter Workflow")
+    domain_value = aaps_literal(domain or "general")
+    goal_value = aaps_literal(goal or "Create a runnable AAPS workflow from this project topic.")
+    input_goal = aaps_literal(goal or "Describe the project goal here.")
+    return f'''pipeline {title} {{
+  subtitle "Prompt Is All You Need"
+  version "0.3"
+  domain {domain_value}
+  tags "starter, project, compile"
+  goal {goal_value}
+  artifact_dir "artifacts"
+  database "runs/aaps-runs.jsonl"
+  execution_mode "dry-run-first"
+  requires_agents "codex_repair_agent, deepseek_v4_pro_prompt_agent"
+
+  import block "blocks/define_goal.aaps" as define_goal
+  import block "blocks/plan_workflow.aaps" as plan_workflow
+  import block "blocks/write_status.aaps" as write_status
+
+  input goal: text = {input_goal}
+  output status_json: json = "${{run.artifacts}}/starter_status.json"
+
+  task project_start {{
+    prompt "Review the project goal, prepare reusable blocks, then compile missing scripts and prompts."
+    call define_goal
+    call plan_workflow
+    call write_status
+    verify "The starter workflow parses, compiles, and can dry-run locally."
+  }}
+}}
+'''
+
+
+def starter_status_script() -> str:
+    return '''#!/usr/bin/env python3
+"""Write a small JSON status artifact for an AAPS starter project."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--message", default="AAPS starter project is ready")
+    parser.add_argument("--output-json", "--output_json", dest="output_json", required=True)
+    args, _ = parser.parse_known_args()
+    output = Path(args.output_json)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "message": args.message,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "next_steps": [
+                    "Edit workflows/main.aaps",
+                    "Use block chat to generate scripts",
+                    "Run a compile check before execution",
+                ],
+            },
+            indent=2,
+        )
+        + "\\n",
+        encoding="utf-8",
+    )
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def create_starter_project(body: dict) -> dict:
+    project_dir = safe_repo_path(str(body.get("path") or "projects/new-aaps-project"))
+    name = str(body.get("name") or project_dir.name.replace("-", " ").replace("_", " ").title() or "AAPS Project").strip()
+    domain = str(body.get("domain") or "general").strip() or "general"
+    goal = str(body.get("goal") or "Create a practical AAPS workflow with reusable blocks and safe execution.").strip()
+    overwrite = bool(body.get("overwrite"))
+
+    for folder in [
+        "blocks",
+        "skills",
+        "workflows",
+        "scripts",
+        "environments",
+        "tools",
+        "agents",
+        "data",
+        "artifacts",
+        "runs",
+        "reports",
+        "notes",
+        "archive",
+    ]:
+        (project_dir / folder).mkdir(parents=True, exist_ok=True)
+
+    writes: dict[str, str] = {
+        PROJECT_MANIFEST: json.dumps(starter_project_manifest(project_dir, name, domain, goal), ensure_ascii=False, indent=2) + "\n",
+        "blocks/define_goal.aaps": starter_block_source("define_goal", name, goal),
+        "blocks/plan_workflow.aaps": starter_block_source("plan_workflow", name, goal),
+        "blocks/write_status.aaps": starter_block_source("write_status", name, goal),
+        "workflows/main.aaps": starter_workflow_source(name, domain, goal),
+        "scripts/write_status.py": starter_status_script(),
+        "environments/requirements.txt": "# Add project-local Python packages here.\n",
+        "environments/aaps_environment.json": json.dumps(
+            {
+                "python": "python3",
+                "requirements": [],
+                "commands": ["python3"],
+                "nodePackages": [],
+                "setup": [
+                    "python3 -m venv .venv",
+                    ".venv/bin/python -m pip install -r environments/requirements.txt",
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        "tools/tool_registry.json": json.dumps(
+            {
+                "tools": [
+                    {"name": "python3", "type": "system_command", "command": "python3", "supportedBlockTypes": ["python_script", "python_inline"]},
+                    {"name": "aaps_compiler", "type": "internal", "command": "aaps compile", "supportedBlockTypes": ["compile"]},
+                    {"name": "noop", "type": "internal", "command": "noop", "supportedBlockTypes": ["manual", "documentation"]},
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        "agents/agent_registry.json": json.dumps(
+            {
+                "agents": [
+                    {
+                        "name": "codex_repair_agent",
+                        "purpose": "Default code authoring, compile, and repair agent for AAPS Studio.",
+                        "invocation": "codex_wrapper",
+                        "supportedTasks": ["code_authoring", "compile", "repair", "setup_prompt"],
+                        "safety": ["project-local edits only", "ask before risky shell commands", "no secrets in logs"],
+                        "fallback": "prepare prompt",
+                    },
+                    {
+                        "name": "deepseek_v4_pro_prompt_agent",
+                        "purpose": "Prompt-compatible planning and drafting agent when DeepSeek is selected in settings.",
+                        "invocation": "openai_compatible",
+                        "baseUrl": "https://api.deepseek.com",
+                        "model": "deepseek-v4-pro",
+                        "supportedTasks": ["planning", "summarization", "compile_prompt"],
+                        "fallback": "codex_repair_agent",
+                    },
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        "notes/README.md": f"# {name}\n\nGoal: {goal}\n\nUse Studio Project -> Compile before running workflows.\n",
+    }
+
+    written: list[str] = []
+    skipped: list[str] = []
+    for rel, content in writes.items():
+        target = relative_to_project(project_dir, rel)
+        if target.exists() and not overwrite:
+            skipped.append(rel)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        if rel.endswith(".py"):
+            target.chmod(0o755)
+        written.append(rel)
+
+    payload = read_project(project_dir)
+    payload["created"] = {"written": written, "skipped": skipped}
+    return payload
 
 
 def read_project(project_dir: Path) -> dict:
@@ -276,9 +684,10 @@ def read_compile_record(compile_id: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def codex_command(schema: str, output_path: Path) -> list[str]:
-    model = os.environ.get("AAPS_CODEX_MODEL", "gpt-5.3-codex")
-    reasoning = os.environ.get("AAPS_CODEX_REASONING", "medium")
+def codex_command(schema: str, output_path: Path, settings: dict | None = None) -> list[str]:
+    active = settings or read_settings()
+    model = str(active.get("codexModel") or "gpt-5.3-codex")
+    reasoning = str(active.get("codexReasoning") or "medium")
     command = [
         "codex",
         "exec",
@@ -680,7 +1089,92 @@ Input:
 """
 
 
+def schema_instruction(schema: str) -> str:
+    schema_path = SCHEMAS.get(schema)
+    if not schema_path or not schema_path.exists():
+        return "Return a compact JSON object. Do not include Markdown."
+    try:
+        loaded = json.loads(schema_path.read_text(encoding="utf-8"))
+        return f"Return valid JSON matching this JSON Schema:\n{json.dumps(loaded, ensure_ascii=False)}"
+    except Exception:  # noqa: BLE001
+        return "Return a compact JSON object. Do not include Markdown."
+
+
+def run_deepseek(job_id: str, prompt: str, schema: str = "response", settings: dict | None = None) -> dict:
+    active = settings or read_settings()
+    folder = job_dir(job_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    output_path = folder / "output.json"
+    stdout_path = folder / "stdout.log"
+    stderr_path = folder / "stderr.log"
+    (folder / "prompt.txt").write_text(prompt, encoding="utf-8")
+
+    api_key = os.environ.get("AAPS_DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        return {
+            "status": "failed",
+            "error": "DeepSeek API key is not configured. Set AAPS_DEEPSEEK_API_KEY in .env or DEEPSEEK_API_KEY in the shell.",
+        }
+
+    base_url = str(active.get("deepseekBaseUrl") or "https://api.deepseek.com").rstrip("/")
+    model = str(active.get("deepseekModel") or "deepseek-v4-pro")
+    timeout = int(active.get("deepseekTimeout") or 180)
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are the AAPS Studio backend agent. "
+                    "You must return JSON only. Do not include Markdown fences.\n\n"
+                    f"{schema_instruction(schema)}"
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
+    request = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            raw = response.read().decode("utf-8")
+        stdout_path.write_text(raw, encoding="utf-8")
+        stderr_path.write_text("", encoding="utf-8")
+        data = json.loads(raw)
+        content = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            result = {"message": content}
+        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"status": "succeeded", "result": result}
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        stderr_path.write_text(error_body, encoding="utf-8")
+        return {"status": "failed", "error": f"DeepSeek HTTP {exc.code}: {error_body[:600]}"}
+    except Exception as exc:  # noqa: BLE001
+        stderr_path.write_text(str(exc), encoding="utf-8")
+        return {"status": "failed", "error": str(exc)}
+
+
 def run_codex(job_id: str, prompt: str, schema: str = "response") -> dict:
+    settings = read_settings()
+    if settings.get("agentProvider") == "deepseek" and os.environ.get("AAPS_MOCK_CODEX") != "1":
+        return run_deepseek(job_id, prompt, schema, settings)
+
     folder = job_dir(job_id)
     folder.mkdir(parents=True, exist_ok=True)
     output_path = folder / "output.json"
@@ -703,9 +1197,9 @@ def run_codex(job_id: str, prompt: str, schema: str = "response") -> dict:
             "error": "codex CLI was not found on PATH.",
         }
 
-    timeout = int(os.environ.get("AAPS_CODEX_TIMEOUT", "240"))
+    timeout = int(settings.get("codexTimeout") or os.environ.get("AAPS_CODEX_TIMEOUT", "240"))
     process = subprocess.run(
-        codex_command(schema, output_path),
+        codex_command(schema, output_path, settings),
         input=prompt,
         text=True,
         cwd=ROOT,
@@ -971,8 +1465,12 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     "agintiflow_submodule": (ROOT / "vendor" / "AgInTiFlow").exists(),
                     "runtime": str(RUNTIME_DIR),
                     "compile_runtime": str(COMPILE_DIR),
+                    "settings": public_settings(),
                 },
             )
+            return
+        if parsed.path == "/api/aaps/settings":
+            write_json(self, public_settings())
             return
         if parsed.path == "/api/aaps/project":
             try:
@@ -1127,6 +1625,20 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     encoding="utf-8",
                 )
                 write_json(self, read_project(project_dir))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
+        if parsed.path == "/api/aaps/project/create":
+            try:
+                write_json(self, create_starter_project(body))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
+        if parsed.path == "/api/aaps/settings":
+            try:
+                write_json(self, write_settings(body))
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
@@ -1296,7 +1808,7 @@ def main() -> None:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     COMPILE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/project, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/settings, /api/aaps/project, /api/aaps/project/create, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 

@@ -34,6 +34,20 @@ const compileSummaryEl = document.getElementById("compile-summary");
 const compileLogEl = document.getElementById("compile-log");
 const tmuxCommandEl = document.getElementById("tmux-command");
 const languageSelectEl = document.getElementById("language-select");
+const agentProviderEl = document.getElementById("agent-provider");
+const codexModelEl = document.getElementById("codex-model");
+const codexReasoningEl = document.getElementById("codex-reasoning");
+const deepseekModelEl = document.getElementById("deepseek-model");
+const deepseekBaseUrlEl = document.getElementById("deepseek-base-url");
+const autoCompileAfterChatEl = document.getElementById("auto-compile-after-chat");
+const saveSettingsBtnEl = document.getElementById("save-settings-btn");
+const settingsStatusEl = document.getElementById("settings-status");
+const settingsAvailabilityEl = document.getElementById("settings-availability");
+const newProjectPathEl = document.getElementById("new-project-path");
+const newProjectNameEl = document.getElementById("new-project-name");
+const newProjectDomainEl = document.getElementById("new-project-domain");
+const newProjectGoalEl = document.getElementById("new-project-goal");
+const createProjectBtnEl = document.getElementById("create-project-btn");
 
 const fields = {
   kind: document.getElementById("field-kind"),
@@ -71,14 +85,22 @@ let currentProjectPayload = {
 let activeRunId = "";
 let activeCompileId = "";
 let chatMessageCount = 0;
-let activeTab = "lab";
+let activeTab = localStorage.getItem("aaps.studio.activeTab") || "project";
 let lastRuntimeResult = null;
 let lastCompileResult = null;
+let currentSettings = {
+  agentProvider: "codex",
+  codexModel: "gpt-5.3-codex",
+  codexReasoning: "medium",
+  deepseekBaseUrl: "https://api.deepseek.com",
+  deepseekModel: "deepseek-v4-pro",
+  autoCompileAfterChat: true,
+};
 
 const STUDIO_I18N = {
   en: {
-    lab: "Block Lab",
-    program: "Program",
+    lab: "Blocks",
+    program: "Programs",
     project: "Project",
     general: "General",
     biology: "Biology",
@@ -410,6 +432,62 @@ function renderCompile(record) {
   compileLogEl.textContent = JSON.stringify(result, null, 2);
 }
 
+function renderSettings(settings = currentSettings) {
+  currentSettings = { ...currentSettings, ...(settings || {}) };
+  if (agentProviderEl) agentProviderEl.value = currentSettings.agentProvider || "codex";
+  if (codexModelEl) codexModelEl.value = currentSettings.codexModel || "gpt-5.3-codex";
+  if (codexReasoningEl) codexReasoningEl.value = currentSettings.codexReasoning || "medium";
+  if (deepseekModelEl) deepseekModelEl.value = currentSettings.deepseekModel || "deepseek-v4-pro";
+  if (deepseekBaseUrlEl) deepseekBaseUrlEl.value = currentSettings.deepseekBaseUrl || "https://api.deepseek.com";
+  if (autoCompileAfterChatEl) autoCompileAfterChatEl.checked = currentSettings.autoCompileAfterChat !== false;
+  if (settingsStatusEl) {
+    settingsStatusEl.textContent = `${currentSettings.agentProvider || "codex"} · ${currentSettings.agentProvider === "deepseek" ? currentSettings.deepseekModel : currentSettings.codexModel}`;
+  }
+  if (settingsAvailabilityEl) {
+    const availability = [
+      ["Codex CLI", currentSettings.codexAvailable],
+      ["DeepSeek key", currentSettings.deepseekKeyAvailable],
+      ["OpenAI key", currentSettings.openaiKeyAvailable],
+      ["AgInTiFlow", currentSettings.agintiflowAvailable],
+    ];
+    settingsAvailabilityEl.innerHTML = availability
+      .map(([label, ok]) => `<span class="${ok ? "ok" : "warn"}">${escapeHtml(label)}: ${ok ? "available" : "missing"}</span>`)
+      .join("");
+  }
+}
+
+function collectSettings() {
+  return {
+    agentProvider: agentProviderEl?.value || "codex",
+    codexModel: codexModelEl?.value.trim() || "gpt-5.3-codex",
+    codexReasoning: codexReasoningEl?.value || "medium",
+    deepseekModel: deepseekModelEl?.value || "deepseek-v4-pro",
+    deepseekBaseUrl: deepseekBaseUrlEl?.value.trim() || "https://api.deepseek.com",
+    autoCompileAfterChat: Boolean(autoCompileAfterChatEl?.checked),
+  };
+}
+
+async function loadSettings() {
+  const response = await fetch("/api/aaps/settings");
+  if (!response.ok) throw new Error(`settings API returned ${response.status}`);
+  const settings = await response.json();
+  renderSettings(settings);
+  return settings;
+}
+
+async function saveSettings() {
+  const response = await fetch("/api/aaps/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(collectSettings()),
+  });
+  if (!response.ok) throw new Error(`settings save returned ${response.status}`);
+  const settings = await response.json();
+  renderSettings(settings);
+  addMessage("assistant", `Saved ${settings.agentProvider} backend settings.`);
+  return settings;
+}
+
 function getIr() {
   return AAPS.parseAAPS(sourceEl.value);
 }
@@ -596,6 +674,15 @@ function updateChatContext() {
   const selected = nodeRefs.get(selectedRef);
   const suffix = selected ? ` · ${selected.kind} ${selected.id}` : "";
   chatContextEl.textContent = `${tabLabel(activeTab)}${suffix}`;
+}
+
+function activateTab(tab, persist = true) {
+  const target = document.querySelector(`[data-panel="${tab}"]`) ? tab : "project";
+  document.querySelectorAll("[data-tab]").forEach((item) => item.classList.toggle("is-active", item.dataset.tab === target));
+  document.querySelectorAll("[data-panel]").forEach((item) => item.classList.toggle("is-active", item.dataset.panel === target));
+  activeTab = target;
+  if (persist) localStorage.setItem("aaps.studio.activeTab", target);
+  updateChatContext();
 }
 
 function setHistoryOpen(open) {
@@ -978,6 +1065,13 @@ function localChatEdit(text) {
   const lower = raw.toLowerCase();
   let match;
   if (!raw) return "No change.";
+  if (lower.includes("create project") || lower.includes("new project")) {
+    createStarterProject().catch((error) => {
+      projectStatusEl.textContent = "create failed";
+      addMessage("assistant", `Could not create project: ${error.message}`);
+    });
+    return "Started creating a starter AAPS project from the Project tab fields.";
+  }
   if (lower.includes("biology template") || lower === "biology") {
     sourceEl.value = AAPS.samples.biology;
     render();
@@ -1077,6 +1171,7 @@ function localChatEdit(text) {
 }
 
 async function requestChatEdit(instruction) {
+  const previousSource = sourceEl.value;
   const response = await fetch("/api/aaps/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1089,6 +1184,7 @@ async function requestChatEdit(instruction) {
         selectedBlock: nodeRefs.get(selectedRef) || null,
         activeRunId,
         diagnostics: getIr().diagnostics,
+        settings: currentSettings,
       },
     }),
   });
@@ -1099,7 +1195,36 @@ async function requestChatEdit(instruction) {
     sourceEl.value = result.source;
     render();
   }
+  if (result.source && result.source !== previousSource && currentSettings.autoCompileAfterChat) {
+    startCompile("check").catch((error) => {
+      compileLogEl.textContent = error.message;
+    });
+  }
   return result.message || result.summary || "Applied routed edit.";
+}
+
+async function createStarterProject() {
+  const rawPath = newProjectPathEl?.value.trim() || "projects/new-aaps-project";
+  const name = newProjectNameEl?.value.trim() || rawPath.split("/").filter(Boolean).pop()?.replace(/[-_]/g, " ") || "AAPS Project";
+  const domain = newProjectDomainEl?.value.trim() || "general";
+  const goal = newProjectGoalEl?.value.trim() || "Create a practical AAPS workflow with reusable blocks and safe execution.";
+  projectStatusEl.textContent = "creating";
+  const response = await fetch("/api/aaps/project/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: rawPath, name, domain, goal }),
+  });
+  if (!response.ok) throw new Error(`project create returned ${response.status}`);
+  const payload = await response.json();
+  projectPathEl.value = payload.project_path || rawPath;
+  renderProject(payload);
+  const manifest = AAPS.normalizeProjectManifest(payload.manifest || {});
+  if (manifest.activeFile || manifest.defaultMain) {
+    await loadProjectFile(manifest.activeFile || manifest.defaultMain);
+  }
+  activateTab("project");
+  addMessage("assistant", `Created starter AAPS project ${manifest.name}.`);
+  return payload;
 }
 
 async function loadProject(path = projectPathEl.value || ".") {
@@ -1519,12 +1644,7 @@ function prepareRepairPrompt() {
 
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll("[data-tab]").forEach((item) => item.classList.remove("is-active"));
-    document.querySelectorAll("[data-panel]").forEach((item) => item.classList.remove("is-active"));
-    button.classList.add("is-active");
-    activeTab = button.dataset.tab;
-    document.querySelector(`[data-panel="${button.dataset.tab}"]`).classList.add("is-active");
-    updateChatContext();
+    activateTab(button.dataset.tab);
   });
 });
 
@@ -1621,6 +1741,20 @@ projectFilesEl.addEventListener("click", (event) => {
 document.getElementById("load-project-btn").addEventListener("click", () => {
   loadProject().catch((error) => {
     addMessage("assistant", `Could not load project: ${error.message}`);
+  });
+});
+
+createProjectBtnEl?.addEventListener("click", () => {
+  createStarterProject().catch((error) => {
+    projectStatusEl.textContent = "create failed";
+    addMessage("assistant", `Could not create project: ${error.message}`);
+  });
+});
+
+saveSettingsBtnEl?.addEventListener("click", () => {
+  saveSettings().catch((error) => {
+    if (settingsStatusEl) settingsStatusEl.textContent = "save failed";
+    addMessage("assistant", `Could not save settings: ${error.message}`);
   });
 });
 
@@ -1779,7 +1913,13 @@ render();
 renderProject(currentProjectPayload);
 renderRuntime(null);
 renderCompile(null);
+renderSettings(currentSettings);
+activateTab(activeTab, false);
 setHistoryOpen(false);
+loadSettings().catch((error) => {
+  if (settingsStatusEl) settingsStatusEl.textContent = "local defaults";
+  settingsAvailabilityEl.textContent = error.message;
+});
 loadProject().catch(() => {});
 
 if ("serviceWorker" in navigator) {

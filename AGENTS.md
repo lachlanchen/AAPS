@@ -55,4 +55,4 @@ The public package is `@lazyingart/aaps`. After any minor or major functional ed
 
 ## Security & Configuration
 
-Do not commit tokens, OTPs, `.env`, `.npmrc`, `.aaps-work/`, npm debug logs, or local runtime data. Codex wrapper jobs are written under `runtime/codex-jobs/`, which is ignored. Use `AAPS_MOCK_CODEX=1` for wrapper smoke tests without model calls.
+Do not commit tokens, OTPs, `.env`, `.npmrc`, `.aaps-work/`, npm debug logs, or local runtime data. Use `.env.example` for public configuration shape only. Codex wrapper jobs are written under `runtime/codex-jobs/`, which is ignored. Use `AAPS_MOCK_CODEX=1` for wrapper smoke tests without model calls. Studio backend settings may select Codex or DeepSeek, but API keys stay in the ignored `.env` or the shell.
