@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AAPS Studio</title>
+    <meta name="theme-color" content="#ff4f8b" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="aaps.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="../" aria-label="AAPS">
+        <span class="brand-mark">A</span>
+        <span>
+          <strong>AAPS Studio</strong>
+          <small>Prompt Is All You Need</small>
+        </span>
+      </a>
+      <nav class="mode-tabs" aria-label="Studio views">
+        <button class="mode-tab is-active" type="button" data-tab="lab">Block Lab</button>
+        <button class="mode-tab" type="button" data-tab="program">Program</button>
+      </nav>
+      <div class="toolbar" role="group" aria-label="Pipeline actions">
+        <button id="sample-general" type="button">General</button>
+        <button id="sample-biology" type="button">Biology</button>
+        <button id="sample-writing" type="button">Writing</button>
+        <button id="format-btn" type="button">Format</button>
+        <button id="markdown-btn" type="button">Runbook</button>
+        <button id="download-btn" type="button">Download</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="tab-panel is-active" data-panel="lab">
+        <section class="panel chat-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Chat To Blocks</h2>
+              <p>Prepare skills and mutate `.aaps` through bounded edit actions.</p>
+            </div>
+            <span id="chat-mode">router</span>
+          </div>
+          <div id="chat-log" class="chat-log" aria-live="polite"></div>
+          <form id="chat-form" class="chat-form">
+            <textarea
+              id="chat-input"
+              rows="4"
+              placeholder="Try: use biology template, add task publish after analyze_batch, add if qc_failed to segment_and_quantify"
+            ></textarea>
+            <button type="submit">Apply</button>
+          </form>
+        </section>
+
+        <section class="panel library-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Skill Library</h2>
+              <p>Reusable blocks for app development, biology, writing, and general agents.</p>
+            </div>
+            <span id="block-count">0 blocks</span>
+          </div>
+          <div class="library-grid">
+            <button class="block block-agent" type="button" data-template="agent">Agent</button>
+            <button class="block block-skill" type="button" data-template="skill_appdev">AppDev Skill</button>
+            <button class="block block-segment" type="button" data-template="skill_segment">Segmentation Skill</button>
+            <button class="block block-writing" type="button" data-template="skill_writing">Writing Skill</button>
+            <button class="block block-task" type="button" data-template="task">Task</button>
+            <button class="block block-loop" type="button" data-template="for_each">For Each</button>
+            <button class="block block-if" type="button" data-template="if">If / Else</button>
+            <button class="block block-action" type="button" data-template="action">Action</button>
+          </div>
+        </section>
+
+        <section class="panel inspector-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Block Inspector</h2>
+              <p>Edit the selected block. Save reparses and redraws the source.</p>
+            </div>
+            <span id="selected-label">none</span>
+          </div>
+          <form id="inspector-form" class="inspector-form">
+            <label>Kind <input id="field-kind" disabled /></label>
+            <label>ID <input id="field-id" /></label>
+            <label>Title <input id="field-title" /></label>
+            <label>Prompt <textarea id="field-prompt" rows="5"></textarea></label>
+            <label>Inputs <textarea id="field-inputs" rows="4" placeholder="image: image = path"></textarea></label>
+            <label>Outputs <textarea id="field-outputs" rows="4" placeholder="mask: image = runtime/mask.png"></textarea></label>
+            <label>Artifacts <textarea id="field-artifacts" rows="3" placeholder="overlay: image = runtime/overlay.png"></textarea></label>
+            <label>Run Commands <textarea id="field-run" rows="3" placeholder="npm test"></textarea></label>
+            <label>Validation Rules <textarea id="field-validations" rows="3" placeholder="output file exists"></textarea></label>
+            <label>Verify Checks <textarea id="field-verify" rows="3" placeholder="All checks pass."></textarea></label>
+            <label>Recovery Policies <textarea id="field-recovery" rows="3" placeholder="fallback to thresholding"></textarea></label>
+            <label>Human Review <textarea id="field-reviews" rows="3" placeholder="approve overlay if confidence is low"></textarea></label>
+            <div class="form-actions">
+              <button type="submit">Save Block</button>
+              <button id="delete-block" type="button">Delete</button>
+            </div>
+          </form>
+        </section>
+      </section>
+
+      <section class="tab-panel" data-panel="program">
+        <section class="panel tree-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Program Tree</h2>
+              <p>Tasks, skills, loops, conditions, methods, and actions.</p>
+            </div>
+            <span id="diagnostics">Ready</span>
+          </div>
+          <div id="tree" class="tree" tabindex="0" aria-label="AAPS program tree"></div>
+        </section>
+
+        <section class="panel editor-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Source</h2>
+              <p>Canonical `.aaps` program.</p>
+            </div>
+            <span>aaps_ir/0.2</span>
+          </div>
+          <textarea id="source" spellcheck="false"></textarea>
+        </section>
+
+        <section class="panel ir-panel">
+          <div class="panel-head">
+            <div>
+              <h2>IR Preview</h2>
+              <p>Parsed JSON for future runners.</p>
+            </div>
+            <span id="ir-summary">0 nodes</span>
+          </div>
+          <pre id="ir"></pre>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

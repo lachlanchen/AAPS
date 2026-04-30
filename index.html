@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AAPS | Prompt Is All You Need</title>
+    <meta
+      name="description"
+      content="AAPS is a prompt-native programming language and studio for autonomous agentic pipeline scripts."
+    />
+    <meta name="theme-color" content="#ff4f8b" />
+    <link rel="canonical" href="https://aaps.lazying.art/" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="AAPS home">
+        <span class="brand-mark">A</span>
+        <span>AAPS</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#language">Language</a>
+        <a href="#studio">Studio</a>
+        <a href="#deploy">Deploy</a>
+        <a href="https://github.com/lachlanchen/AAPS">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-scene" aria-hidden="true">
+          <div class="rail rail-a"></div>
+          <div class="rail rail-b"></div>
+          <div class="node node-plan">plan</div>
+          <div class="node node-build">build</div>
+          <div class="node node-check">verify</div>
+          <div class="node node-ship">ship</div>
+          <div class="code-ribbon">
+            <span>pipeline</span><span>agent</span><span>prompt</span><span>task</span><span>verify</span>
+          </div>
+        </div>
+        <div class="hero-copy">
+          <p class="eyebrow">Autonomous Agentic Pipeline Script</p>
+          <h1 id="hero-title">AAPS</h1>
+          <p class="subtitle">Prompt Is All You Need</p>
+          <p class="hero-text">
+            A small programming language and visual studio for turning prompts into planned,
+            resumable, verifiable autonomous work across software, biology, writing, and operations.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./studio/">Open Studio</a>
+            <a class="button" href="https://agent.lazying.art">Agent Portal</a>
+            <a class="button" href="https://github.com/lachlanchen/AAPS/blob/main/docs/language-spec.md">Read Spec</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section intro-band" aria-label="Product summary">
+        <div class="section-inner summary-grid">
+          <article>
+            <h2>Prompt-Native</h2>
+            <p>Prompts are first-class code blocks with agents, inputs, outputs, checks, and retry rules.</p>
+          </article>
+          <article>
+            <h2>Resumable</h2>
+            <p>Every task has a name and dependency edge, so runtimes can pause, resume, and audit work.</p>
+          </article>
+          <article>
+            <h2>Routed</h2>
+            <p>Choose methods explicitly with skill, action, method, guard, loop, and condition blocks.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="language">
+        <div class="section-inner two-col">
+          <div>
+            <p class="eyebrow">The Language</p>
+            <h2>Readable scripts for agent pipelines</h2>
+            <p>
+              AAPS abstracts the common loop from AutoAppDev, AutoNovelWriter, LazyBlog,
+              OrganoidAgent, and Zhengyu biology analysis: inspect, route, act, verify, summarize, and publish.
+            </p>
+            <ul class="check-list">
+              <li>Define agents, reusable skills, tasks, methods, guards, and actions.</li>
+              <li>Connect tasks with `after`, branch with `if`, and iterate with `for_each`.</li>
+              <li>Mix natural-language prompts, typed artifacts, deterministic commands, and QC gates.</li>
+              <li>Compile to JSON IR or Markdown runbooks.</li>
+            </ul>
+          </div>
+          <pre class="code-card"><code>pipeline "Ship AAPS Studio" {
+  subtitle "Prompt Is All You Need"
+  domain "biology"
+  goal "Segment images, QC masks, and quantify objects."
+
+  agent vision_scientist {
+    role "Route between deterministic tools and vision models."
+    model "gpt-5"
+    tools "image_viewer, cellpose, thresholding"
+  }
+
+  skill segment_image {
+    input image: image
+    output mask: image
+    choose method_router {
+      prompt "Choose cellpose, thresholding, or vision_mask."
+    }
+    guard qc_gate {
+      verify "Mask boundaries and object counts are plausible."
+    }
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <section class="section studio-band" id="studio">
+        <div class="section-inner studio-grid">
+          <div>
+            <p class="eyebrow">AAPS Studio</p>
+            <h2>Visual editing plus chat-directed changes</h2>
+            <p>
+              The Studio webapp is separate from this landing page. It has a Block Lab for
+              chat-driven skill preparation and a Program tab for source editing, block inspection,
+              typed ports, artifacts, validations, recovery policies, human review markers,
+              tree visualization, loops, conditions, functional blocks, and JSON IR preview.
+            </p>
+            <a class="button button-primary" href="./studio/">Launch Studio</a>
+          </div>
+          <div class="studio-preview" aria-label="AAPS Studio preview">
+            <div class="preview-top"></div>
+            <div class="preview-layout">
+              <div class="preview-palette">
+                <span class="mini-block pink"></span>
+                <span class="mini-block yellow"></span>
+                <span class="mini-block green"></span>
+              </div>
+              <div class="preview-canvas">
+                <span class="flow-block">discover</span>
+                <span class="flow-block">implement</span>
+                <span class="flow-block">publish</span>
+              </div>
+              <div class="preview-chat">
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="deploy">
+        <div class="section-inner deploy-panel">
+          <p class="eyebrow">Deploy Target</p>
+          <h2>Hosted at aaps.lazying.art</h2>
+          <p>
+            The repository ships with GitHub Pages deployment from `website/`, a custom
+            domain file, and a Studio artifact copied to `/studio/` during deployment.
+          </p>
+          <div class="link-row">
+            <a href="https://aaps.lazying.art">aaps.lazying.art</a>
+            <a href="https://agent.lazying.art">agent.lazying.art</a>
+            <a href="https://github.com/lachlanchen/AAPS">github.com/lachlanchen/AAPS</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>AAPS</span>
+      <span>Prompt Is All You Need</span>
+      <span>© 2026 LazyingArt</span>
+    </footer>
+  </body>
+</html>
