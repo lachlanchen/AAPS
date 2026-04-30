@@ -22,6 +22,7 @@
       </a>
       <nav class="site-nav" aria-label="Primary navigation">
         <a href="#language">Language</a>
+        <a href="#project">Project</a>
         <a href="#studio">Studio</a>
         <a href="#deploy">Deploy</a>
         <a href="https://github.com/lachlanchen/AAPS">GitHub</a>
@@ -71,6 +72,10 @@
             <h2>Routed</h2>
             <p>Choose methods explicitly with skill, action, method, guard, loop, and condition blocks.</p>
           </article>
+          <article>
+            <h2>Project-Native</h2>
+            <p>Manage many block, skill, workflow, draft, archive, artifact, and run files through one manifest.</p>
+          </article>
         </div>
       </section>
 
@@ -86,6 +91,7 @@
             </p>
             <ul class="check-list">
               <li>Define agents, reusable skills, tasks, methods, guards, and actions.</li>
+              <li>Use `include` to connect project-root relative block and skill files.</li>
               <li>Connect tasks with `after`, branch with `if`, and iterate with `for_each`.</li>
               <li>Mix natural-language prompts, typed artifacts, deterministic commands, and QC gates.</li>
               <li>Compile to JSON IR or Markdown runbooks.</li>
@@ -116,6 +122,40 @@
         </div>
       </section>
 
+      <section class="section project-band" id="project">
+        <div class="section-inner two-col">
+          <div>
+            <p class="eyebrow">AAPS Projects</p>
+            <h2>One manifest for many workflow files</h2>
+            <p>
+              Real agentic work is rarely one script. AAPS projects use `aaps.project.json`
+              to track reusable blocks, skills, modules, subworkflows, main programs, drafts,
+              archives, data folders, artifact roots, run databases, variables, tools, models,
+              and project notes.
+            </p>
+            <ul class="check-list">
+              <li>Keep paths project-root relative for clean publishing and reproducible runs.</li>
+              <li>Mark a default main `.aaps` and an active working `.aaps`.</li>
+              <li>Validate manifest files and parse every indexed workflow.</li>
+              <li>Open project files directly from the Studio Project tab.</li>
+            </ul>
+          </div>
+          <pre class="code-card"><code>{
+  "schema": "aaps_project/0.1",
+  "name": "Organoid Analysis Project",
+  "defaultMain": "workflows/main.aaps",
+  "activeFile": "workflows/main.aaps",
+  "artifactRoot": "artifacts",
+  "runDatabase": "runs/organoid-aaps-runs.jsonl",
+  "files": {
+    "blocks": ["blocks/qc_image.aaps"],
+    "skills": ["skills/microscopy_qc.aaps"],
+    "workflows": ["workflows/main.aaps"]
+  }
+}</code></pre>
+        </div>
+      </section>
+
       <section class="section studio-band" id="studio">
         <div class="section-inner studio-grid">
           <div>
@@ -123,7 +163,8 @@
             <h2>Visual editing plus chat-directed changes</h2>
             <p>
               The Studio webapp is separate from this landing page. It has a Block Lab for
-              chat-driven skill preparation and a Program tab for source editing, block inspection,
+              chat-driven skill preparation, a Program tab for source editing, and a Project tab
+              for manifest validation and multi-file workflow management. It supports block inspection,
               typed ports, artifacts, validations, recovery policies, human review markers,
               tree visualization, loops, conditions, functional blocks, and JSON IR preview.
             </p>
