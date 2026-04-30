@@ -336,6 +336,137 @@ const folderCheckSummary = JSON.parse(folderCheck.stdout);
 assert.strictEqual(folderCheckSummary.readiness.ok, true);
 assert(folderCheckSummary.readiness.blocks.every((block) => block.ready));
 
+const compilerProject = path.join(__dirname, "..", ".aaps-work", "tests", "compiler-project");
+fs.rmSync(compilerProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(compilerProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(compilerProject, "aaps.project.json"),
+  JSON.stringify(
+    {
+      schema: "aaps_project/0.1",
+      name: "Compiler Project",
+      path: ".",
+      description: "Compiler smoke project.",
+      domain: "test",
+      tags: ["compiler"],
+      defaultMain: "workflows/main.aaps",
+      activeFile: "workflows/main.aaps",
+      artifactRoot: "artifacts",
+      runDatabase: "runs/compiler.jsonl",
+      paths: {
+        blocks: "blocks",
+        skills: "skills",
+        modules: "modules",
+        subworkflows: "subworkflows",
+        workflows: "workflows",
+        drafts: "drafts",
+        archives: "archive",
+        data: "data",
+        artifacts: "artifacts",
+        runs: "runs",
+        reports: "reports",
+        notes: "notes",
+        environments: "environments",
+        tools: "tools",
+        agents: "agents",
+      },
+      variables: {},
+      tools: [],
+      agents: [],
+      files: { workflows: ["workflows/main.aaps"], blocks: [], skills: [], modules: [], subworkflows: [], drafts: [], archives: [], references: [] },
+    },
+    null,
+    2
+  ) + "\n",
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(compilerProject, "workflows", "main.aaps"),
+  `pipeline "Compiler Missing Block" {
+  task main {
+    call segment_image
+  }
+}
+`,
+  "utf8"
+);
+const compileCheck = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "compile", "workflows/main.aaps", "--project", ".aaps-work/tests/compiler-project", "--mode", "check", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(compileCheck.status, 1, compileCheck.stderr || compileCheck.stdout);
+const compileCheckReport = JSON.parse(compileCheck.stdout);
+assert(compileCheckReport.missingComponents.some((item) => item.type === "missing_block" && item.name === "segment_image"));
+assert(fs.existsSync(path.join(compileCheckReport.compileDir, "compile_report.json")));
+
+const missingCli = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "missing", "workflows/main.aaps", "--project", ".aaps-work/tests/compiler-project", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(missingCli.status, 1, missingCli.stderr || missingCli.stdout);
+assert(JSON.parse(missingCli.stdout).missingComponents.length >= 1);
+
+const compileApply = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "compile", "workflows/main.aaps", "--project", ".aaps-work/tests/compiler-project", "--mode", "apply", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(compileApply.status, 0, compileApply.stderr || compileApply.stdout);
+const compileApplyReport = JSON.parse(compileApply.stdout);
+assert.strictEqual(compileApplyReport.ok, true);
+assert(fs.existsSync(path.join(compilerProject, "blocks", "segment_image.aaps")));
+assert(fs.existsSync(path.join(compilerProject, "scripts", "threshold_segment.py")));
+assert(fs.readFileSync(path.join(compilerProject, "workflows", "main.aaps"), "utf8").includes('import block "blocks/segment_image.aaps"'));
+assert(compileApplyReport.generatedFiles.some((item) => item.file === "scripts/threshold_segment.py" && item.written));
+assert(compileApplyReport.modifiedFiles.some((item) => item.file === "workflows/main.aaps" && item.written));
+
+const parsedCompiledProject = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "parse", "workflows/main.aaps", "--project", ".aaps-work/tests/compiler-project"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(parsedCompiledProject.status, 0, parsedCompiledProject.stderr || parsedCompiledProject.stdout);
+assert(JSON.parse(parsedCompiledProject.stdout).pipeline.blocks.some((block) => block.id === "segment_image"));
+
+fs.writeFileSync(
+  path.join(compilerProject, "sample.pgm"),
+  "P2\n4 4\n255\n0 0 0 0\n0 210 220 0\n0 205 230 0\n0 0 0 0\n",
+  "utf8"
+);
+const generatedSegmentRun = childProcess.spawnSync(
+  "python3",
+  [
+    "scripts/threshold_segment.py",
+    "--input-image",
+    "sample.pgm",
+    "--output-mask",
+    "artifacts/mask.pgm",
+    "--output-overlay",
+    "artifacts/overlay.pgm",
+    "--output-table",
+    "artifacts/objects.csv",
+    "--report-json",
+    "artifacts/segmentation.json",
+  ],
+  { cwd: compilerProject, encoding: "utf8" }
+);
+assert.strictEqual(generatedSegmentRun.status, 0, generatedSegmentRun.stderr || generatedSegmentRun.stdout);
+assert(fs.existsSync(path.join(compilerProject, "artifacts", "mask.pgm")));
+assert(fs.existsSync(path.join(compilerProject, "artifacts", "objects.csv")));
+
+const generateScriptProject = path.join(__dirname, "..", ".aaps-work", "tests", "compiler-script-project");
+fs.rmSync(generateScriptProject, { recursive: true, force: true });
+fs.mkdirSync(generateScriptProject, { recursive: true });
+const generateScript = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "generate-script", "scripts/qc_image.py", "--project", ".aaps-work/tests/compiler-script-project", "--mode", "apply", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(generateScript.status, 0, generateScript.stderr || generateScript.stdout);
+assert(fs.existsSync(path.join(generateScriptProject, "scripts", "qc_image.py")));
+
 const folderDemoRun = childProcess.spawnSync(
   "node",
   [

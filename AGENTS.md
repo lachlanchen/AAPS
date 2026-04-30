@@ -4,7 +4,8 @@
 
 AAPS is split into a language core, a local Studio app, and a landing website.
 
-- `src/aaps.js` contains the JavaScript `aaps_ir/0.2` parser, serializer, sample scripts, and Markdown compiler.
+- `src/aaps.js` contains the JavaScript `aaps_ir/0.2` parser, serializer, sample scripts, and Markdown/runbook helpers.
+- `scripts/aaps-compiler.js` contains the agent-based compile layer for missing blocks, scripts, tools, agents, setup prompts, and generated file provenance.
 - `aaps.project.json` describes the current multi-file AAPS project.
 - `tests/` contains Node smoke tests for the language core.
 - `examples/` contains `.aaps` pipeline examples.
@@ -21,6 +22,7 @@ AAPS is split into a language core, a local Studio app, and a landing website.
 - `npm test`: runs parser and serializer smoke tests.
 - `npm run project:validate`: validates `aaps.project.json` and all project `.aaps` files.
 - `npm run aaps:run -- --file examples/executable_runtime.aaps`: executes a workflow through the local runtime.
+- `node scripts/aaps.js compile workflows/main.aaps --project . --mode check --json`: checks missing AAPS components without editing files.
 - `npm run studio`: starts the local Studio plus Codex wrapper at `http://127.0.0.1:8796`.
 - `npm run build:website`: copies `src/aaps.js` into Studio and stages Studio under `website/studio/` for static deployment.
 - `python3 -m py_compile backend/aaps_codex_server.py`: checks the wrapper server syntax.
@@ -34,7 +36,7 @@ Prefer small, dependency-light code. The landing page and Studio are static asse
 
 ## Testing Guidelines
 
-Add tests under `tests/` when changing parser behavior or serialization. Keep examples parseable and run `npm test` before committing. For wrapper changes, also run `python3 -m py_compile backend/aaps_codex_server.py`.
+Add tests under `tests/` when changing parser, compiler, runtime, or serialization behavior. Keep examples parseable and run `npm test` before committing. For wrapper changes, also run `python3 -m py_compile backend/aaps_codex_server.py`.
 
 ## Commit & Pull Request Guidelines
 
@@ -46,7 +48,7 @@ The public package is `@lazyingart/aaps`. After any minor or major functional ed
 
 - Choose the version deliberately: patch for fixes/docs/package metadata, minor for compatible features, major for breaking CLI/language/runtime changes.
 - Update `package.json` before release; never republish an existing version.
-- Run `npm test`, `npm run project:validate`, `python3 -m py_compile backend/aaps_codex_server.py`, and `npm pack --dry-run`.
+- Run `npm test`, `npm run project:validate`, `node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json`, `python3 -m py_compile backend/aaps_codex_server.py`, and `npm pack --dry-run`.
 - If `website/` or `studio/` changed, run `npm run build:website`, commit the main branch, then deploy `website/` to `gh-pages`.
 - Push `main`, then publish through GitHub Actions Trusted Publishing using `.github/workflows/npm-publish.yml`. Verify `npm view @lazyingart/aaps version license dist-tags`.
 - Record release-relevant npm notes in `references/npm-publication.md` without adding secrets.

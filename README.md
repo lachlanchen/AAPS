@@ -25,7 +25,8 @@ The public product site is `https://aaps.lazying.art`. The broader agent portal 
 ## What This Repo Contains
 
 - `aaps.project.json`: project manifest for this repository.
-- `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for parsing scripts, resolving imports, building execution plans, producing agent compile prompts, and validating projects.
+- `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for deterministic parsing, import diagnostics, execution-plan building, and project validation.
+- `scripts/aaps-compiler.js`: agent-aware compile layer that turns unresolved IR into a resolved workflow report, generated local assets, setup prompts, and Codex prompts.
 - `studio/`: AAPS Studio, a three-tab PWA with Block Lab chat, project management, block inspector, block-level code chat, source editing, tree visualization, runtime controls, and IR preview.
 - `backend/`: local Codex wrapper and project filesystem server for `/api/aaps/project`, `/api/aaps/block/chat`, `/api/aaps/run`, `/api/aaps/edit`, and `/api/codex/*`.
 - `website/`: bright landing page deployed by GitHub Pages.
@@ -98,7 +99,9 @@ my-aaps-project/
   notes/
 ```
 
-The manifest records project metadata, default and active `.aaps` files, data folders, artifact root, run database, variables, tools, models, agents, environment settings, notes, and file categories. Workflows can declare dependencies with project-root relative imports/includes:
+The manifest records project metadata, default and active `.aaps` files, data folders, artifact root, run database, variables, tools, models, agents, environment settings, notes, and file categories. Treat a project as one topic workspace, such as a lecture-notes project, a novel, a research analysis, or an app. Each project can own several workflows and run one active workflow from Studio, CLI, or a tmux session while sharing the same tools, agents, scripts, and artifacts.
+
+Workflows can declare dependencies with project-root relative imports/includes:
 
 ```aaps
 import block "blocks/qc_image.aaps" as qc_image
@@ -156,6 +159,7 @@ Studio tabs:
 - **Block Lab**: create blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions.
 - **Program**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
 - **Project**: load a project, edit `aaps.project.json`, browse `.aaps` and script files, create/duplicate/archive workflow files, dry-run or run workflows.
+- **Project**: load a topic workspace, see workflows/blocks/scripts/tools/agents/env counts, view the active and main `.aaps`, run compile checks, apply safe generated files, copy a tmux command, and dry-run or run the current workflow.
 
 For wrapper smoke tests without model calls:
 
@@ -164,6 +168,28 @@ AAPS_MOCK_CODEX=1 npm run studio
 ```
 
 ## Executable Runtime
+
+AAPS separates parse, compile, plan, and execute:
+
+```text
+.aaps -> parser -> unresolved IR -> AAPSCompiler -> resolved IR -> execution plan -> readiness check -> runtime -> validation/recovery/report
+```
+
+The parser is deterministic and does not invent missing code. The compiler can run in `check`, `suggest`, `apply`, `interactive`, or `force` mode. It detects missing imports, blocks, scripts, tools, agents, binaries, Python packages, and inputs. In safe apply mode it can create missing local block files, Python scripts, requirements entries, compile artifacts, setup prompts, and Codex prompts without installing packages or deleting user files.
+
+CLI examples:
+
+```bash
+node scripts/aaps.js compile workflows/main.aaps --project . --mode check --json
+node scripts/aaps.js compile workflows/main.aaps --project . --mode suggest --json
+node scripts/aaps.js compile workflows/main.aaps --project . --mode apply --json
+node scripts/aaps.js missing workflows/main.aaps --project . --json
+node scripts/aaps.js generate-block segment_image --project . --mode apply
+node scripts/aaps.js generate-script scripts/threshold_segment.py --project . --mode apply
+node scripts/aaps.js prepare-setup workflows/main.aaps --project . --json
+```
+
+Compile artifacts are written under `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs.
 
 AAPS can execute deterministic actions today. Use `run` for shell commands or `exec` for typed actions:
 
@@ -184,6 +210,7 @@ Run locally:
 
 ```bash
 node scripts/aaps.js parse examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
 node scripts/aaps.js plan examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js check workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
 node scripts/aaps.js run examples/executable_runtime.aaps --project . --json
@@ -211,6 +238,8 @@ GET  /api/aaps/project/text-file
 POST /api/aaps/project/text-file
 POST /api/aaps/project/file-action
 POST /api/aaps/block/chat
+POST /api/aaps/compile
+GET  /api/aaps/compile?id=<compile-id>
 POST /api/aaps/run
 GET  /api/aaps/run?id=<run-id>
 POST /api/codex/respond

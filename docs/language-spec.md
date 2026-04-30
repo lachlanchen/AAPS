@@ -8,6 +8,8 @@ Current parser target: `aaps_ir/0.2`.
 
 Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.project.json` plus project-root relative `.aaps` files. See [project-management.md](project-management.md).
 
+Compile target: `aaps_compile_report/0.1`. The compiler is a separate phase after parsing and before planning/execution. It resolves missing project-local blocks, scripts, tools, agents, dependencies, setup prompts, and provenance without making parsing nondeterministic. See [compiler.md](compiler.md).
+
 ## Design Goals
 
 - Treat prompts as first-class code while making inputs and outputs explicit.
@@ -185,3 +187,5 @@ An AAPS runtime should:
 8. Apply `recover` policies or `review` checkpoints when confidence is low or validation fails.
 
 The current runtime implements project-aware imports, loop execution over `list_files(...)`, shell/Python/Node/noop/manual/agent-prompt adapters, run logs, artifact checks, `exists` / `nonempty` / `json` / `mask_not_empty` validation, retry, fallback commands or fallback block IDs, readiness reports, setup prompts, and repair request files. See [runtime.md](runtime.md).
+
+The current compiler implements `check`, `suggest`, `apply`, `interactive`, and `force` modes. It reads parser diagnostics and readiness checks, reports missing blocks/scripts/tools/agents/binaries/packages/inputs, generates safe local `.aaps` blocks and Python scripts when requested, writes setup and Codex prompts, and stores compile provenance under `runs/<timestamp>_compile/`.

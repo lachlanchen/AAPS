@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STUDIO_DIR = ROOT / "studio"
 RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
 RUN_DIR = ROOT / "runtime" / "aaps-runs"
+COMPILE_DIR = ROOT / "runtime" / "aaps-compiles"
 PROJECT_MANIFEST = "aaps.project.json"
 SKIP_SCAN_DIRS = {".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"}
 TEXT_FILE_EXTENSIONS = {".aaps", ".py", ".sh", ".js", ".mjs", ".cjs", ".json", ".md", ".txt", ".yaml", ".yml", ".toml"}
@@ -242,6 +243,10 @@ def run_dir(run_id: str) -> Path:
     return RUN_DIR / run_id
 
 
+def compile_dir(compile_id: str) -> Path:
+    return COMPILE_DIR / compile_id
+
+
 def write_run_record(run_id: str, payload: dict) -> None:
     folder = run_dir(run_id)
     folder.mkdir(parents=True, exist_ok=True)
@@ -254,6 +259,19 @@ def read_run_record(run_id: str) -> dict | None:
         summary = run_dir(run_id) / "run.json"
         if summary.exists():
             return json.loads(summary.read_text(encoding="utf-8"))
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_compile_record(compile_id: str, payload: dict) -> None:
+    folder = compile_dir(compile_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "api-compile.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def read_compile_record(compile_id: str) -> dict | None:
+    path = compile_dir(compile_id) / "api-compile.json"
+    if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -840,6 +858,91 @@ def start_aaps_run(body: dict) -> dict:
     return record
 
 
+def start_aaps_compile(body: dict) -> dict:
+    compile_id = uuid.uuid4().hex[:16]
+    folder = compile_dir(compile_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    project_dir = safe_repo_path(str(body.get("path") or "."))
+    project_arg = project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else "."
+    mode = str(body.get("mode") or "check").strip().lower()
+    source = str(body.get("source") or "")
+    file_name = str(body.get("file") or "").strip()
+    project_wide = bool(body.get("projectWide") or body.get("project_wide"))
+    source_path = ""
+    if source:
+        source_path = str(folder / "input.aaps")
+        (folder / "input.aaps").write_text(source, encoding="utf-8")
+    elif file_name:
+        relative_to_project(project_dir, file_name)
+    elif not project_wide:
+        project = read_project(project_dir)["manifest"]
+        file_name = str(project.get("activeFile") or project.get("defaultMain") or "")
+        if file_name:
+            relative_to_project(project_dir, file_name)
+
+    record = {
+        "id": compile_id,
+        "status": "running",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "project": project_arg,
+        "file": file_name,
+        "mode": mode,
+        "projectWide": project_wide,
+        "result": None,
+        "error": "",
+    }
+    write_compile_record(compile_id, record)
+
+    def worker() -> None:
+        current = read_compile_record(compile_id) or record
+        command = [
+            "node",
+            str(ROOT / "scripts" / "aaps-compiler.js"),
+            "compile-project" if project_wide else "compile",
+            "--project",
+            project_arg,
+            "--mode",
+            mode,
+            "--compile-id",
+            compile_id,
+            "--json",
+        ]
+        if source_path:
+            command.extend(["--source", source_path])
+        elif file_name and not project_wide:
+            command.extend(["--file", file_name])
+        try:
+            process = subprocess.run(
+                command,
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                timeout=int(os.environ.get("AAPS_COMPILE_TIMEOUT", "900")),
+                check=False,
+            )
+            (folder / "api-stdout.log").write_text(process.stdout or "", encoding="utf-8")
+            (folder / "api-stderr.log").write_text(process.stderr or "", encoding="utf-8")
+            try:
+                result = json.loads(process.stdout)
+            except json.JSONDecodeError:
+                result = {"message": process.stdout.strip()}
+            current.update(
+                {
+                    "status": "succeeded" if result.get("ok") else "failed",
+                    "updated_at": now_iso(),
+                    "result": result,
+                    "error": process.stderr.strip() if process.returncode and not result.get("ok") else "",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            current.update({"status": "failed", "updated_at": now_iso(), "error": str(exc)})
+        write_compile_record(compile_id, current)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return record
+
+
 class AAPSHandler(SimpleHTTPRequestHandler):
     server_version = "AAPSStudio/0.1"
 
@@ -867,6 +970,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     "codex": bool(shutil.which("codex")),
                     "agintiflow_submodule": (ROOT / "vendor" / "AgInTiFlow").exists(),
                     "runtime": str(RUNTIME_DIR),
+                    "compile_runtime": str(COMPILE_DIR),
                 },
             )
             return
@@ -936,6 +1040,11 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             run_id = parse_qs(parsed.query).get("id", [""])[0]
             record = read_run_record(run_id)
             write_json(self, record or {"error": "run not found"}, 200 if record else 404)
+            return
+        if parsed.path == "/api/aaps/compile":
+            compile_id = parse_qs(parsed.query).get("id", [""])[0]
+            record = read_compile_record(compile_id)
+            write_json(self, record or {"error": "compile not found"}, 200 if record else 404)
             return
         super().do_GET()
 
@@ -1148,6 +1257,13 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(self, {"error": str(exc)}, 400)
             return
 
+        if parsed.path == "/api/aaps/compile":
+            try:
+                write_json(self, start_aaps_compile(body), 202)
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
         if parsed.path == "/api/aaps/block/chat":
             try:
                 write_json(self, build_block_chat_response(body))
@@ -1178,8 +1294,9 @@ def main() -> None:
     args = parser.parse_args()
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    COMPILE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/project, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/block/chat, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/project, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 

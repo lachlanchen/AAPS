@@ -5,8 +5,13 @@
 runtime/
 .aaps-work/
 website/studio/
+runs/*_compile/
+runs/*/
 examples/projects/*/runtime/
 examples/projects/*/runs/*.jsonl
+examples/projects/*/runs/*_compile/
+examples/projects/*/runs/*/
+!examples/projects/*/runs/.gitkeep
 examples/projects/*/artifacts/**
 !examples/projects/*/artifacts/.gitkeep
 examples/projects/*/reports/*.md

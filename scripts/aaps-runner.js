@@ -807,6 +807,58 @@ function run(options) {
     );
   });
   const dryRun = Boolean(options.dryRun);
+  if (!dryRun && !readiness.ok) {
+    const blocked = {
+      ok: false,
+      runId,
+      status: "blocked_compile_check",
+      file: loaded.file,
+      project: projectDir,
+      runDir,
+      dryRun,
+      diagnostics: ir.diagnostics,
+      requirements: checkRequirements(ir, projectDir),
+      readiness,
+      compilePlan,
+      plan: {
+        steps: plan.steps.length,
+        executableSteps: plan.executableSteps,
+        promptOnlySteps: plan.promptOnlySteps,
+        warnings: plan.warnings,
+      },
+      results: [],
+      startedAt: nowIso(),
+      finishedAt: nowIso(),
+      message: "Execution stopped before side effects because compile/readiness checks failed.",
+    };
+    writeJson(path.join(runDir, "run.json"), blocked);
+    fs.writeFileSync(
+      path.join(runDir, "report.md"),
+      [
+        `# AAPS Run ${runId}`,
+        "",
+        `Status: ${blocked.status}`,
+        `File: ${blocked.file}`,
+        "",
+        "Execution was blocked because required blocks, scripts, tools, agents, dependencies, or inputs are unresolved.",
+        "",
+        "## Compile Requests",
+        ...(compilePlan.requests || []).map((request) => `- ${request.block}: ${request.missing.map((item) => item.kind).join(", ")}`),
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    const database = resolveRuntimePath(projectDir, context.database, context);
+    appendJsonl(database, {
+      runId,
+      file: loaded.file,
+      status: blocked.status,
+      runDir,
+      block: options.block || "",
+      finishedAt: blocked.finishedAt,
+    });
+    return blocked;
+  }
   const eventsFile = path.join(runDir, "events.jsonl");
   const results = [];
   const fallbackVisited = new Set();
@@ -1178,10 +1230,41 @@ function main() {
   process.exit(summary.ok ? 0 : 1);
 }
 
-try {
-  main();
-} catch (error) {
-  const payload = { ok: false, status: "failed", error: error.message };
-  console.error(JSON.stringify(payload, null, 2));
-  process.exit(1);
+module.exports = {
+  appendJsonl,
+  buildReadiness,
+  checkAgent,
+  checkBlockReadiness,
+  checkRequirements,
+  checkTool,
+  collectAapsFiles,
+  commandExists,
+  contextFrom,
+  ensureDir,
+  expand,
+  filterPlanByBlock,
+  listFiles,
+  loadRegistries,
+  loadSource,
+  parseArgs,
+  parseLoaded,
+  projectPython,
+  pythonPackageExists,
+  readJsonIfExists,
+  readManifest,
+  run,
+  safeRelative,
+  suggestionForCheck,
+  unresolvedVariables,
+  writeJson,
+};
+
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    const payload = { ok: false, status: "failed", error: error.message };
+    console.error(JSON.stringify(payload, null, 2));
+    process.exit(1);
+  }
 }

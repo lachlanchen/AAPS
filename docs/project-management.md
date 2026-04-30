@@ -121,18 +121,25 @@ node scripts/aaps.js run workflows/executable_organoid_demo.aaps --project examp
 node scripts/aaps.js run workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
 ```
 
-Validation checks manifest shape, relative paths, declared `.aaps` files, and parser diagnostics for project files. `check` builds a project-aware execution plan and block readiness report without running the workflow.
+Validation checks manifest shape, relative paths, declared `.aaps` files, and parser diagnostics for project files. `compile` detects missing blocks, scripts, tools, agents, binaries, packages, and inputs before runtime. `check` builds a project-aware execution plan and block readiness report without running the workflow.
 
 ## Studio Behavior
 
-AAPS Studio has a Project tab for:
+AAPS Studio has a Project tab for one topic workspace. A project can be a lecture-notes corpus, novel, research analysis, app, or operations workflow. It may contain many runnable `.aaps` workflows plus reusable blocks, scripts, tools, agents, and environments.
+
+The tab supports:
 
 - editing `aaps.project.json`
 - validating manifest fields
+- viewing workflow/block/script/tool/agent/environment counts
+- distinguishing active working `.aaps` and default main `.aaps`
 - viewing blocks, skills, modules, workflows, drafts, archives, and references
 - viewing script, environment, tool registry, and agent registry files
 - loading a project file into the script editor
 - saving the active file through the local server
+- compiling the active workflow in check/suggest/apply modes
+- seeing missing component reports, generated files, setup prompts, and Codex prompts
+- copying a tmux command for running the active workflow in a project session
 - creating, duplicating, and archiving `.aaps` files
 - running or dry-running the active workflow
 - checking readiness, running, or dry-running the selected block from the block inspector

@@ -7,7 +7,7 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
 - Three Studio tabs:
   - Block Lab for chat/building skills and reusable blocks.
   - Program for source editing, tree visualization, IR preview, and block inspection.
-- Project tab for manifest editing, project file lists, project validation, active workflow loading, and local active-file saving.
+- Project tab for a topic-workspace view: manifest editing, project file lists, workflow/block/script/tool/agent/environment counts, active/default workflow display, tmux command display, project validation, active workflow loading, and local active-file saving.
 - Shared parser in `src/aaps.js`; the Studio uses the same parser directly in the browser.
 - `aaps_ir/0.2` grammar support for:
   - workflow metadata: version, author, created, updated, domain, tags, artifact directory, database, log path, required tools, required models, required agents, and environment values
@@ -36,6 +36,15 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
   - local `/api/aaps/run` start/poll API
   - Studio Project tab dry-run/run controls and runtime status panel
   - executable folder segmentation demo that generates images, loops through images, runs QC/segmentation/quantification, and creates batch reports
+- Agent-based compiler:
+  - separate parse -> compile -> plan -> execute phase model
+  - `aaps_compile_report/0.1` compile reports
+  - check/suggest/apply/interactive/force modes
+  - missing block/script/tool/agent/binary/package/input reports
+  - safe local generation of missing `.aaps` block files and Python scripts
+  - requirements file updates, setup prompts, Codex prompts, generated file provenance, and compile artifact directories
+  - CLI commands: `compile`, `compile-project`, `missing`, `generate-block`, `generate-script`, and `prepare-setup`
+  - local `/api/aaps/compile` start/poll API and Studio compile controls
 - Reference source scripts copied under `references/pipeline-scripts/sources/`.
 - General converted `.aaps` scripts under `references/pipeline-scripts/converted/`.
 - Required named examples:
@@ -56,6 +65,7 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
   - validation/recovery/review
   - project manifests and multi-file example projects
   - executable runtime success, fallback recovery, block readiness, compile prompt generation, and folder segmentation loop execution
+  - compiler missing-component detection, safe apply generation, generated script execution, and generated import resolution
   - invalid syntax/missing pipeline
   - every example `.aaps`
   - every converted reference `.aaps`

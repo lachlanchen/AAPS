@@ -33,6 +33,19 @@
         <button id="markdown-btn" type="button">Runbook</button>
         <button id="download-btn" type="button">Download</button>
       </div>
+      <select id="language-select" class="language-select" aria-label="Language">
+        <option value="en">EN</option>
+        <option value="zh-Hans">简</option>
+        <option value="zh-Hant">繁</option>
+        <option value="ja">日</option>
+        <option value="ko">한</option>
+        <option value="es">ES</option>
+        <option value="fr">FR</option>
+        <option value="de">DE</option>
+        <option value="ru">RU</option>
+        <option value="ar">AR</option>
+        <option value="vi">VI</option>
+      </select>
     </header>
 
     <main>
@@ -154,22 +167,29 @@
         <section class="panel project-manifest-panel">
           <div class="panel-head">
             <div>
-              <h2>Project Manifest</h2>
-              <p><code>aaps.project.json</code> defines project files, paths, tools, models, artifacts, and runs.</p>
+              <h2>Project Workspace</h2>
+              <p><code>aaps.project.json</code> describes one topic workspace: workflows, reusable blocks, scripts, tools, agents, data, artifacts, and runs.</p>
             </div>
             <span id="project-status">not loaded</span>
           </div>
           <div class="project-controls">
+            <div class="project-concept">
+              A project is a research/app/book/lecture workspace. Keep several workflows in it, run one active `.aaps`, and reuse its blocks, tools, agents, and environments across tmux panes or Studio runs.
+            </div>
             <label>Project Path <input id="project-path" value="." /></label>
             <div class="form-actions">
               <button id="load-project-btn" type="button">Load</button>
               <button id="sample-project-btn" type="button">Sample</button>
               <button id="validate-project-btn" type="button">Validate</button>
               <button id="save-project-btn" type="button">Save Manifest</button>
+              <button id="compile-check-btn" type="button">Check Missing</button>
+              <button id="compile-suggest-btn" type="button">Compile</button>
+              <button id="compile-apply-btn" type="button">Apply Safe Compile</button>
               <button id="save-active-file-btn" type="button">Save Active File</button>
               <button id="dry-run-active-file-btn" type="button">Dry Run</button>
               <button id="run-active-file-btn" type="button">Run</button>
             </div>
+            <pre id="tmux-command" class="tmux-command"></pre>
             <label>File Action Target <input id="project-file-target" placeholder="workflows/new_workflow.aaps or scripts/helper.py" /></label>
             <div class="form-actions">
               <button id="new-workflow-btn" type="button">New Workflow</button>
@@ -184,8 +204,8 @@
         <section class="panel project-files-panel">
           <div class="panel-head">
             <div>
-              <h2>Project Files</h2>
-              <p>Blocks, skills, modules, subworkflows, workflows, drafts, and archives.</p>
+              <h2>Workspace Files</h2>
+              <p>Workflows are runnable programs. Blocks/skills are reusable capabilities. Scripts, tools, agents, and environments make blocks executable.</p>
             </div>
             <span id="project-file-count">0 files</span>
           </div>
@@ -196,11 +216,13 @@
         <section class="panel project-structure-panel">
           <div class="panel-head">
             <div>
-              <h2>Runtime</h2>
-              <p>Execution plan, action logs, artifact checks, recovery, and repair state.</p>
+              <h2>Compile / Runtime</h2>
+              <p>Compile resolves missing blocks, scripts, tools, agents, and setup prompts before dry-runs or real runs.</p>
             </div>
             <span id="run-status">idle</span>
           </div>
+          <div id="compile-summary" class="compile-summary"></div>
+          <pre id="compile-log"></pre>
           <div id="run-summary" class="run-summary"></div>
           <pre id="run-log"></pre>
         </section>

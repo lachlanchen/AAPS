@@ -12,6 +12,12 @@ function usage() {
   return [
     "Usage:",
     "  aaps parse <file> [--project .]",
+    "  aaps compile <file> [--project .] [--mode check|suggest|apply|interactive|force] [--json]",
+    "  aaps compile-project [--project .] [--mode check|suggest|apply] [--json]",
+    "  aaps missing <file> [--project .] [--json]",
+    "  aaps generate-block <name> [--project .] [--mode apply] [--json]",
+    "  aaps generate-script <name-or-path> [--project .] [--mode apply] [--json]",
+    "  aaps prepare-setup <file> [--project .] [--json]",
     "  aaps plan <file> [--project .] [--json]",
     "  aaps check <file> [--project .] [--json]",
     "  aaps check-block <file> --block <id> [--project .] [--json]",
@@ -23,6 +29,7 @@ function usage() {
     "Options:",
     "  --project <dir>   AAPS project root. Defaults to current directory.",
     "  --block <id>      Block ID or execution-plan path fragment for run-block.",
+    "  --mode <mode>     Compile mode: check, suggest, apply, interactive, or force.",
     "  --host <host>     Studio host for `aaps studio`.",
     "  --port <port>     Studio port for `aaps studio`.",
     "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
@@ -148,6 +155,25 @@ function runRunner(command, file, options) {
   process.exit(result.status || 0);
 }
 
+function runCompiler(command, positional, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const args = [path.join(__dirname, "aaps-compiler.js"), command];
+  positional.forEach((item) => args.push(item));
+  args.push("--project", ".");
+  if (options.mode) args.push("--mode", options.mode);
+  if (options.file && !positional.length) args.push("--file", options.file);
+  if (options.compileId) args.push("--compile-id", options.compileId);
+  if (options.json) args.push("--json");
+  const result = childProcess.spawnSync("node", args, {
+    cwd: projectDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exit(result.status || 0);
+}
+
 function commandParse(fileArg, options) {
   const projectDir = path.resolve(options.project || ".");
   const parsed = parseProjectAware(projectDir, fileArg);
@@ -238,6 +264,10 @@ function main() {
   }
   if (command === "studio") {
     commandStudio(options);
+    return;
+  }
+  if (["compile", "compile-project", "missing", "generate-block", "generate-script", "prepare-setup"].includes(command)) {
+    runCompiler(command, positional, options);
     return;
   }
   if (command === "plan" || command === "check" || command === "run") {

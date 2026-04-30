@@ -3,7 +3,7 @@
 AAPS now includes a minimal real runtime:
 
 ```text
-.aaps -> project-aware parser -> IR -> execution plan -> readiness/tool/agent checks -> actions -> logs/artifacts -> validation -> recovery/repair -> report
+.aaps -> project-aware parser -> unresolved IR -> agent-based compiler -> resolved IR -> execution plan -> readiness/tool/agent checks -> actions -> logs/artifacts -> validation -> recovery/repair -> report
 ```
 
 The runtime is intentionally conservative. It executes deterministic local actions and records prompt/model-only steps as planned work until a model adapter is attached.
@@ -101,6 +101,28 @@ ${tool.name.path}
 ${agent.name.name}
 ```
 
+## Agent-Based Compile Before Execution
+
+Use `aaps compile` before a run when the workflow may reference missing blocks, scripts, tools, agents, binaries, or dependencies:
+
+```bash
+node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
+node scripts/aaps.js compile workflows/main.aaps --project . --mode suggest --json
+node scripts/aaps.js compile workflows/main.aaps --project . --mode apply --json
+```
+
+Compile modes:
+
+- `check`: detect unresolved components and write compile artifacts.
+- `suggest`: produce setup and agent prompts without editing project files.
+- `apply`: create safe local block/script/requirements files and record provenance.
+- `interactive`: prepare approval-oriented prompts.
+- `force`: overwrite generated targets with backups.
+
+Every compile writes `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs.
+
+Real execution performs a compile/readiness check first and blocks side effects when required components are unresolved.
+
 ## Readiness, Tools, Agents, And Compile Prompts
 
 `aaps check` and every run build a block readiness report before execution. Each block is classified as `ready`, `ready_with_warning`, `missing_input`, `missing_script`, `missing_python_package`, `missing_system_command`, `missing_tool`, `missing_agent`, `invalid_output_path`, or `waiting_for_human_review`.
@@ -164,6 +186,7 @@ The pipeline `database` path also receives one JSONL summary per run.
 
 ```bash
 node scripts/aaps.js parse examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
 node scripts/aaps.js plan examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js check examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js check-block workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --block segment_image --json
@@ -192,6 +215,8 @@ The Studio Project tab can start a dry run or real run for the active `.aaps` fi
 ```text
 POST /api/aaps/run
 GET  /api/aaps/run?id=<run-id>
+POST /api/aaps/compile
+GET  /api/aaps/compile?id=<compile-id>
 ```
 
 ## Current Limits
