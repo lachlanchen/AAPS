@@ -135,7 +135,7 @@ npm run studio
 
 Open `http://127.0.0.1:8796`.
 
-Future package install target:
+npm install:
 
 ```bash
 npm install -g @lazyingart/aaps
@@ -143,7 +143,7 @@ aaps studio --host 127.0.0.1 --port 8796
 aaps parse examples/hello.aaps --project .
 ```
 
-The package metadata is already scoped as `@lazyingart/aaps`. Publishing is configured through GitHub Actions Trusted Publishing in `.github/workflows/npm-publish.yml`, so the release workflow uses GitHub OIDC instead of a long-lived npm token. In npm package settings, connect the trusted publisher to GitHub owner `lachlanchen`, repository `AAPS`, workflow filename `npm-publish.yml`.
+The package is published as `@lazyingart/aaps`. Future releases are prepared for GitHub Actions Trusted Publishing in `.github/workflows/npm-publish.yml`, so the release workflow can use GitHub OIDC after npm trust is approved. In npm package settings, connect the trusted publisher to GitHub owner `lachlanchen`, repository `AAPS`, workflow filename `npm-publish.yml`.
 
 Studio tabs:
 
