@@ -25,6 +25,7 @@
         <a href="#project">Project</a>
         <a href="#runtime">Runtime</a>
         <a href="#studio">Studio</a>
+        <a href="#install">Install</a>
         <a href="#examples">Examples</a>
         <a href="#deploy">Deploy</a>
         <a href="https://github.com/lachlanchen/AAPS">GitHub</a>
@@ -202,7 +203,8 @@
               The Studio webapp is separate from this landing page. It has a Block Lab for
               chat-driven skill preparation, a Program tab for source editing, and a Project tab
               for manifest validation, multi-file workflow management, dry-runs, and real runtime runs.
-              It supports project file actions, script browsing, block inspection, block-level chat,
+              It now keeps chat in a fixed bottom dock available on every tab, with the transcript
+              tucked behind a History button and colored user/AAPS messages. It supports project file actions, script browsing, block inspection, block-level chat,
               inline/external code editing,
               typed ports, artifacts, validations, recovery policies, human review markers,
               tree visualization, loops, conditions, functional blocks, and JSON IR preview.
@@ -227,6 +229,30 @@
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="section install-band" id="install">
+        <div class="section-inner two-col">
+          <div>
+            <p class="eyebrow">Install Path</p>
+            <h2>Designed for npm installation</h2>
+            <p>
+              AAPS is prepared as a scoped npm package so one install can provide the parser,
+              compiler/planner, CLI runner, and local Studio server. Publishing still requires
+              npm registry access for the `@lazyingart` scope.
+            </p>
+            <ul class="check-list">
+              <li>CLI binary: `aaps`.</li>
+              <li>Local webapp: `aaps studio --host 127.0.0.1 --port 8796`.</li>
+              <li>Parser/compiler: `aaps parse`, `aaps plan`, and `aaps validate`.</li>
+              <li>Runtime: `aaps run` and `aaps run-block`.</li>
+            </ul>
+          </div>
+          <pre class="code-card"><code>npm install -g @lazyingart/aaps
+aaps studio --host 127.0.0.1 --port 8796
+aaps parse workflows/main.aaps --project .
+aaps run workflows/main.aaps --project . --json</code></pre>
         </div>
       </section>
 

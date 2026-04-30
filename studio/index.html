@@ -37,25 +37,6 @@
 
     <main>
       <section class="tab-panel is-active" data-panel="lab">
-        <section class="panel chat-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Chat To Blocks</h2>
-              <p>Prepare skills and mutate `.aaps` through bounded edit actions.</p>
-            </div>
-            <span id="chat-mode">router</span>
-          </div>
-          <div id="chat-log" class="chat-log" aria-live="polite"></div>
-          <form id="chat-form" class="chat-form">
-            <textarea
-              id="chat-input"
-              rows="4"
-              placeholder="Try: use biology template, add task publish after analyze_batch, add if qc_failed to segment_and_quantify"
-            ></textarea>
-            <button type="submit">Apply</button>
-          </form>
-        </section>
-
         <section class="panel library-panel">
           <div class="panel-head">
             <div>
@@ -230,5 +211,33 @@
         </section>
       </section>
     </main>
+
+    <section class="chat-dock" aria-label="AAPS Studio chat">
+      <div class="chat-dock-meta">
+        <span id="chat-context">Block Lab</span>
+        <span id="chat-status">ready</span>
+      </div>
+      <form id="chat-form" class="chat-dock-form">
+        <textarea
+          id="chat-input"
+          rows="2"
+          placeholder="Ask AAPS to edit this tab: add block qc_image, explain current workflow, add a loop, prepare project summary"
+        ></textarea>
+        <button type="submit">Send</button>
+        <button id="chat-history-toggle" type="button">History <span id="chat-count">0</span></button>
+      </form>
+    </section>
+
+    <div id="chat-history-overlay" class="chat-history-overlay" hidden></div>
+    <aside id="chat-history-panel" class="chat-history-panel" aria-hidden="true" aria-label="Chat history">
+      <div class="chat-history-head">
+        <div>
+          <h2>Chat History</h2>
+          <p>Messages sent through the AAPS Codex wrapper or local fallback router.</p>
+        </div>
+        <button id="chat-history-close" type="button">Close</button>
+      </div>
+      <div id="chat-log" class="chat-log" aria-live="polite"></div>
+    </aside>
   </body>
 </html>
