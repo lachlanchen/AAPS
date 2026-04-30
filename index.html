@@ -47,7 +47,7 @@
           <p class="subtitle">Prompt Is All You Need</p>
           <p class="hero-text">
             A small programming language and visual studio for turning prompts into planned,
-            resumable, verifiable autonomous work.
+            resumable, verifiable autonomous work across software, biology, writing, and operations.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="./studio/">Open Studio</a>
@@ -68,8 +68,8 @@
             <p>Every task has a name and dependency edge, so runtimes can pause, resume, and audit work.</p>
           </article>
           <article>
-            <h2>Visual</h2>
-            <p>AAPS Studio pairs Scratch-like task blocks with source editing and chat-based changes.</p>
+            <h2>Routed</h2>
+            <p>Choose methods explicitly with skill, action, method, guard, loop, and condition blocks.</p>
           </article>
         </div>
       </section>
@@ -81,30 +81,35 @@
             <h2>Readable scripts for agent pipelines</h2>
             <p>
               AAPS abstracts the common loop from AutoAppDev, AutoNovelWriter, LazyBlog,
-              and OrganoidAgent: plan, work, verify, summarize, commit, and publish.
+              OrganoidAgent, and Zhengyu biology analysis: inspect, route, act, verify, summarize, and publish.
             </p>
             <ul class="check-list">
-              <li>Define agents with model, role, and tools.</li>
-              <li>Connect tasks with `after` dependencies.</li>
-              <li>Mix natural-language prompts with deterministic commands.</li>
+              <li>Define agents, reusable skills, tasks, methods, guards, and actions.</li>
+              <li>Connect tasks with `after`, branch with `if`, and iterate with `for_each`.</li>
+              <li>Mix natural-language prompts, typed artifacts, deterministic commands, and QC gates.</li>
               <li>Compile to JSON IR or Markdown runbooks.</li>
             </ul>
           </div>
           <pre class="code-card"><code>pipeline "Ship AAPS Studio" {
   subtitle "Prompt Is All You Need"
-  goal "Build, verify, and publish a web studio."
+  domain "biology"
+  goal "Segment images, QC masks, and quantify objects."
 
-  agent builder {
-    role "Senior engineer for autonomous product work."
+  agent vision_scientist {
+    role "Route between deterministic tools and vision models."
     model "gpt-5"
-    tools "shell, git, browser"
+    tools "image_viewer, cellpose, thresholding"
   }
 
-  task implement after discover {
-    uses builder
-    prompt "Create the product surface and tests."
-    run "npm test"
-    verify "The website renders."
+  skill segment_image {
+    input image: image
+    output mask: image
+    choose method_router {
+      prompt "Choose cellpose, thresholding, or vision_mask."
+    }
+    guard qc_gate {
+      verify "Mask boundaries and object counts are plausible."
+    }
   }
 }</code></pre>
         </div>
@@ -116,9 +121,9 @@
             <p class="eyebrow">AAPS Studio</p>
             <h2>Visual editing plus chat-directed changes</h2>
             <p>
-              The Studio webapp is separate from this landing page. It edits `.aaps` scripts
-              with a source editor, task blocks, JSON IR preview, and a chat panel that applies
-              bounded local commands such as “add task deploy after test”.
+              The Studio webapp is separate from this landing page. It now has a Block Lab for
+              chat-driven skill preparation and a Program tab for source editing, block inspection,
+              tree visualization, loops, conditions, functional blocks, and JSON IR preview.
             </p>
             <a class="button button-primary" href="./studio/">Launch Studio</a>
           </div>
@@ -167,4 +172,3 @@
     </footer>
   </body>
 </html>
-
