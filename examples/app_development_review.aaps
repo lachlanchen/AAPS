@@ -1,0 +1,86 @@
+pipeline "App Development Review Workflow" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  author "AAPS"
+  domain "software"
+  tags "appdev, pwa, android, ios, playwright, codex"
+  requires_tools "shell, git, browser, playwright, screenshot, codex"
+  artifact_dir "runtime/artifacts/app_review"
+  database "runtime/runs/app_review.jsonl"
+  log_path "runtime/logs/app_review.log"
+  goal "Inspect app structure, loop through pages and tabs, test behavior, capture screenshots, patch defects, rerun checks, and summarize changes."
+  input repo: directory required = "./"
+  input app_pages: collection required = "docs/app-pages.json"
+  output screenshot_dir: directory = "runtime/artifacts/app_review/screenshots"
+  output bug_report: markdown = "runtime/artifacts/app_review/bugs.md"
+  output patch_summary: markdown = "runtime/artifacts/app_review/patch-summary.md"
+
+  agent app_reviewer {
+    role "App development agent for UI inspection, testing, patching, and release review."
+    model "gpt-5"
+    tools "shell, git, browser, playwright, codex"
+  }
+
+  skill inspect_page {
+    input page: json required
+    output screenshot: image
+    output page_report: markdown
+    action load_page {
+      run "npx playwright test tests/load-page.spec.ts --project=chromium"
+      validate "Page loads without console or network errors."
+      recover "If browser test fails, inspect route, dev server, and console logs."
+    }
+    action capture_screenshot {
+      run "node tools/capture-page.js --page {{page.url}} --out {{screenshot}}"
+      artifact screenshot: image
+    }
+    guard ui_qc {
+      validate "Text does not overlap, controls fit on mobile and desktop, and expected workflows are reachable."
+      review "Human confirms UI direction for major visual changes."
+    }
+  }
+
+  skill patch_bug {
+    input page_report: markdown required
+    output patch_summary: markdown
+    choose patch_route {
+      prompt "Choose static inspection, unit test, Playwright test, screenshot comparison, Codex patching, or manual review."
+      output selected_route: json
+    }
+    action patch_code {
+      prompt "Make a focused code patch for confirmed defects only."
+      recover "If patch fails, revert only the failed attempt and produce a clear blocker."
+    }
+    action rerun_tests {
+      run "npm test"
+      validate "Relevant checks pass after the patch."
+    }
+  }
+
+  task scan_structure {
+    uses app_reviewer
+    prompt "Read repo structure, identify app entry points, tests, pages, tabs, and development commands."
+    output structure_report: markdown = "runtime/artifacts/app_review/structure.md"
+  }
+
+  task review_pages after scan_structure {
+    uses app_reviewer
+    for_each page in "app_pages" {
+      action inspect {
+        call inspect_page
+      }
+      if "page_report.has_confirmed_bug" {
+        action fix {
+          call patch_bug
+        }
+      }
+    }
+  }
+
+  task summarize after review_pages {
+    uses app_reviewer
+    prompt "Summarize tested pages, screenshots, defects, patches, remaining risks, and commands run."
+    validate "Summary includes changed files, checks, screenshots, and follow-up tasks."
+  }
+}
+

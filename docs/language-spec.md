@@ -33,11 +33,15 @@ Current parser target: `aaps_ir/0.2`.
 
 | Statement | Example |
 | --- | --- |
-| `input` | `input image: image = "sample.png"` |
+| `input` | `input image: image required = "sample.png"` |
 | `output` | `output mask: image = "runtime/mask.png"` |
+| `artifact` | `artifact overlay: image = "runtime/overlay.png"` |
 | `prompt` | `prompt "Inspect the image and choose a method."` |
 | `run` | `run "npm test"` |
+| `validate` | `validate "mask is non-empty"` |
 | `verify` | `verify "Mask boundaries match visible objects."` |
+| `recover` | `recover "fallback to thresholding"` |
+| `review` | `review "human approves low-confidence overlay"` |
 | `call` | `call segment_image as segmentation` |
 | `param` | `param diameter = "auto"` |
 | `metric` | `metric boundary_overlap = "required"` |
@@ -50,8 +54,12 @@ Multiline prompts use triple quotes.
 ```aaps
 pipeline "Biology Image Segmentation QC" {
   subtitle "Prompt Is All You Need"
+  version "0.2"
+  artifact_dir "runtime/artifacts/segmentation"
+  database "runtime/aaps-runs.jsonl"
+  log_path "runtime/logs/segmentation.log"
   domain "biology"
-  input image_batch: collection = "data/images"
+  input image_batch: collection required = "data/images"
   output metrics: table = "runtime/metrics.csv"
 
   agent vision_scientist {
@@ -83,7 +91,10 @@ pipeline "Biology Image Segmentation QC" {
     }
     guard qc_gate {
       metric boundary_overlap = "required"
+      validate "Mask is non-empty."
       verify "Object count, area, and artifact checks pass."
+      recover "Fallback to another method if QC fails."
+      review "Human approves low-confidence overlays."
     }
   }
 
@@ -107,4 +118,5 @@ An AAPS runtime should:
 3. Resolve task dependencies and loop expansion.
 4. Execute prompts and commands through bounded adapters.
 5. Persist every block state, selected method, output artifact, and QC result.
-6. Require `verify` and `guard` checks before advancing.
+6. Require `validate`, `verify`, and `guard` checks before advancing.
+7. Apply `recover` policies or `review` checkpoints when confidence is low or validation fails.

@@ -90,8 +90,12 @@
             <label>Prompt <textarea id="field-prompt" rows="5"></textarea></label>
             <label>Inputs <textarea id="field-inputs" rows="4" placeholder="image: image = path"></textarea></label>
             <label>Outputs <textarea id="field-outputs" rows="4" placeholder="mask: image = runtime/mask.png"></textarea></label>
+            <label>Artifacts <textarea id="field-artifacts" rows="3" placeholder="overlay: image = runtime/overlay.png"></textarea></label>
             <label>Run Commands <textarea id="field-run" rows="3" placeholder="npm test"></textarea></label>
+            <label>Validation Rules <textarea id="field-validations" rows="3" placeholder="output file exists"></textarea></label>
             <label>Verify Checks <textarea id="field-verify" rows="3" placeholder="All checks pass."></textarea></label>
+            <label>Recovery Policies <textarea id="field-recovery" rows="3" placeholder="fallback to thresholding"></textarea></label>
+            <label>Human Review <textarea id="field-reviews" rows="3" placeholder="approve overlay if confidence is low"></textarea></label>
             <div class="form-actions">
               <button type="submit">Save Block</button>
               <button id="delete-block" type="button">Delete</button>

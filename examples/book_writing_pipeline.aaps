@@ -1,0 +1,68 @@
+pipeline "Book Writing Pipeline" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  author "AAPS"
+  domain "writing"
+  tags "book, novel, outline, chapter, consistency, revision"
+  requires_tools "markdown, filesystem, codex"
+  artifact_dir "runtime/artifacts/book"
+  database "runtime/runs/book_writing.jsonl"
+  log_path "runtime/logs/book_writing.log"
+  goal "Create an outline, draft chapters, check consistency and style, revise, and export a manuscript."
+  input notes: markdown required = "materials/notes.md"
+  input chapter_plan: table optional = "materials/chapter-plan.csv"
+  output manuscript: markdown = "runtime/artifacts/book/manuscript.md"
+  output consistency_report: markdown = "runtime/artifacts/book/consistency.md"
+
+  agent book_editor {
+    role "Long-form writing agent that keeps chat memory separate from controlled manuscript edits."
+    model "gpt-5"
+    tools "markdown, filesystem, critique"
+  }
+
+  skill chapter_cycle {
+    input chapter_brief: markdown required
+    output chapter_draft: markdown
+    output critique: markdown
+    output revised_chapter: markdown
+    stage outline {
+      prompt "Create a chapter outline with promise, structure, scenes or sections, and evidence."
+    }
+    stage draft {
+      prompt "Write the chapter from the outline while preserving source facts and character names."
+      artifact chapter_draft: markdown
+    }
+    guard consistency_check {
+      validate "Character names, timeline, terminology, claims, and citations remain consistent."
+      recover "If consistency fails, revise only the affected chapter and record the change."
+    }
+    stage style_check {
+      prompt "Check voice, pacing, readability, and audience fit."
+    }
+    stage revision {
+      prompt "Apply focused revisions and produce a revision summary."
+      review "Human approves major plot, thesis, or tone changes."
+    }
+  }
+
+  task prepare_outline {
+    uses book_editor
+    prompt "Convert notes into a chapter plan and identify missing source material."
+  }
+
+  task draft_chapters after prepare_outline {
+    uses book_editor
+    for_each chapter_brief in "chapter_plan" {
+      action write_chapter {
+        call chapter_cycle
+      }
+    }
+  }
+
+  task export_manuscript after draft_chapters {
+    uses book_editor
+    prompt "Combine revised chapters, produce front matter if needed, and export a manuscript."
+    validate "Manuscript and consistency report exist."
+  }
+}
+

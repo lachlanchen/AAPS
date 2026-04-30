@@ -73,10 +73,19 @@
     return {
       name: "Untitled Pipeline",
       subtitle: "Prompt Is All You Need",
+      workflowVersion: "",
+      author: "",
+      created: "",
+      updated: "",
       domain: "general",
       tags: [],
       goal: "",
       prompt: "",
+      artifactDir: "",
+      databasePath: "",
+      logPath: "",
+      requiredTools: [],
+      requiredModels: [],
       inputs: {},
       inputPorts: [],
       outputPorts: [],
@@ -85,6 +94,10 @@
       tasks: [],
       policies: {},
       params: {},
+      validations: [],
+      recovery: [],
+      reviews: [],
+      artifacts: [],
       notes: [],
     };
   }
@@ -107,6 +120,10 @@
       params: {},
       metrics: {},
       policies: {},
+      validations: [],
+      recovery: [],
+      reviews: [],
+      artifacts: [],
       calls: [],
       run: [],
       verify: [],
@@ -118,12 +135,14 @@
 
   function parsePort(text) {
     const body = String(text || "").trim();
-    const typed = body.match(/^([A-Za-z_][\w.-]*)(?:\s*:\s*([A-Za-z_][\w.-]*))?(?:\s*(?:=|from|to)\s*(.+))?$/i);
+    const typed = body.match(/^([A-Za-z_][\w.-]*)(?:\s*:\s*([A-Za-z_][\w.-]*))?(?:\s+(required|optional))?(?:\s*(?:=|from|to)\s*(.+?))?(?:\s+validate\s+(.+))?$/i);
     if (!typed) return null;
     return {
       name: typed[1],
       type: typed[2] || "artifact",
-      value: typed[3] ? unquote(typed[3]) : "",
+      required: typed[3] ? typed[3].toLowerCase() === "required" : false,
+      value: typed[4] ? unquote(typed[4]) : "",
+      validation: typed[5] ? unquote(typed[5]) : "",
     };
   }
 
@@ -167,6 +186,7 @@
     const ir = { version: VERSION, pipeline: createPipeline(), diagnostics: [] };
     const stack = [];
     let blockText = null;
+    let sawPipeline = false;
 
     function currentTarget() {
       return nearest(stack, (frame) => frame.kind !== "pipeline") || ir.pipeline;
@@ -203,6 +223,7 @@
 
       let match = line.match(/^pipeline\s+(.+?)\s*\{$/i);
       if (match) {
+        sawPipeline = true;
         ir.pipeline.name = unquote(match[1]);
         stack.push({ kind: "pipeline", node: ir.pipeline });
         return;
@@ -286,9 +307,31 @@
         return;
       }
 
+      match = line.match(/^(version|author|created|updated|artifact_dir|database|log_path)\s+(.+)$/i);
+      if (match && target === ir.pipeline) {
+        const keyMap = {
+          version: "workflowVersion",
+          author: "author",
+          created: "created",
+          updated: "updated",
+          artifact_dir: "artifactDir",
+          database: "databasePath",
+          log_path: "logPath",
+        };
+        ir.pipeline[keyMap[match[1].toLowerCase()]] = unquote(match[2]);
+        return;
+      }
+
       match = line.match(/^tags\s+(.+)$/i);
       if (match && target === ir.pipeline) {
         ir.pipeline.tags = parseList(unquote(match[1]));
+        return;
+      }
+
+      match = line.match(/^(requires_tools|requires_models)\s+(.+)$/i);
+      if (match && target === ir.pipeline) {
+        const key = match[1].toLowerCase() === "requires_tools" ? "requiredTools" : "requiredModels";
+        ir.pipeline[key] = parseList(unquote(match[2]));
         return;
       }
 
@@ -310,6 +353,32 @@
         const word = match[1].toLowerCase();
         const bucket = word === "policy" ? "policies" : `${word}s`;
         target[bucket][kv.key] = kv.value;
+        return;
+      }
+
+      match = line.match(/^(validate|validation|verify_rule)\s+(.+)$/i);
+      if (match) {
+        target.validations.push(unquote(match[2]));
+        return;
+      }
+
+      match = line.match(/^(recover|recovery|on_error)\s+(.+)$/i);
+      if (match) {
+        target.recovery.push(unquote(match[2]));
+        return;
+      }
+
+      match = line.match(/^(review|human_review)\s+(.+)$/i);
+      if (match) {
+        target.reviews.push(unquote(match[2]));
+        return;
+      }
+
+      match = line.match(/^artifact\s+(.+)$/i);
+      if (match) {
+        const artifact = parsePort(match[1]);
+        if (artifact) target.artifacts.push(artifact);
+        else diagnostic(lineNumber, 'artifact must look like "name: type = path".');
         return;
       }
 
@@ -391,6 +460,9 @@
       );
     });
 
+    if (!sawPipeline) {
+      diagnostic(1, "Missing pipeline declaration.");
+    }
     if (blockText) diagnostic(lines.length, `Unclosed triple-quoted ${blockText.key} block.`);
     if (stack.length) diagnostic(lines.length, `Unclosed block: ${stack[stack.length - 1].kind}.`);
     return ir;
@@ -402,7 +474,7 @@
     const outputPorts = node.outputPorts || node.outputs || [];
     if (Array.isArray(inputPorts)) {
       inputPorts.forEach((port) => {
-        lines.push(`${indent}input ${port.name}: ${port.type || "artifact"}${port.value ? ` = ${quote(port.value)}` : ""}`);
+        lines.push(`${indent}input ${port.name}: ${port.type || "artifact"}${port.required ? " required" : ""}${port.value ? ` = ${quote(port.value)}` : ""}${port.validation ? ` validate ${quote(port.validation)}` : ""}`);
       });
     } else {
       Object.entries(inputPorts).forEach(([key, value]) => {
@@ -411,7 +483,7 @@
     }
     if (Array.isArray(outputPorts)) {
       outputPorts.forEach((port) => {
-        lines.push(`${indent}output ${port.name}: ${port.type || "artifact"}${port.value ? ` = ${quote(port.value)}` : ""}`);
+        lines.push(`${indent}output ${port.name}: ${port.type || "artifact"}${port.required ? " required" : ""}${port.value ? ` = ${quote(port.value)}` : ""}${port.validation ? ` validate ${quote(port.validation)}` : ""}`);
       });
     }
     return lines;
@@ -444,6 +516,7 @@
     if (node.tools && node.tools.length) lines.push(`${childIndent}tools ${quote(node.tools.join(", "))}`);
     if (node.agent) lines.push(`${childIndent}uses ${node.agent}`);
     lines.push(...serializePorts(node, childIndent));
+    (node.artifacts || []).forEach((artifact) => lines.push(`${childIndent}artifact ${artifact.name}: ${artifact.type || "artifact"}${artifact.value ? ` = ${quote(artifact.value)}` : ""}${artifact.validation ? ` validate ${quote(artifact.validation)}` : ""}`));
     Object.entries(node.params || {}).forEach(([key, value]) => lines.push(`${childIndent}param ${key} = ${quote(value)}`));
     Object.entries(node.metrics || {}).forEach(([key, value]) => lines.push(`${childIndent}metric ${key} = ${quote(value)}`));
     Object.entries(node.policies || {}).forEach(([key, value]) => lines.push(`${childIndent}policy ${key} = ${quote(value)}`));
@@ -454,7 +527,10 @@
       lines.push(`${childIndent}"""`);
     }
     (node.run || []).forEach((command) => lines.push(`${childIndent}run ${quote(command)}`));
+    (node.validations || []).forEach((check) => lines.push(`${childIndent}validate ${quote(check)}`));
     (node.verify || []).forEach((check) => lines.push(`${childIndent}verify ${quote(check)}`));
+    (node.recovery || []).forEach((step) => lines.push(`${childIndent}recover ${quote(step)}`));
+    (node.reviews || []).forEach((review) => lines.push(`${childIndent}review ${quote(review)}`));
     (node.notes || []).forEach((note) => lines.push(`${childIndent}note ${quote(note)}`));
     (node.children || []).forEach((child) => {
       lines.push("");
@@ -468,8 +544,17 @@
     const pipeline = ir.pipeline || createPipeline();
     const lines = [`pipeline ${quote(pipeline.name || "Untitled Pipeline")} {`];
     if (pipeline.subtitle) lines.push(`  subtitle ${quote(pipeline.subtitle)}`);
+    if (pipeline.workflowVersion) lines.push(`  version ${quote(pipeline.workflowVersion)}`);
+    if (pipeline.author) lines.push(`  author ${quote(pipeline.author)}`);
+    if (pipeline.created) lines.push(`  created ${quote(pipeline.created)}`);
+    if (pipeline.updated) lines.push(`  updated ${quote(pipeline.updated)}`);
     if (pipeline.domain) lines.push(`  domain ${quote(pipeline.domain)}`);
     if (pipeline.tags && pipeline.tags.length) lines.push(`  tags ${quote(pipeline.tags.join(", "))}`);
+    if (pipeline.requiredTools && pipeline.requiredTools.length) lines.push(`  requires_tools ${quote(pipeline.requiredTools.join(", "))}`);
+    if (pipeline.requiredModels && pipeline.requiredModels.length) lines.push(`  requires_models ${quote(pipeline.requiredModels.join(", "))}`);
+    if (pipeline.artifactDir) lines.push(`  artifact_dir ${quote(pipeline.artifactDir)}`);
+    if (pipeline.databasePath) lines.push(`  database ${quote(pipeline.databasePath)}`);
+    if (pipeline.logPath) lines.push(`  log_path ${quote(pipeline.logPath)}`);
     if (pipeline.goal) lines.push(`  goal ${quote(pipeline.goal)}`);
     if (pipeline.prompt) {
       lines.push('  prompt """');
@@ -477,8 +562,12 @@
       lines.push('  """');
     }
     lines.push(...serializePorts(pipeline, "  "));
+    (pipeline.artifacts || []).forEach((artifact) => lines.push(`  artifact ${artifact.name}: ${artifact.type || "artifact"}${artifact.value ? ` = ${quote(artifact.value)}` : ""}${artifact.validation ? ` validate ${quote(artifact.validation)}` : ""}`));
     Object.entries(pipeline.params || {}).forEach(([key, value]) => lines.push(`  param ${key} = ${quote(value)}`));
     Object.entries(pipeline.policies || {}).forEach(([key, value]) => lines.push(`  policy ${key} = ${quote(value)}`));
+    (pipeline.validations || []).forEach((check) => lines.push(`  validate ${quote(check)}`));
+    (pipeline.recovery || []).forEach((step) => lines.push(`  recover ${quote(step)}`));
+    (pipeline.reviews || []).forEach((review) => lines.push(`  review ${quote(review)}`));
     [...(pipeline.agents || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach((node) => {
       lines.push("");
       lines.push(...serializeNode(node, 1));
@@ -495,9 +584,15 @@
     if (node.condition) lines.push(`${prefix}  - Condition: ${node.condition}`);
     if (node.agent) lines.push(`${prefix}  - Agent: ${node.agent}`);
     if (node.prompt) lines.push(`${prefix}  - Prompt: ${node.prompt.replace(/\s+/g, " ").slice(0, 160)}`);
+    if (node.inputs && node.inputs.length) lines.push(`${prefix}  - Inputs: ${node.inputs.map((port) => `${port.name}:${port.type}`).join(", ")}`);
+    if (node.outputs && node.outputs.length) lines.push(`${prefix}  - Outputs: ${node.outputs.map((port) => `${port.name}:${port.type}`).join(", ")}`);
+    if (node.artifacts && node.artifacts.length) lines.push(`${prefix}  - Artifacts: ${node.artifacts.map((artifact) => artifact.name).join(", ")}`);
     (node.calls || []).forEach((call) => lines.push(`${prefix}  - Calls: ${call.skill}${call.as ? ` as ${call.as}` : ""}`));
     (node.run || []).forEach((command) => lines.push(`${prefix}  - Run: \`${command}\``));
+    (node.validations || []).forEach((check) => lines.push(`${prefix}  - Validate: ${check}`));
     (node.verify || []).forEach((check) => lines.push(`${prefix}  - Verify: ${check}`));
+    (node.recovery || []).forEach((step) => lines.push(`${prefix}  - Recovery: ${step}`));
+    (node.reviews || []).forEach((review) => lines.push(`${prefix}  - Human review: ${review}`));
     (node.children || []).forEach((child) => nodeSummary(child, depth + 1, lines));
   }
 
@@ -511,6 +606,15 @@
       `Domain: ${pipeline.domain || "general"}`,
       "",
     ];
+    if (pipeline.workflowVersion || pipeline.author || pipeline.artifactDir || pipeline.databasePath || pipeline.logPath) {
+      lines.push("## Metadata", "");
+      if (pipeline.workflowVersion) lines.push(`- Version: ${pipeline.workflowVersion}`);
+      if (pipeline.author) lines.push(`- Author: ${pipeline.author}`);
+      if (pipeline.artifactDir) lines.push(`- Artifact dir: ${pipeline.artifactDir}`);
+      if (pipeline.databasePath) lines.push(`- Database: ${pipeline.databasePath}`);
+      if (pipeline.logPath) lines.push(`- Log path: ${pipeline.logPath}`);
+      lines.push("");
+    }
     if (pipeline.goal) lines.push("## Goal", "", pipeline.goal, "");
     if (pipeline.inputPorts && pipeline.inputPorts.length) {
       lines.push("## Inputs", "");
@@ -535,10 +639,16 @@
   const samples = {
     general: `pipeline "Ship AAPS Studio" {
   subtitle "Prompt Is All You Need"
+  version "0.2"
+  author "AAPS"
   domain "software"
   tags "appdev, codex, release"
+  requires_tools "shell, git, browser, codex"
+  artifact_dir "runtime/artifacts"
+  database "runtime/aaps-runs.jsonl"
+  log_path "runtime/logs/studio.log"
   goal "Design, build, verify, and publish a clean web app for an autonomous agent project."
-  input repo: path = "./"
+  input repo: path required = "./"
   output release_notes: markdown = "docs/release-notes.md"
 
   agent builder {
@@ -558,7 +668,9 @@
     }
     stage verify {
       run "npm test"
+      validate "Test command exits successfully."
       verify "All tests pass."
+      recover "If tests fail, inspect the failing output and make the smallest corrective patch."
     }
   }
 
@@ -578,10 +690,17 @@
 }`,
     biology: `pipeline "Organoid Segmentation QC" {
   subtitle "Prompt Is All You Need"
+  version "0.2"
+  author "AAPS"
   domain "biology"
   tags "segmentation, qc, quantification, organoid"
+  requires_tools "image_viewer, cellpose, thresholding, vision_mask, python"
+  requires_models "gpt-5, cellpose"
+  artifact_dir "runtime/artifacts/segmentation"
+  database "runtime/aaps-runs.jsonl"
+  log_path "runtime/logs/segmentation.log"
   goal "Choose a segmentation method for microscopy images, generate masks, run QC, and quantify organoid metrics."
-  input image: image = "examples/input/organoid.png"
+  input image: image required = "examples/input/organoid.png"
   output mask: image = "runtime/masks/organoid-mask.png"
   output metrics: table = "runtime/metrics/organoid-metrics.csv"
 
@@ -623,6 +742,9 @@
       metric boundary_overlap = "required"
       prompt "Check failure modes: merged objects, missing dim objects, debris, and partial fields."
       output qc_report: markdown
+      validate "Mask is non-empty and object count is plausible for the field."
+      recover "Fallback to threshold_or_vision and request human review when confidence remains low."
+      review "Human approves overlay if QC confidence is below threshold."
     }
   }
 
@@ -642,8 +764,10 @@
 }`,
     writing: `pipeline "Book Writing Loop" {
   subtitle "Prompt Is All You Need"
+  version "0.2"
   domain "writing"
   tags "novel, book, outline, draft, revise"
+  artifact_dir "runtime/artifacts/writing"
   goal "Turn research notes into a chapter plan, draft, critique, revision, and publishable manuscript artifact."
   input notes: markdown = "materials/notes.md"
   output manuscript: markdown = "drafts/chapter.md"

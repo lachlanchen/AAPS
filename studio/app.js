@@ -17,8 +17,12 @@ const fields = {
   prompt: document.getElementById("field-prompt"),
   inputs: document.getElementById("field-inputs"),
   outputs: document.getElementById("field-outputs"),
+  artifacts: document.getElementById("field-artifacts"),
   run: document.getElementById("field-run"),
+  validations: document.getElementById("field-validations"),
   verify: document.getElementById("field-verify"),
+  recovery: document.getElementById("field-recovery"),
+  reviews: document.getElementById("field-reviews"),
 };
 
 let selectedRef = "";
@@ -114,6 +118,9 @@ function renderNode(node, ref, depth = 0) {
   if (node.iterator) meta.push(`for ${node.iterator.item} in ${node.iterator.source}`);
   if (node.condition) meta.push(`if ${node.condition}`);
   if (node.calls && node.calls.length) meta.push(`calls ${node.calls.map((call) => call.skill).join(", ")}`);
+  if (node.validations && node.validations.length) meta.push(`${node.validations.length} validation`);
+  if (node.recovery && node.recovery.length) meta.push(`${node.recovery.length} recovery`);
+  if (node.reviews && node.reviews.length) meta.push(`${node.reviews.length} review`);
   const children = (node.children || [])
     .map((child, index) => renderNode(child, `${ref}/children:${index}`, depth + 1))
     .join("");
@@ -124,7 +131,7 @@ function renderNode(node, ref, depth = 0) {
           <div class="node-kind">${escapeHtml(node.kind)}</div>
           <div class="node-id">${escapeHtml(node.id)}</div>
         </div>
-        <div class="node-kind">${(node.inputs || []).length} in / ${(node.outputs || []).length} out</div>
+        <div class="node-kind">${(node.inputs || []).length} in / ${(node.outputs || []).length} out / ${(node.artifacts || []).length} art</div>
       </div>
       ${meta.length ? `<div class="node-meta">${escapeHtml(meta.join(" · "))}</div>` : ""}
       ${node.prompt ? `<div class="node-prompt">${escapeHtml(node.prompt.replace(/\s+/g, " ").slice(0, 180))}</div>` : ""}
@@ -159,8 +166,12 @@ function fillInspector(node) {
   fields.prompt.value = node.prompt || "";
   fields.inputs.value = portLines(node.inputs || []);
   fields.outputs.value = portLines(node.outputs || []);
+  fields.artifacts.value = portLines(node.artifacts || []);
   fields.run.value = (node.run || []).join("\n");
+  fields.validations.value = (node.validations || []).join("\n");
   fields.verify.value = (node.verify || []).join("\n");
+  fields.recovery.value = (node.recovery || []).join("\n");
+  fields.reviews.value = (node.reviews || []).join("\n");
 }
 
 function render() {
@@ -203,6 +214,10 @@ function templateNode(kind, ir) {
       params: {},
       metrics: {},
       policies: {},
+      validations: [],
+      recovery: [],
+      reviews: [],
+      artifacts: [],
       calls: [],
       run: [],
       verify: [],
@@ -299,8 +314,12 @@ function applyInspector() {
   node.prompt = fields.prompt.value.trim();
   node.inputs = parsePorts(fields.inputs.value);
   node.outputs = parsePorts(fields.outputs.value);
+  node.artifacts = parsePorts(fields.artifacts.value);
   node.run = parseLines(fields.run.value);
+  node.validations = parseLines(fields.validations.value);
   node.verify = parseLines(fields.verify.value);
+  node.recovery = parseLines(fields.recovery.value);
+  node.reviews = parseLines(fields.reviews.value);
   const ir = getIr();
   const replacement = clone(node);
   function replace(nodes) {

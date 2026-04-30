@@ -1,0 +1,65 @@
+pipeline "General Agentic Workflow" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  author "AAPS"
+  domain "general"
+  tags "agent, workflow, routing, validation, recovery"
+  requires_tools "codex, shell, filesystem"
+  artifact_dir "runtime/artifacts/general"
+  database "runtime/runs/general_workflow.jsonl"
+  log_path "runtime/logs/general_workflow.log"
+  goal "Show inputs, reusable blocks, loops, tool routing, validation, artifacts, human review, and recovery."
+  input work_items: collection required = "data/work-items.json"
+  output report: markdown = "runtime/artifacts/general/report.md"
+
+  agent operator {
+    role "General agent that executes bounded blocks and records artifacts."
+    model "gpt-5"
+    tools "codex, shell, filesystem"
+  }
+
+  skill process_item {
+    input item: json required
+    output result: json
+    output artifact_bundle: directory
+    stage inspect {
+      prompt "Understand item type, quality, missing inputs, and likely route."
+    }
+    choose route {
+      prompt "Choose text, image, code, document, or manual_review route."
+      output selected_route: json
+    }
+    if "selected_route.kind == 'code'" {
+      action code_route {
+        run "npm test"
+        validate "Tests pass or failures are captured."
+        recover "Ask Codex for a focused repair if tests fail."
+      }
+    }
+    else {
+      action generic_route {
+        prompt "Run the selected domain-specific tool or model and record outputs."
+        recover "Fallback to manual review if confidence is low."
+      }
+    }
+    guard output_gate {
+      artifact artifact_bundle: directory
+      validate "Required output artifacts exist and summary is complete."
+      review "Human reviews low-confidence or high-impact outputs."
+    }
+  }
+
+  task run_items {
+    uses operator
+    for_each item in "work_items" {
+      action process {
+        call process_item
+      }
+    }
+  }
+
+  task report after run_items {
+    uses operator
+    prompt "Summarize results, failures, recovery attempts, human review decisions, and final artifacts."
+  }
+}

@@ -70,6 +70,7 @@ pipeline "Ship AAPS Studio" {
 ```
 
 See [docs/language-spec.md](docs/language-spec.md) and [examples/hello.aaps](examples/hello.aaps).
+Current implementation coverage and known gaps are tracked in [docs/implementation-audit.md](docs/implementation-audit.md).
 
 ## Design Philosophy
 
@@ -78,9 +79,17 @@ AAPS keeps a clean boundary between intent and execution:
 - Prompts can inspect, decide, and synthesize.
 - Blocks must declare typed inputs, outputs, commands, checks, and artifacts.
 - Method selection belongs in `choose`, `if`, `else`, `method`, and `guard` blocks.
+- Failure handling belongs in `validate`, `recover`, and `review` statements.
 - Chat follows the LazyBlog pattern: it can reply and route, but source mutation happens through bounded edit actions that reparse and redraw the program.
 
 For biology, this means segmentation is modeled as inspect image -> build priors -> choose Cellpose/threshold/vision-mask -> QC gate -> quantify. See [docs/design-philosophy.md](docs/design-philosophy.md).
+
+## Examples
+
+- [examples/organoid_segmentation.aaps](examples/organoid_segmentation.aaps): microscopy QC, method routing, segmentation, quantification, overlays, report, and human review.
+- [examples/app_development_review.aaps](examples/app_development_review.aaps): app page scanning, screenshots, bug detection, patching, and reruns.
+- [examples/book_writing_pipeline.aaps](examples/book_writing_pipeline.aaps): outline, chapter drafting, consistency/style checks, revision, and export.
+- [examples/general_agentic_workflow.aaps](examples/general_agentic_workflow.aaps): domain-neutral loops, routing, validation, recovery, artifacts, and review.
 
 ## Quick Start
 

@@ -1,0 +1,106 @@
+pipeline "Organoid Segmentation Workflow" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  author "AAPS"
+  domain "biology"
+  tags "organoid, microscopy, qc, segmentation, quantification"
+  requires_tools "image_viewer, python, opencv, scikit-image, cellpose, sam2, vision_mask"
+  requires_models "gpt-5, cellpose, sam2"
+  artifact_dir "runtime/artifacts/organoid_segmentation"
+  database "runtime/runs/organoid_segmentation.jsonl"
+  log_path "runtime/logs/organoid_segmentation.log"
+  goal "Run microscopy image QC, choose a segmentation method, export masks and overlays, quantify objects, and request review when confidence is low."
+  input image_folder: directory required = "data/images"
+  input image_metadata: json optional = "data/metadata.json"
+  output mask_folder: directory = "runtime/artifacts/organoid_segmentation/masks"
+  output overlay_folder: directory = "runtime/artifacts/organoid_segmentation/overlays"
+  output object_table: table = "runtime/artifacts/organoid_segmentation/objects.csv"
+  output report: markdown = "runtime/artifacts/organoid_segmentation/report.md"
+
+  agent bio_vision {
+    role "Biology image analysis agent that routes between deterministic segmentation tools and vision models."
+    model "gpt-5"
+    tools "image_viewer, python, opencv, scikit-image, cellpose, sam2, vision_mask"
+  }
+
+  skill image_qc {
+    input image_path: image required
+    output qc_report: json
+    output preview_overlay: image
+    action inspect_image {
+      prompt "Assess brightness, contrast, blur, density, debris, field coverage, and organoid size distribution."
+      artifact preview_overlay: image = "{{artifact_dir}}/qc/{{image_path}}.png"
+      validate "QC report includes blur_score, contrast_score, density_estimate, and confidence."
+    }
+  }
+
+  skill segment_organoid {
+    input image_path: image required
+    input qc_report: json required
+    output mask_path: image
+    output overlay_path: image
+    output segmentation_report: json
+    output object_table: table
+    choose method_selection {
+      prompt "Choose thresholding, Cellpose, SAM2, ChatGPT vision mask, Nanobanana/Gemini image model, or Codex-generated Python based on QC and morphology."
+      output selected_method: json
+    }
+    if "qc_report.blur_score > 0.7" {
+      action image_enhancement {
+        run "python tools/enhance_image.py --image {{image_path}} --out {{artifact_dir}}/enhanced.png"
+        validate "Enhanced image exists and contrast improves without destroying boundaries."
+      }
+    }
+    if "selected_method.method == 'cellpose'" {
+      method cellpose {
+        param diameter = "auto"
+        run "python tools/run_cellpose.py --image {{image_path}} --out {{mask_path}}"
+        recover "Retry with alternate diameter or fallback to SAM2 when object merges are severe."
+      }
+    }
+    else {
+      method fallback_methods {
+        prompt "Try adaptive thresholding first, then SAM2 or a vision mask model if confidence is low."
+        recover "Ask human to select a method when all automatic routes fail."
+      }
+    }
+    action postprocess {
+      run "python tools/clean_mask.py --mask {{mask_path}} --out {{mask_path}}"
+      validate "Mask is non-empty and object areas are within expected range."
+    }
+    action quantify {
+      run "python tools/quantify_mask.py --image {{image_path}} --mask {{mask_path}} --out {{object_table}}"
+      validate "Object table includes count, area, circularity, intensity, and QC flags."
+    }
+    action visualize {
+      run "python tools/render_overlay.py --image {{image_path}} --mask {{mask_path}} --out {{overlay_path}}"
+      artifact overlay_path: image
+    }
+    guard segmentation_qc {
+      metric mask_non_empty = "required"
+      metric object_count_range = "domain_defined"
+      metric boundary_overlap = "required"
+      validate "Overlay, mask, table, and segmentation report exist."
+      review "Human approves overlay when confidence is low or method fallback was used."
+    }
+  }
+
+  task analyze_images {
+    uses bio_vision
+    for_each image_path in "image_folder" {
+      action qc_one {
+        call image_qc
+      }
+      action segment_one {
+        call segment_organoid
+      }
+    }
+  }
+
+  task export_report after analyze_images {
+    uses bio_vision
+    prompt "Summarize QC failures, chosen methods, segmentation confidence, object metrics, and human review decisions."
+    validate "Report includes methods, failures, counts, representative overlays, and next actions."
+  }
+}
+

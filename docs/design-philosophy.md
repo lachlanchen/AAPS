@@ -11,6 +11,7 @@ AAPS treats prompts as executable design intent, but it does not let intent blur
 5. **Chat is memory; actions are API calls.** Following the LazyBlog pattern, chat can propose, explain, and route. Source mutation happens through bounded edit actions that reparse and render the program.
 6. **Every block owns its boundary.** Inputs, outputs, metrics, run commands, and checks are declared near the block that owns them.
 7. **Runtimes must be resumable.** AAPS IR preserves IDs and dependency edges so future Codex or AgInTiFlow runtimes can pause, resume, and audit work.
+8. **Failure is a first-class path.** `validate`, `recover`, and `review` statements make fallback routes, skipped inputs, retries, and human approval visible in the script.
 
 ## Segmentation Example
 
@@ -20,17 +21,28 @@ A segmentation skill should not be one vague command. It should be a small pipel
 skill segment_image {
   input image: image
   output mask: image
-  stage inspect { prompt "Describe modality, contrast, objects, and risks." }
-  choose method_router { prompt "Choose cellpose, thresholding, or vision_mask." }
+  stage inspect {
+    prompt "Describe modality, contrast, objects, and risks."
+  }
+  choose method_router {
+    prompt "Choose cellpose, thresholding, or vision_mask."
+  }
   if "selected_method == 'cellpose'" {
-    method cellpose { run "python tools/run_cellpose.py --image {{image}} --out {{mask}}" }
+    method cellpose {
+      run "python tools/run_cellpose.py --image {{image}} --out {{mask}}"
+    }
   }
   else {
-    method threshold_or_vision { prompt "Try thresholding; escalate to a vision mask model if needed." }
+    method threshold_or_vision {
+      prompt "Try thresholding; escalate to a vision mask model if needed."
+    }
   }
-  stage qc { verify "Mask boundaries, object counts, and artifacts are acceptable." }
+  stage qc {
+    validate "Mask is non-empty and object count is plausible."
+    recover "Fallback to another method when QC fails."
+    review "Human approves low-confidence overlay."
+  }
 }
 ```
 
 The important abstraction is not the specific model. It is the handoff contract: image in, mask and QC report out, with method selection recorded as data.
-
