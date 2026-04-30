@@ -23,6 +23,7 @@ RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
 SCHEMAS = {
     "response": ROOT / "schemas" / "aaps_response.schema.json",
     "aaps_edit": ROOT / "schemas" / "aaps_edit.schema.json",
+    "aaps_chat": ROOT / "schemas" / "aaps_chat.schema.json",
 }
 
 
@@ -63,7 +64,7 @@ def write_job(job_id: str, payload: dict) -> None:
 def read_job(job_id: str) -> dict | None:
     path = job_dir(job_id) / "job.json"
     if not path.exists():
-      return None
+        return None
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -103,8 +104,10 @@ Return JSON matching the schema with:
 
 Rules:
 - Preserve valid AAPS syntax.
-- Keep prompts first-class.
-- Prefer named tasks with dependencies and verify checks.
+- Keep prompts first-class, but require explicit inputs, outputs, verification, and artifacts for useful work.
+- Prefer named agents, skills, tasks, stages, actions, methods, guards, if/else branches, and for_each loops.
+- Use typed ports such as `input image: image = "path"` and `output mask: image = "runtime/mask.png"`.
+- For segmentation/QC workflows, route through inspect -> choose method -> method action -> guard/QC -> quantify.
 - Do not claim to commit, push, deploy, or execute commands.
 
 Current AAPS source:
@@ -114,6 +117,33 @@ Current AAPS source:
 
 User instruction:
 {instruction}
+"""
+
+
+def build_chat_prompt(source: str, message: str) -> str:
+    return f"""You are the AAPS Studio chat router.
+
+Follow the LazyBlog Studio rule: chat may explain and remember, but source mutation must be an explicit bounded edit.
+
+Return JSON matching the schema:
+- mode: "reply" or "edit"
+- route: short route label such as "explain", "edit_source", "create_skill", "create_task", "clarify"
+- message: user-facing concise response
+- source: complete updated .aaps source when mode is "edit"; otherwise the unchanged source
+- diagnostics: parser or design issues, or []
+
+AAPS v0.2 supports:
+- `pipeline`, `agent`, `skill`, `task`, `stage`, `method`, `action`, `guard`, `choose`, `if`, `else`, `for_each`
+- typed `input` and `output` ports
+- `prompt`, `run`, `verify`, `call`, `param`, `metric`, and `policy`
+
+Current source:
+```aaps
+{source}
+```
+
+User message:
+{message}
 """
 
 
@@ -303,6 +333,34 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             write_json(self, {"id": job_id, **outcome}, status)
             return
 
+        if parsed.path == "/api/aaps/chat":
+            source = str(body.get("source") or "")
+            message = str(body.get("message") or body.get("instruction") or "").strip()
+            if not message:
+                write_json(self, {"error": "message is required"}, 400)
+                return
+            if os.environ.get("AAPS_MOCK_CODEX") == "1":
+                write_json(
+                    self,
+                    {
+                        "id": uuid.uuid4().hex[:16],
+                        "status": "succeeded",
+                        "result": {
+                            "mode": "reply",
+                            "route": "mock",
+                            "message": "Mock router accepted the message; source left unchanged.",
+                            "source": source,
+                            "diagnostics": [],
+                        },
+                    },
+                )
+                return
+            job_id = uuid.uuid4().hex[:16]
+            outcome = run_codex(job_id, build_chat_prompt(source, message), "aaps_chat")
+            status = 200 if outcome["status"] == "succeeded" else 500
+            write_json(self, {"id": job_id, **outcome}, status)
+            return
+
         if parsed.path == "/api/codex/respond":
             schema = str(body.get("schema") or "response")
             job_id = uuid.uuid4().hex[:16]
@@ -322,12 +380,12 @@ class AAPSHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve AAPS Studio with Codex wrapper APIs.")
     parser.add_argument("--host", default=os.environ.get("AAPS_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("AAPS_PORT", "8766")))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("AAPS_PORT", "8796")))
     args = parser.parse_args()
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 

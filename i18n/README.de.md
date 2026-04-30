@@ -6,6 +6,8 @@
 
 AAPS steht für Autonomous Agentic Pipeline Script. Es ist eine prompt-native Programmiersprache für autonome Workflows, die planbar, fortsetzbar und überprüfbar bleiben.
 
+Die aktuelle Version ergänzt `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, typisierte Ein- und Ausgaben sowie AAPS Studio mit zwei Tabs.
+
 ## Inhalt
 
 - `src/aaps.js`: Parser, Serializer und Markdown-Runbook-Compiler.
@@ -13,6 +15,7 @@ AAPS steht für Autonomous Agentic Pipeline Script. Es ist eine prompt-native Pr
 - `backend/`: Codex-Wrapper mit `/api/aaps/edit` und `/api/codex/*`.
 - `website/`: Produktseite für `https://aaps.lazying.art`.
 - `vendor/AgInTiFlow`: Submodul für den zukünftigen Backend-Agenten.
+- `references/pipeline-scripts/`: Quellskripte und allgemeine `.aaps`-Konvertierungen aus AutoAppDev, LazyBlog und Zhengyu-Biologieanalysen.
 
 ## Schnellstart
 
@@ -21,5 +24,4 @@ npm test
 npm run studio
 ```
 
-Öffnen Sie `http://127.0.0.1:8766`.
-
+Öffnen Sie `http://127.0.0.1:8796`.

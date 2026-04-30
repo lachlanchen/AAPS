@@ -1,77 +1,110 @@
 # AAPS Language Specification
 
-**AAPS** means **Autonomous Agentic Pipeline Script**. It is a small, prompt-native programming language for describing autonomous work as explicit agents, tasks, dependencies, commands, checks, and outputs.
+**AAPS** means **Autonomous Agentic Pipeline Script**. It is a prompt-native programming language for autonomous workflows that need explicit artifacts, method routing, verification, and resumable execution.
 
-The guiding subtitle is: **Prompt Is All You Need**.
+Subtitle: **Prompt Is All You Need**.
+
+Current parser target: `aaps_ir/0.2`.
 
 ## Design Goals
 
-- Keep prompts as first-class executable artifacts.
-- Make autonomous work resumable by naming every task.
-- Preserve human review points through `verify`, `output`, and dependency edges.
-- Compile cleanly to JSON IR, Markdown runbooks, CI jobs, or agent runtime calls.
+- Treat prompts as first-class code while making inputs and outputs explicit.
+- Represent reusable work as `skill` blocks and orchestration as `task` blocks.
+- Support nested `stage`, `action`, `method`, `choose`, `guard`, `if`, `else`, and `for_each` blocks.
+- Preserve enough structure for future Codex and AgInTiFlow runners to pause, resume, audit, and visualize work.
 
-## Core Concepts
+## Core Blocks
 
-| Concept | Purpose |
+| Block | Purpose |
 | --- | --- |
-| `pipeline` | Names one autonomous workflow. |
-| `input` | Declares runtime variables such as repo paths, URLs, or goals. |
-| `agent` | Defines a role, model, and tools for execution. |
-| `task` | Defines one prompt-driven unit of work. |
-| `after` | Declares dependency ordering between tasks. |
-| `run` | Adds deterministic commands to execute. |
-| `verify` | States acceptance checks before a task is complete. |
-| `output` | Names artifacts the task should produce. |
+| `pipeline` | One workflow with domain, tags, inputs, outputs, agents, skills, and tasks. |
+| `agent` | Role, model, and tools that can execute or review work. |
+| `skill` | Reusable function-like block with typed ports and internal stages/actions. |
+| `task` | Top-level orchestration step; may `call` skills and depend on other tasks. |
+| `stage` | Human-readable phase inside a skill or task. |
+| `action` | Small executable unit, usually with `run`, `prompt`, or `verify`. |
+| `method` | Alternative implementation path, such as `cellpose` or `thresholding`. |
+| `choose` | Prompt or rule-based router that records a selected method/action. |
+| `guard` | QC gate with metrics and verification requirements. |
+| `if` / `else` | Conditional branch. |
+| `for_each` | Loop over a collection. |
+
+## Statements
+
+| Statement | Example |
+| --- | --- |
+| `input` | `input image: image = "sample.png"` |
+| `output` | `output mask: image = "runtime/mask.png"` |
+| `prompt` | `prompt "Inspect the image and choose a method."` |
+| `run` | `run "npm test"` |
+| `verify` | `verify "Mask boundaries match visible objects."` |
+| `call` | `call segment_image as segmentation` |
+| `param` | `param diameter = "auto"` |
+| `metric` | `metric boundary_overlap = "required"` |
+| `policy` | `policy destructive_actions = "disabled"` |
+
+Multiline prompts use triple quotes.
 
 ## Example
 
 ```aaps
-pipeline "Ship AAPS Studio" {
+pipeline "Biology Image Segmentation QC" {
   subtitle "Prompt Is All You Need"
-  goal "Build, verify, and publish a web studio."
-  input repo = "./"
+  domain "biology"
+  input image_batch: collection = "data/images"
+  output metrics: table = "runtime/metrics.csv"
 
-  agent builder {
-    role "Senior engineer for autonomous product work."
+  agent vision_scientist {
+    role "Route between deterministic tools and vision models."
     model "gpt-5"
-    tools "shell, git, browser"
+    tools "image_viewer, cellpose, thresholding, vision_mask"
   }
 
-  task discover {
-    uses builder
-    prompt """
-Read the repository and produce a concise implementation plan.
-"""
-    output "docs/plan.md"
+  skill segment_image {
+    input image: image
+    output mask: image
+    stage inspect {
+      prompt "Describe modality, contrast, artifacts, and segmentation risks."
+    }
+    choose method_router {
+      prompt "Choose cellpose, thresholding, or vision_mask."
+      output selected_method: json
+    }
+    if "selected_method.method == 'cellpose'" {
+      method cellpose {
+        run "python tools/run_cellpose.py --image {{image}} --out {{mask}}"
+        verify "Mask boundaries match visible objects."
+      }
+    }
+    else {
+      method threshold_or_vision {
+        prompt "Try thresholding; escalate to a vision mask model if confidence is low."
+      }
+    }
+    guard qc_gate {
+      metric boundary_overlap = "required"
+      verify "Object count, area, and artifact checks pass."
+    }
   }
 
-  task implement after discover {
-    uses builder
-    prompt "Create the product surface, language examples, and tests."
-    run "npm test"
-    verify "All tests pass and the website renders."
-    retry 1
+  task analyze_batch {
+    uses vision_scientist
+    for_each image in "image_batch" {
+      action analyze_one {
+        call segment_image
+      }
+    }
   }
 }
 ```
-
-## Syntax Notes
-
-- Comments start with `#` or `//`.
-- Strings can be quoted with single or double quotes.
-- Multiline prompts use triple quotes: `prompt """ ... """`.
-- Task dependencies use comma-separated names: `task deploy after test, build {`.
-- Parsers should preserve unknown statements as diagnostics rather than silently ignoring them.
 
 ## Runtime Contract
 
 An AAPS runtime should:
 
-1. Parse `.aaps` into `aaps_ir/0.1`.
-2. Resolve task dependencies into an execution graph.
-3. Execute each task prompt with the selected agent.
-4. Run deterministic `run` commands where present.
-5. Require `verify` checks before advancing.
-6. Persist task state so the pipeline can pause and resume.
-
+1. Parse `.aaps` into `aaps_ir/0.2`.
+2. Validate ports, dependencies, calls, and branch structure.
+3. Resolve task dependencies and loop expansion.
+4. Execute prompts and commands through bounded adapters.
+5. Persist every block state, selected method, output artifact, and QC result.
+6. Require `verify` and `guard` checks before advancing.

@@ -1,0 +1,47 @@
+pipeline "General Studio Chat Action Router" {
+  subtitle "Prompt Is All You Need"
+  domain "studio"
+  tags "lazyblog, chat, route, codex, controlled-api"
+  goal "Separate chat memory from bounded source edits and controlled side effects."
+  input message: text
+  input source: aaps
+  output reply: markdown
+  output updated_source: aaps
+
+  agent router {
+    role "Classify chat into reply, edit, action, or clarification without claiming hidden side effects."
+    model "gpt-5"
+    tools "codex, schema_validator"
+  }
+
+  skill route_chat {
+    input message: text
+    input source: aaps
+    output route: json
+    output reply: markdown
+    choose classify_intent {
+      prompt "Classify the message as reply, edit_source, create_block, run_check, or clarify."
+      output route: json
+    }
+    if "route.action == 'edit_source'" {
+      action edit_aaps {
+        prompt "Return complete updated AAPS source plus diagnostics. Do not execute commands."
+        output updated_source: aaps
+        verify "Updated source parses without diagnostics."
+      }
+    }
+    else {
+      action reply_only {
+        prompt "Answer with guidance, examples, or clarifying questions. Do not mutate source."
+        output reply: markdown
+      }
+    }
+  }
+
+  task chat_turn {
+    uses router
+    call route_chat
+    verify "Chat state is stored separately from source edits; source mutation only happens through edit_aaps."
+  }
+}
+

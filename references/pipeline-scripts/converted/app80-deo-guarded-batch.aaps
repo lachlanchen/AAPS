@@ -1,0 +1,64 @@
+pipeline "App80 DEO 10x Guarded Analysis" {
+  subtitle "Prompt Is All You Need"
+  domain "biology"
+  tags "app80, deo, droplet, organoid, guarded-batch"
+  goal "Convert 10x TIFF images, inspect droplets, guard detection quality, segment droplets, quantify organoids, and update databases."
+  input app80_root: directory = "DEO/App80 DEO"
+  input cellpose_mode: enum = "auto"
+  output image_database: table = "DEO-DATABASE/image_database.csv"
+  output droplet_database: table = "DEO-DATABASE/droplet_database.csv"
+  output organoid_database: table = "DEO-DATABASE/organoid_database.csv"
+
+  agent deo_analyst {
+    role "Microscopy analysis agent for DEO droplet and organoid measurements."
+    model "gpt-5"
+    tools "codex, image_viewer, python, cellpose"
+  }
+
+  skill guarded_single_image {
+    input tif: image
+    output png: image
+    output droplets: json
+    output segments: directory
+    output metrics: table
+    stage convert {
+      run "python prompt-tools/deo-codex/00_convert_tif_to_png.py --input {{tif}}"
+      output png: image
+    }
+    stage priors {
+      run "python prompt-tools/deo-codex/00_build_vision_priors.py --image {{png}} --cellpose-mode {{cellpose_mode}}"
+      output priors: directory
+    }
+    stage annotate_droplets {
+      prompt "Use image and prior overlays to annotate droplet circles without forcing a fixed count."
+      output droplets: json
+    }
+    guard detection_qc {
+      prompt "Check droplet detection quality; trigger correction when center/radius or missing droplet risk is high."
+      verify "Detected droplets match visible 10x field structure."
+    }
+    action segment_droplets {
+      run "python prompt-tools/deo-codex/02_segment_droplets_from_annotations.py --image {{png}} --annotations {{droplets}}"
+      output segments: directory
+    }
+    action quantify {
+      prompt "Estimate organoid count and fusion level per complete droplet, then compute objective metrics."
+      verify "Partial droplets are flagged and complete droplets have organoid metrics."
+    }
+    action update_database {
+      run "python prompt-tools/deo-codex/04_update_markdown_and_databases.py --image {{png}}"
+      verify "Image, droplet, and organoid database rows are updated."
+    }
+  }
+
+  task guarded_batch {
+    uses deo_analyst
+    for_each tif in "find(app80_root, '10x*.tif')" {
+      action analyze_tif {
+        call guarded_single_image
+      }
+    }
+    verify "Batch log reports success/fail counts and all outputs are indexed."
+  }
+}
+

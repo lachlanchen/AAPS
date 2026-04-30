@@ -7,6 +7,9 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
+  const VERSION = "aaps_ir/0.2";
+  const CHILD_KINDS = new Set(["stage", "method", "action", "guard", "handoff", "choose"]);
+
   function unquote(value) {
     const text = String(value || "").trim();
     if (
@@ -18,32 +21,46 @@
     return text;
   }
 
-  function parseKeyValue(line) {
-    const match = line.match(/^([A-Za-z_][\w.-]*)\s*=\s*(.+)$/);
-    if (!match) return null;
-    return { key: match[1], value: unquote(match[2]) };
+  function quote(value) {
+    return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+
+  function slug(text, fallback = "block") {
+    return (
+      String(text || fallback)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 48) || fallback
+    );
   }
 
   function parseList(value) {
     return String(value || "")
       .split(",")
-      .map((item) => item.trim())
+      .map((item) => unquote(item).trim())
       .filter(Boolean);
+  }
+
+  function parseKeyValue(line) {
+    const match = String(line || "").match(/^([A-Za-z_][\w.-]*)\s*=\s*(.+)$/);
+    if (!match) return null;
+    return { key: match[1], value: unquote(match[2]) };
   }
 
   function stripComment(line) {
     let quoted = false;
-    let quote = "";
+    let quoteChar = "";
     for (let index = 0; index < line.length; index += 1) {
       const char = line[index];
       const next = line[index + 1];
       if ((char === '"' || char === "'") && line[index - 1] !== "\\") {
         if (!quoted) {
           quoted = true;
-          quote = char;
-        } else if (quote === char) {
+          quoteChar = char;
+        } else if (quoteChar === char) {
           quoted = false;
-          quote = "";
+          quoteChar = "";
         }
       }
       if (!quoted && char === "#") return line.slice(0, index);
@@ -52,47 +69,125 @@
     return line;
   }
 
+  function createPipeline() {
+    return {
+      name: "Untitled Pipeline",
+      subtitle: "Prompt Is All You Need",
+      domain: "general",
+      tags: [],
+      goal: "",
+      prompt: "",
+      inputs: {},
+      inputPorts: [],
+      outputPorts: [],
+      agents: [],
+      skills: [],
+      tasks: [],
+      policies: {},
+      params: {},
+      notes: [],
+    };
+  }
+
+  function createNode(kind, id, extra) {
+    return {
+      kind,
+      id: id || kind,
+      title: "",
+      after: [],
+      agent: "",
+      model: "",
+      role: "",
+      tools: [],
+      prompt: "",
+      condition: "",
+      iterator: null,
+      inputs: [],
+      outputs: [],
+      params: {},
+      metrics: {},
+      policies: {},
+      calls: [],
+      run: [],
+      verify: [],
+      notes: [],
+      children: [],
+      ...(extra || {}),
+    };
+  }
+
+  function parsePort(text) {
+    const body = String(text || "").trim();
+    const typed = body.match(/^([A-Za-z_][\w.-]*)(?:\s*:\s*([A-Za-z_][\w.-]*))?(?:\s*(?:=|from|to)\s*(.+))?$/i);
+    if (!typed) return null;
+    return {
+      name: typed[1],
+      type: typed[2] || "artifact",
+      value: typed[3] ? unquote(typed[3]) : "",
+    };
+  }
+
+  function addPort(target, direction, port) {
+    if (!port) return;
+    if (target.inputPorts || target.outputPorts) {
+      if (direction === "input") {
+        target.inputPorts.push(port);
+        target.inputs[port.name] = port.value;
+      } else {
+        target.outputPorts.push(port);
+      }
+      return;
+    }
+    const key = direction === "input" ? "inputs" : "outputs";
+    target[key].push(port);
+  }
+
+  function addNodeToParent(ir, stack, node) {
+    const parentFrame = stack[stack.length - 1];
+    const parent = parentFrame ? parentFrame.node : ir.pipeline;
+    if (!parentFrame || parentFrame.kind === "pipeline") {
+      if (node.kind === "agent") ir.pipeline.agents.push(node);
+      else if (node.kind === "skill") ir.pipeline.skills.push(node);
+      else if (node.kind === "task") ir.pipeline.tasks.push(node);
+      else ir.pipeline.tasks.push(node);
+      return;
+    }
+    parent.children.push(node);
+  }
+
+  function nearest(stack, predicate) {
+    for (let index = stack.length - 1; index >= 0; index -= 1) {
+      if (predicate(stack[index])) return stack[index].node;
+    }
+    return null;
+  }
+
   function parseAAPS(source) {
     const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
-    const ir = {
-      version: "aaps_ir/0.1",
-      pipeline: {
-        name: "Untitled Pipeline",
-        subtitle: "Prompt Is All You Need",
-        goal: "",
-        inputs: {},
-        agents: [],
-        tasks: [],
-      },
-      diagnostics: [],
-    };
-
+    const ir = { version: VERSION, pipeline: createPipeline(), diagnostics: [] };
     const stack = [];
-    let blockPrompt = null;
+    let blockText = null;
 
-    function current(kind) {
-      for (let index = stack.length - 1; index >= 0; index -= 1) {
-        if (!kind || stack[index].kind === kind) return stack[index].node;
-      }
-      return null;
+    function currentTarget() {
+      return nearest(stack, (frame) => frame.kind !== "pipeline") || ir.pipeline;
     }
 
-    function addDiagnostic(line, message) {
+    function diagnostic(line, message) {
       ir.diagnostics.push({ line, message });
     }
 
     lines.forEach((rawLine, index) => {
       const lineNumber = index + 1;
-      if (blockPrompt) {
+      if (blockText) {
         const end = rawLine.indexOf('"""');
         if (end >= 0) {
-          blockPrompt.target.prompt = blockPrompt.parts
+          blockText.target[blockText.key] = blockText.parts
             .concat(rawLine.slice(0, end))
             .join("\n")
             .trim();
-          blockPrompt = null;
+          blockText = null;
         } else {
-          blockPrompt.parts.push(rawLine);
+          blockText.parts.push(rawLine);
         }
         return;
       }
@@ -101,7 +196,7 @@
       if (!line) return;
 
       if (line === "}") {
-        if (!stack.length) addDiagnostic(lineNumber, "Unmatched closing brace.");
+        if (!stack.length) diagnostic(lineNumber, "Unmatched closing brace.");
         else stack.pop();
         return;
       }
@@ -113,138 +208,297 @@
         return;
       }
 
-      match = line.match(/^agent\s+([A-Za-z_][\w.-]*)\s*\{$/i);
-      if (match) {
-        const agent = { id: match[1], role: "", model: "", tools: [] };
-        ir.pipeline.agents.push(agent);
-        stack.push({ kind: "agent", node: agent });
-        return;
-      }
-
       match = line.match(/^task\s+([A-Za-z_][\w.-]*)(?:\s+after\s+(.+?))?\s*\{$/i);
       if (match) {
-        const task = {
-          id: match[1],
+        const node = createNode("task", match[1], {
           after: match[2] ? parseList(match[2]) : [],
-          agent: "",
-          prompt: "",
-          run: [],
-          verify: [],
-          outputs: [],
-          retries: 0,
-          timeout: "",
-        };
-        ir.pipeline.tasks.push(task);
-        stack.push({ kind: "task", node: task });
+        });
+        addNodeToParent(ir, stack, node);
+        stack.push({ kind: "task", node });
         return;
       }
 
+      match = line.match(/^for_each\s+([A-Za-z_][\w.-]*)\s+in\s+(.+?)\s*\{$/i);
+      if (match) {
+        const node = createNode("for_each", `for_each_${slug(match[1])}`, {
+          iterator: { item: match[1], source: unquote(match[2]) },
+        });
+        addNodeToParent(ir, stack, node);
+        stack.push({ kind: "for_each", node });
+        return;
+      }
+
+      match = line.match(/^if\s+(.+?)\s*\{$/i);
+      if (match) {
+        const node = createNode("if", `if_${stack.length + 1}`, {
+          condition: unquote(match[1]),
+        });
+        addNodeToParent(ir, stack, node);
+        stack.push({ kind: "if", node });
+        return;
+      }
+
+      match = line.match(/^else\s*\{$/i);
+      if (match) {
+        const node = createNode("else", `else_${stack.length + 1}`);
+        addNodeToParent(ir, stack, node);
+        stack.push({ kind: "else", node });
+        return;
+      }
+
+      match = line.match(/^(agent|skill|stage|method|action|guard|handoff|choose)\s+([A-Za-z_][\w.-]*)(?:\s+(.+?))?\s*\{$/i);
+      if (match) {
+        const node = createNode(match[1].toLowerCase(), match[2], {
+          title: match[3] ? unquote(match[3]) : "",
+        });
+        addNodeToParent(ir, stack, node);
+        stack.push({ kind: node.kind, node });
+        return;
+      }
+
+      const target = currentTarget();
       const scope = stack[stack.length - 1];
-      const task = current("task");
-      const agent = current("agent");
 
-      match = line.match(/^prompt\s+"""(.*)$/i);
+      match = line.match(/^(prompt|description|note)\s+"""(.*)$/i);
       if (match) {
-        const target = task || agent || ir.pipeline;
-        const end = match[1].indexOf('"""');
-        if (end >= 0) {
-          target.prompt = match[1].slice(0, end).trim();
-        } else {
-          blockPrompt = { target, parts: [match[1]] };
-        }
+        const key = match[1].toLowerCase() === "description" ? "prompt" : match[1].toLowerCase();
+        const end = match[2].indexOf('"""');
+        if (end >= 0) target[key] = match[2].slice(0, end).trim();
+        else blockText = { target, key, parts: [match[2]] };
         return;
       }
 
-      match = line.match(/^prompt\s+(.+)$/i);
+      match = line.match(/^(prompt|description)\s+(.+)$/i);
       if (match) {
-        (task || agent || ir.pipeline).prompt = unquote(match[1]);
+        target.prompt = unquote(match[2]);
         return;
       }
 
-      match = line.match(/^goal\s+(.+)$/i);
+      match = line.match(/^note\s+(.+)$/i);
       if (match) {
-        ir.pipeline.goal = unquote(match[1]);
+        target.notes.push(unquote(match[1]));
         return;
       }
 
-      match = line.match(/^subtitle\s+(.+)$/i);
-      if (match) {
-        ir.pipeline.subtitle = unquote(match[1]);
+      match = line.match(/^(subtitle|goal|domain)\s+(.+)$/i);
+      if (match && target === ir.pipeline) {
+        ir.pipeline[match[1].toLowerCase()] = unquote(match[2]);
         return;
       }
 
-      match = line.match(/^input\s+(.+)$/i);
-      if (match) {
-        const kv = parseKeyValue(match[1]);
-        if (kv) ir.pipeline.inputs[kv.key] = kv.value;
-        else addDiagnostic(lineNumber, "Input must use input name = value.");
+      match = line.match(/^tags\s+(.+)$/i);
+      if (match && target === ir.pipeline) {
+        ir.pipeline.tags = parseList(unquote(match[1]));
         return;
       }
 
-      if (agent) {
-        match = line.match(/^role\s+(.+)$/i);
-        if (match) {
-          agent.role = unquote(match[1]);
-          return;
-        }
-        match = line.match(/^model\s+(.+)$/i);
-        if (match) {
-          agent.model = unquote(match[1]);
-          return;
-        }
-        match = line.match(/^tools\s+(.+)$/i);
-        if (match) {
-          agent.tools = parseList(unquote(match[1]));
-          return;
-        }
+      match = line.match(/^(input|output)\s+(.+)$/i);
+      if (match) {
+        const port = parsePort(match[2]);
+        if (port) addPort(target, match[1].toLowerCase(), port);
+        else diagnostic(lineNumber, `${match[1]} must look like "name: type = value".`);
+        return;
       }
 
-      if (task) {
-        match = line.match(/^uses\s+([A-Za-z_][\w.-]*)$/i);
-        if (match) {
-          task.agent = match[1];
+      match = line.match(/^(param|metric|policy)\s+(.+)$/i);
+      if (match) {
+        const kv = parseKeyValue(match[2]);
+        if (!kv) {
+          diagnostic(lineNumber, `${match[1]} must use name = value.`);
           return;
         }
-        match = line.match(/^run\s+(.+)$/i);
-        if (match) {
-          task.run.push(unquote(match[1]));
-          return;
-        }
-        match = line.match(/^verify\s+(.+)$/i);
-        if (match) {
-          task.verify.push(unquote(match[1]));
-          return;
-        }
-        match = line.match(/^output\s+(.+)$/i);
-        if (match) {
-          task.outputs.push(unquote(match[1]));
-          return;
-        }
-        match = line.match(/^retry\s+(\d+)$/i);
-        if (match) {
-          task.retries = Number(match[1]);
-          return;
-        }
-        match = line.match(/^timeout\s+(.+)$/i);
-        if (match) {
-          task.timeout = unquote(match[1]);
-          return;
-        }
+        const word = match[1].toLowerCase();
+        const bucket = word === "policy" ? "policies" : `${word}s`;
+        target[bucket][kv.key] = kv.value;
+        return;
       }
 
-      addDiagnostic(
+      match = line.match(/^title\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.title = unquote(match[1]);
+        return;
+      }
+
+      match = line.match(/^role\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.role = unquote(match[1]);
+        return;
+      }
+
+      match = line.match(/^model\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.model = unquote(match[1]);
+        return;
+      }
+
+      match = line.match(/^tools\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.tools = parseList(unquote(match[1]));
+        return;
+      }
+
+      match = line.match(/^uses\s+([A-Za-z_][\w.-]*)$/i);
+      if (match && target !== ir.pipeline) {
+        target.agent = match[1];
+        return;
+      }
+
+      match = line.match(/^(call|calls)\s+([A-Za-z_][\w.-]*)(?:\s+as\s+([A-Za-z_][\w.-]*))?$/i);
+      if (match && target !== ir.pipeline) {
+        target.calls.push({ skill: match[2], as: match[3] || "" });
+        return;
+      }
+
+      match = line.match(/^tool\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.tools.push(...parseList(unquote(match[1])));
+        return;
+      }
+
+      match = line.match(/^run\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.run.push(unquote(match[1]));
+        return;
+      }
+
+      match = line.match(/^verify\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.verify.push(unquote(match[1]));
+        return;
+      }
+
+      match = line.match(/^retry\s+(\d+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.params.retry = Number(match[1]);
+        return;
+      }
+
+      match = line.match(/^timeout\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.params.timeout = unquote(match[1]);
+        return;
+      }
+
+      match = line.match(/^when\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.condition = unquote(match[1]);
+        return;
+      }
+
+      diagnostic(
         lineNumber,
         scope ? `Unknown statement in ${scope.kind}: ${line}` : `Unknown statement: ${line}`
       );
     });
 
-    if (blockPrompt) {
-      addDiagnostic(lines.length, "Unclosed triple-quoted prompt block.");
-    }
-    if (stack.length) {
-      addDiagnostic(lines.length, `Unclosed block: ${stack[stack.length - 1].kind}.`);
-    }
+    if (blockText) diagnostic(lines.length, `Unclosed triple-quoted ${blockText.key} block.`);
+    if (stack.length) diagnostic(lines.length, `Unclosed block: ${stack[stack.length - 1].kind}.`);
     return ir;
+  }
+
+  function serializePorts(node, indent) {
+    const lines = [];
+    const inputPorts = node.inputPorts || node.inputs || [];
+    const outputPorts = node.outputPorts || node.outputs || [];
+    if (Array.isArray(inputPorts)) {
+      inputPorts.forEach((port) => {
+        lines.push(`${indent}input ${port.name}: ${port.type || "artifact"}${port.value ? ` = ${quote(port.value)}` : ""}`);
+      });
+    } else {
+      Object.entries(inputPorts).forEach(([key, value]) => {
+        lines.push(`${indent}input ${key} = ${quote(value)}`);
+      });
+    }
+    if (Array.isArray(outputPorts)) {
+      outputPorts.forEach((port) => {
+        lines.push(`${indent}output ${port.name}: ${port.type || "artifact"}${port.value ? ` = ${quote(port.value)}` : ""}`);
+      });
+    }
+    return lines;
+  }
+
+  function blockHeader(node, indent) {
+    if (node.kind === "task") {
+      const after = node.after && node.after.length ? ` after ${node.after.join(", ")}` : "";
+      return `${indent}task ${node.id}${after} {`;
+    }
+    if (node.kind === "for_each") {
+      const iterator = node.iterator || { item: "item", source: "items" };
+      return `${indent}for_each ${iterator.item} in ${quote(iterator.source)} {`;
+    }
+    if (node.kind === "if") return `${indent}if ${quote(node.condition || "condition")} {`;
+    if (node.kind === "else") return `${indent}else {`;
+    if (CHILD_KINDS.has(node.kind) || node.kind === "agent" || node.kind === "skill") {
+      return `${indent}${node.kind} ${node.id}${node.title ? ` ${quote(node.title)}` : ""} {`;
+    }
+    return `${indent}${node.kind} ${node.id} {`;
+  }
+
+  function serializeNode(node, depth) {
+    const indent = "  ".repeat(depth);
+    const childIndent = "  ".repeat(depth + 1);
+    const lines = [blockHeader(node, indent)];
+    if (node.title && node.kind === "task") lines.push(`${childIndent}title ${quote(node.title)}`);
+    if (node.role) lines.push(`${childIndent}role ${quote(node.role)}`);
+    if (node.model) lines.push(`${childIndent}model ${quote(node.model)}`);
+    if (node.tools && node.tools.length) lines.push(`${childIndent}tools ${quote(node.tools.join(", "))}`);
+    if (node.agent) lines.push(`${childIndent}uses ${node.agent}`);
+    lines.push(...serializePorts(node, childIndent));
+    Object.entries(node.params || {}).forEach(([key, value]) => lines.push(`${childIndent}param ${key} = ${quote(value)}`));
+    Object.entries(node.metrics || {}).forEach(([key, value]) => lines.push(`${childIndent}metric ${key} = ${quote(value)}`));
+    Object.entries(node.policies || {}).forEach(([key, value]) => lines.push(`${childIndent}policy ${key} = ${quote(value)}`));
+    (node.calls || []).forEach((call) => lines.push(`${childIndent}call ${call.skill}${call.as ? ` as ${call.as}` : ""}`));
+    if (node.prompt) {
+      lines.push(`${childIndent}prompt """`);
+      lines.push(...String(node.prompt).split("\n").map((part) => `${childIndent}${part}`));
+      lines.push(`${childIndent}"""`);
+    }
+    (node.run || []).forEach((command) => lines.push(`${childIndent}run ${quote(command)}`));
+    (node.verify || []).forEach((check) => lines.push(`${childIndent}verify ${quote(check)}`));
+    (node.notes || []).forEach((note) => lines.push(`${childIndent}note ${quote(note)}`));
+    (node.children || []).forEach((child) => {
+      lines.push("");
+      lines.push(...serializeNode(child, depth + 1));
+    });
+    lines.push(`${indent}}`);
+    return lines;
+  }
+
+  function serializeAAPS(ir) {
+    const pipeline = ir.pipeline || createPipeline();
+    const lines = [`pipeline ${quote(pipeline.name || "Untitled Pipeline")} {`];
+    if (pipeline.subtitle) lines.push(`  subtitle ${quote(pipeline.subtitle)}`);
+    if (pipeline.domain) lines.push(`  domain ${quote(pipeline.domain)}`);
+    if (pipeline.tags && pipeline.tags.length) lines.push(`  tags ${quote(pipeline.tags.join(", "))}`);
+    if (pipeline.goal) lines.push(`  goal ${quote(pipeline.goal)}`);
+    if (pipeline.prompt) {
+      lines.push('  prompt """');
+      lines.push(...String(pipeline.prompt).split("\n").map((part) => `  ${part}`));
+      lines.push('  """');
+    }
+    lines.push(...serializePorts(pipeline, "  "));
+    Object.entries(pipeline.params || {}).forEach(([key, value]) => lines.push(`  param ${key} = ${quote(value)}`));
+    Object.entries(pipeline.policies || {}).forEach(([key, value]) => lines.push(`  policy ${key} = ${quote(value)}`));
+    [...(pipeline.agents || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach((node) => {
+      lines.push("");
+      lines.push(...serializeNode(node, 1));
+    });
+    lines.push("}");
+    return lines.join("\n");
+  }
+
+  function nodeSummary(node, depth, lines) {
+    const prefix = "  ".repeat(depth);
+    const title = node.title ? ` - ${node.title}` : "";
+    lines.push(`${prefix}- **${node.kind} ${node.id}**${title}`);
+    if (node.iterator) lines.push(`${prefix}  - For each ${node.iterator.item} in ${node.iterator.source}`);
+    if (node.condition) lines.push(`${prefix}  - Condition: ${node.condition}`);
+    if (node.agent) lines.push(`${prefix}  - Agent: ${node.agent}`);
+    if (node.prompt) lines.push(`${prefix}  - Prompt: ${node.prompt.replace(/\s+/g, " ").slice(0, 160)}`);
+    (node.calls || []).forEach((call) => lines.push(`${prefix}  - Calls: ${call.skill}${call.as ? ` as ${call.as}` : ""}`));
+    (node.run || []).forEach((command) => lines.push(`${prefix}  - Run: \`${command}\``));
+    (node.verify || []).forEach((check) => lines.push(`${prefix}  - Verify: ${check}`));
+    (node.children || []).forEach((child) => nodeSummary(child, depth + 1, lines));
   }
 
   function toMarkdown(ir) {
@@ -254,74 +508,38 @@
       "",
       `_${pipeline.subtitle || "Prompt Is All You Need"}_`,
       "",
+      `Domain: ${pipeline.domain || "general"}`,
+      "",
     ];
-    if (pipeline.goal) {
-      lines.push(`## Goal`, "", pipeline.goal, "");
+    if (pipeline.goal) lines.push("## Goal", "", pipeline.goal, "");
+    if (pipeline.inputPorts && pipeline.inputPorts.length) {
+      lines.push("## Inputs", "");
+      pipeline.inputPorts.forEach((port) => lines.push(`- ${port.name}: ${port.type}${port.value ? ` = ${port.value}` : ""}`));
+      lines.push("");
     }
     if (pipeline.agents && pipeline.agents.length) {
       lines.push("## Agents", "");
-      pipeline.agents.forEach((agent) => {
-        lines.push(`- **${agent.id}**: ${agent.role || "general agent"}`);
-        if (agent.model) lines.push(`  - Model: \`${agent.model}\``);
-        if (agent.tools && agent.tools.length) lines.push(`  - Tools: ${agent.tools.join(", ")}`);
-      });
+      pipeline.agents.forEach((agent) => nodeSummary(agent, 0, lines));
       lines.push("");
     }
-    lines.push("## Tasks", "");
-    (pipeline.tasks || []).forEach((task, index) => {
-      lines.push(`${index + 1}. **${task.id}**`);
-      if (task.after && task.after.length) lines.push(`   - After: ${task.after.join(", ")}`);
-      if (task.agent) lines.push(`   - Agent: ${task.agent}`);
-      if (task.prompt) lines.push(`   - Prompt: ${task.prompt.replace(/\n/g, " ")}`);
-      (task.run || []).forEach((command) => lines.push(`   - Run: \`${command}\``));
-      (task.verify || []).forEach((check) => lines.push(`   - Verify: ${check}`));
-    });
+    if (pipeline.skills && pipeline.skills.length) {
+      lines.push("## Skills", "");
+      pipeline.skills.forEach((skill) => nodeSummary(skill, 0, lines));
+      lines.push("");
+    }
+    lines.push("## Program", "");
+    (pipeline.tasks || []).forEach((task) => nodeSummary(task, 0, lines));
     return lines.join("\n");
   }
 
-  function serializeAAPS(ir) {
-    const pipeline = ir.pipeline || {};
-    const lines = [`pipeline "${pipeline.name || "Untitled Pipeline"}" {`];
-    if (pipeline.subtitle) lines.push(`  subtitle "${pipeline.subtitle}"`);
-    if (pipeline.goal) lines.push(`  goal "${pipeline.goal}"`);
-    Object.entries(pipeline.inputs || {}).forEach(([key, value]) => {
-      lines.push(`  input ${key} = "${value}"`);
-    });
-    (pipeline.agents || []).forEach((agent) => {
-      lines.push("", `  agent ${agent.id} {`);
-      if (agent.role) lines.push(`    role "${agent.role}"`);
-      if (agent.model) lines.push(`    model "${agent.model}"`);
-      if (agent.tools && agent.tools.length) lines.push(`    tools "${agent.tools.join(", ")}"`);
-      lines.push("  }");
-    });
-    (pipeline.tasks || []).forEach((task) => {
-      const after = task.after && task.after.length ? ` after ${task.after.join(", ")}` : "";
-      lines.push("", `  task ${task.id}${after} {`);
-      if (task.agent) lines.push(`    uses ${task.agent}`);
-      if (task.prompt) {
-        lines.push('    prompt """');
-        lines.push(
-          ...String(task.prompt)
-            .split("\n")
-            .map((part) => `    ${part}`)
-        );
-        lines.push('    """');
-      }
-      (task.run || []).forEach((command) => lines.push(`    run "${command}"`));
-      (task.verify || []).forEach((check) => lines.push(`    verify "${check}"`));
-      (task.outputs || []).forEach((output) => lines.push(`    output "${output}"`));
-      if (task.retries) lines.push(`    retry ${task.retries}`);
-      if (task.timeout) lines.push(`    timeout "${task.timeout}"`);
-      lines.push("  }");
-    });
-    lines.push("}");
-    return lines.join("\n");
-  }
-
-  const sample = `pipeline "Ship AAPS Studio" {
+  const samples = {
+    general: `pipeline "Ship AAPS Studio" {
   subtitle "Prompt Is All You Need"
+  domain "software"
+  tags "appdev, codex, release"
   goal "Design, build, verify, and publish a clean web app for an autonomous agent project."
-  input repo = "./"
+  input repo: path = "./"
+  output release_notes: markdown = "docs/release-notes.md"
 
   agent builder {
     role "Senior product engineer who turns prompts into durable implementation steps."
@@ -329,30 +547,145 @@
     tools "shell, git, browser"
   }
 
+  skill bounded_change {
+    input task: text
+    output diff: patch
+    stage plan {
+      prompt "Read the repository, identify constraints, and write a short implementation plan."
+    }
+    stage implement {
+      prompt "Make the smallest coherent change that satisfies the task."
+    }
+    stage verify {
+      run "npm test"
+      verify "All tests pass."
+    }
+  }
+
   task discover {
     uses builder
-    prompt """
-Read the repository, identify constraints, and produce a concise implementation plan.
-"""
-    output "docs/plan.md"
+    call bounded_change as planning_loop
+    prompt "Read the repository and prepare the next safe change."
+    output plan: markdown = "docs/plan.md"
   }
 
-  task implement after discover {
+  task publish after discover {
     uses builder
-    prompt "Create the product surface, language examples, and tests."
-    run "npm test"
-    verify "All tests pass and the website renders."
-    retry 1
-  }
-
-  task publish after implement {
-    uses builder
-    prompt "Commit, push, and deploy the website."
+    prompt "Commit, push, and report deployment status after checks pass."
     run "git status --short"
-    verify "GitHub Pages is configured for aaps.lazying.art."
+    verify "Remote branch contains the latest commit."
   }
-}`;
+}`,
+    biology: `pipeline "Organoid Segmentation QC" {
+  subtitle "Prompt Is All You Need"
+  domain "biology"
+  tags "segmentation, qc, quantification, organoid"
+  goal "Choose a segmentation method for microscopy images, generate masks, run QC, and quantify organoid metrics."
+  input image: image = "examples/input/organoid.png"
+  output mask: image = "runtime/masks/organoid-mask.png"
+  output metrics: table = "runtime/metrics/organoid-metrics.csv"
 
-  return { parseAAPS, serializeAAPS, toMarkdown, sample };
+  agent vision_qc {
+    role "Inspect microscopy images, choose analysis methods, and reject unsafe masks."
+    model "gpt-5"
+    tools "image_viewer, shell, cellpose, thresholding, vision_mask"
+  }
+
+  skill segment_image {
+    input image: image
+    output mask: image
+    output qc_report: markdown
+    stage inspect {
+      prompt "View the image and describe modality, objects, contrast, artifacts, and likely segmentation risks."
+      output image_context: json
+    }
+    choose method_router {
+      prompt "Choose cellpose, thresholding, or vision_mask based on contrast, morphology, and expected object boundaries."
+      output selected_method: json
+    }
+    if "selected_method == 'cellpose'" {
+      method cellpose {
+        tool "cellpose"
+        param diameter = "auto"
+        run "python tools/run_cellpose.py --image {{image}} --out {{mask}}"
+        verify "Mask objects align with visible organoid boundaries."
+      }
+    }
+    else {
+      method threshold_or_vision {
+        tool "thresholding, vision_mask"
+        prompt "Use adaptive thresholding first; escalate to a vision mask model if boundary confidence is low."
+        verify "Mask has plausible area, connected components, and boundary overlap."
+      }
+    }
+    stage qc {
+      metric min_object_area = "domain_defined"
+      metric boundary_overlap = "required"
+      prompt "Check failure modes: merged objects, missing dim objects, debris, and partial fields."
+      output qc_report: markdown
+    }
+  }
+
+  task analyze_image {
+    uses vision_qc
+    call segment_image as segmentation
+    for_each image in "input.image_batch" {
+      action segment {
+        prompt "Run the selected segmentation method and save a mask."
+      }
+      action quantify {
+        run "python tools/quantify_mask.py --image {{image}} --mask {{mask}} --out {{metrics}}"
+        verify "Metrics include count, area, circularity, intensity, and QC flags."
+      }
+    }
+  }
+}`,
+    writing: `pipeline "Book Writing Loop" {
+  subtitle "Prompt Is All You Need"
+  domain "writing"
+  tags "novel, book, outline, draft, revise"
+  goal "Turn research notes into a chapter plan, draft, critique, revision, and publishable manuscript artifact."
+  input notes: markdown = "materials/notes.md"
+  output manuscript: markdown = "drafts/chapter.md"
+
+  agent editor {
+    role "Book-writing agent that separates chat memory from controlled manuscript edits."
+    model "gpt-5"
+    tools "filesystem, markdown, critique"
+  }
+
+  skill chapter_cycle {
+    input notes: markdown
+    output draft: markdown
+    stage outline {
+      prompt "Create a chapter outline with argument, scene, evidence, and reader promise."
+    }
+    stage draft {
+      prompt "Write the chapter from the outline while preserving source constraints."
+    }
+    stage critique {
+      prompt "Identify unclear claims, pacing issues, missing evidence, and continuity problems."
+    }
+    stage revise {
+      prompt "Revise only the selected chapter artifact; do not mutate unrelated manuscripts."
+    }
+  }
+
+  task write_chapter {
+    uses editor
+    call chapter_cycle
+    verify "The manuscript has an outline, draft, critique notes, and revision summary."
+  }
+}`,
+  };
+
+  return {
+    VERSION,
+    parseAAPS,
+    serializeAAPS,
+    toMarkdown,
+    sample: samples.general,
+    samples,
+    slug,
+  };
 });
-

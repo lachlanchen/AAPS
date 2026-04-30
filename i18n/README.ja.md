@@ -6,6 +6,8 @@
 
 AAPS は Autonomous Agentic Pipeline Script です。プロンプトを第一級のコードとして扱い、自律エージェントの作業を計画、再開、検証できるパイプラインとして記述します。
 
+現在の版は `skill`、`stage`、`action`、`method`、`guard`、`if`、`for_each`、型付き入出力、二つのタブを持つ AAPS Studio を含みます。
+
 ## 構成
 
 - `src/aaps.js`: パーサー、シリアライザー、Markdown runbook コンパイラー。
@@ -13,6 +15,7 @@ AAPS は Autonomous Agentic Pipeline Script です。プロンプトを第一級
 - `backend/`: Codex wrapper API。`/api/aaps/edit` と `/api/codex/*` を提供。
 - `website/`: `https://aaps.lazying.art` に公開するランディングページ。
 - `vendor/AgInTiFlow`: 将来のバックエンド候補サブモジュール。
+- `references/pipeline-scripts/`: AutoAppDev、LazyBlog、Zhengyu 生物解析などの元スクリプトと汎用 `.aaps` 変換版。
 
 ## クイックスタート
 
@@ -21,5 +24,4 @@ npm test
 npm run studio
 ```
 
-`http://127.0.0.1:8766` を開きます。
-
+`http://127.0.0.1:8796` を開きます。

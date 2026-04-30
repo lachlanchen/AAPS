@@ -1,0 +1,47 @@
+pipeline "General Book Writing Chapter Loop" {
+  subtitle "Prompt Is All You Need"
+  domain "writing"
+  tags "book, novel, chapter, critique, revision"
+  goal "Turn notes into a structured chapter with explicit draft, critique, revision, and export artifacts."
+  input notes: markdown = "materials/notes.md"
+  input style_guide: markdown = "materials/style.md"
+  output chapter: markdown = "drafts/chapter.md"
+  output critique: markdown = "drafts/chapter-critique.md"
+
+  agent writer {
+    role "Long-form writing agent that keeps chat memory separate from manuscript edits."
+    model "gpt-5"
+    tools "markdown, filesystem, critique"
+  }
+
+  skill chapter_pipeline {
+    input notes: markdown
+    input style_guide: markdown
+    output chapter: markdown
+    stage outline {
+      prompt "Create a chapter outline with thesis, reader promise, scenes or sections, and evidence."
+      output outline: markdown
+    }
+    stage draft {
+      prompt "Draft from the outline and style guide. Keep source facts traceable."
+      output chapter: markdown
+    }
+    stage critique {
+      prompt "Review clarity, pacing, continuity, factual gaps, and emotional or explanatory arc."
+      output critique: markdown
+    }
+    if "critique.has_blockers" {
+      stage revise {
+        prompt "Revise only the selected chapter artifact and summarize changes."
+      }
+    }
+    guard manuscript_qc {
+      verify "Chapter, critique, and revision summary exist and match the requested audience."
+    }
+  }
+
+  task write_chapter {
+    uses writer
+    call chapter_pipeline
+  }
+}

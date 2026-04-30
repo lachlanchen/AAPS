@@ -11,7 +11,7 @@ npm run studio
 Open:
 
 ```text
-http://127.0.0.1:8766
+http://127.0.0.1:8796
 ```
 
 ## Environment
@@ -35,6 +35,10 @@ GET  /api/codex/job?id=<job-id>
 GET  /api/codex/result?id=<job-id>
 ```
 
+`POST /api/aaps/chat` routes Studio chat messages using the LazyBlog pattern:
+chat may reply, classify, or request a bounded source edit; source mutation returns a
+complete updated `.aaps` program that the Studio reparses and redraws.
+
 `POST /api/aaps/edit` accepts:
 
 ```json
@@ -46,7 +50,8 @@ GET  /api/codex/result?id=<job-id>
 
 The response matches `schemas/aaps_edit.schema.json`.
 
+`POST /api/aaps/chat` returns `schemas/aaps_chat.schema.json`.
+
 ## Backend Direction
 
 `vendor/AgInTiFlow` is included as the future browser and tool-use backend candidate. The current wrapper stays Codex-first so AAPS Studio has a simple local path today while the AgInTiFlow integration matures.
-

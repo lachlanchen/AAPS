@@ -14,7 +14,7 @@ pipeline "Hello Autonomous Pipeline" {
     prompt """
 Read the repository. Return a short plan with files to edit, checks to run, and deployment steps.
 """
-    output "docs/plan.md"
+    output plan: markdown = "docs/plan.md"
   }
 
   task build after plan {
@@ -32,4 +32,3 @@ Read the repository. Return a short plan with files to edit, checks to run, and 
     verify "Remote branch contains the latest commit."
   }
 }
-

@@ -1,0 +1,72 @@
+pipeline "Biology Image Segmentation QC" {
+  subtitle "Prompt Is All You Need"
+  domain "biology"
+  tags "segmentation, qc, quantification, microscopy"
+  goal "Inspect images, choose segmentation methods, generate masks, run QC, and quantify biological objects."
+  input image_batch: collection = "data/images"
+  output masks: directory = "runtime/masks"
+  output metrics: table = "runtime/metrics/objects.csv"
+  output qc_report: markdown = "runtime/reports/segmentation-qc.md"
+
+  agent vision_scientist {
+    role "Biology image analysis agent that routes between deterministic tools and vision models."
+    model "gpt-5"
+    tools "image_viewer, cellpose, thresholding, vision_mask, shell"
+  }
+
+  skill segment_and_quantify {
+    input image: image
+    output mask: image
+    output metrics: table
+    output qc_report: markdown
+    stage inspect {
+      prompt "View image, infer modality, object type, contrast, artifacts, and expected segmentation difficulty."
+      output image_context: json
+    }
+    action build_priors {
+      run "python tools/build_image_priors.py --image {{image}} --out runtime/priors"
+      output priors: directory
+    }
+    choose method_router {
+      prompt "Choose cellpose, thresholding, or vision_mask. Explain confidence and fallback."
+      output selected_method: json
+    }
+    if "selected_method.method == 'cellpose'" {
+      method cellpose {
+        tool "cellpose"
+        param diameter = "auto"
+        run "python tools/run_cellpose.py --image {{image}} --out {{mask}}"
+        verify "Cellpose mask boundaries match object edges and do not merge unrelated objects."
+      }
+    }
+    else {
+      method threshold_or_vision {
+        tool "thresholding, vision_mask"
+        prompt "Try adaptive thresholding; escalate to a prompt-based vision mask if edges are weak."
+        verify "Fallback mask passes object count, area, and boundary plausibility checks."
+      }
+    }
+    guard qc_gate {
+      metric object_count = "plausible"
+      metric min_area = "domain_defined"
+      metric boundary_overlap = "required"
+      prompt "Reject masks with merged objects, missing dim objects, debris, or severe partial-field artifacts."
+      output qc_report: markdown
+    }
+    action quantify {
+      run "python tools/quantify_mask.py --image {{image}} --mask {{mask}} --out {{metrics}}"
+      verify "Metrics include count, area, circularity, intensity, and QC flags."
+    }
+  }
+
+  task analyze_batch {
+    uses vision_scientist
+    for_each image in "image_batch" {
+      action analyze_one {
+        call segment_and_quantify
+      }
+    }
+    verify "Every image has a mask, metrics row, and QC status."
+  }
+}
+

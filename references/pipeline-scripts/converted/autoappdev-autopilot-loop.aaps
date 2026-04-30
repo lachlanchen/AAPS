@@ -1,0 +1,52 @@
+pipeline "General Auto Development Loop" {
+  subtitle "Prompt Is All You Need"
+  domain "software"
+  tags "autoappdev, codex, resumable, release"
+  goal "Plan, implement, verify, fix, summarize, and release a bounded software change."
+  input repo: path = "./"
+  output summary: markdown = "runtime/outbox/summary.md"
+
+  agent codex_builder {
+    role "Software agent that keeps changes small, recoverable, and verified."
+    model "gpt-5"
+    tools "shell, git, browser"
+  }
+
+  skill bounded_change_loop {
+    input task: text
+    output diff: patch
+    output verification: log
+    stage plan {
+      prompt "Read context, identify the smallest safe change, and write exact checks."
+    }
+    stage work {
+      prompt "Implement one bounded change set only."
+    }
+    stage debug {
+      run "timeout 30s npm test"
+      verify "Tests or syntax checks complete with clear pass/fail output."
+    }
+    if "debug_failed" {
+      stage fix {
+        prompt "Apply minimal fixes and rerun the failing verification."
+      }
+    }
+    stage summary {
+      prompt "Summarize files changed, checks run, and rollback notes."
+      output summary: markdown
+    }
+  }
+
+  task execute_change {
+    uses codex_builder
+    call bounded_change_loop
+    verify "The summary records plan, implementation, verification, and recovery notes."
+  }
+
+  task release after execute_change {
+    uses codex_builder
+    run "git status --short"
+    verify "Commit and push are explicit policy decisions, never hidden inside a vague step."
+  }
+}
+

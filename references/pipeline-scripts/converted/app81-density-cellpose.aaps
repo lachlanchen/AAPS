@@ -1,0 +1,41 @@
+pipeline "App81 Density Cellpose Analysis" {
+  subtitle "Prompt Is All You Need"
+  domain "biology"
+  tags "app81, density, cellpose, curated-profile"
+  goal "Run curated Cellpose density profiles with low-impact compute settings and produce analysis outputs."
+  input src_root: directory = "DEO/DEO App81 P8"
+  input profile_file: json = "analysis-tools/app81_density_custom_cellpose/app81_curated_profiles_v1.json"
+  output output_dir: directory = "analysis-output/app81_main_density_curated_v1"
+
+  agent gpu_runner {
+    role "Resource-aware image analysis runner that records environment and output paths."
+    model "gpt-5"
+    tools "shell, python, cellpose, cuda"
+  }
+
+  skill density_profile_run {
+    input src_root: directory
+    input profile_file: json
+    output output_dir: directory
+    stage prepare_environment {
+      param conda_env = "organoid-gpu"
+      param cuda_device = "0"
+      param low_impact = "ionice + nice"
+      prompt "Set deterministic, low-impact GPU/CPU environment variables before analysis."
+    }
+    action run_curated_profiles {
+      run "python analysis-tools/app81_density_custom_cellpose/run_app81_main_density_curated_v1.py --src-root {{src_root}} --out-dir {{output_dir}} --profile-file {{profile_file}}"
+      verify "Output directory contains density metrics, logs, and profile summaries."
+    }
+    guard resource_qc {
+      verify "Thread limits, CUDA device, and non-interactive backend are set."
+    }
+  }
+
+  task run_app81_density {
+    uses gpu_runner
+    call density_profile_run
+    verify "Curated profile outputs exist and failures are logged for retry."
+  }
+}
+

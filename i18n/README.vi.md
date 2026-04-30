@@ -6,6 +6,8 @@
 
 AAPS là Autonomous Agentic Pipeline Script, một ngôn ngữ lập trình lấy prompt làm trung tâm để mô tả pipeline tác vụ tự trị, có thể tiếp tục và kiểm chứng.
 
+Phiên bản hiện tại thêm `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, input/output có kiểu và AAPS Studio hai tab.
+
 ## Nội dung
 
 - `src/aaps.js`: parser, serializer và trình biên dịch Markdown runbook.
@@ -13,6 +15,7 @@ AAPS là Autonomous Agentic Pipeline Script, một ngôn ngữ lập trình lấ
 - `backend/`: Codex wrapper với `/api/aaps/edit` và `/api/codex/*`.
 - `website/`: trang giới thiệu tại `https://aaps.lazying.art`.
 - `vendor/AgInTiFlow`: submodule cho backend agent tương lai.
+- `references/pipeline-scripts/`: script nguồn và bản chuyển đổi `.aaps` tổng quát từ AutoAppDev, LazyBlog và phân tích sinh học Zhengyu.
 
 ## Bắt đầu nhanh
 
@@ -21,5 +24,4 @@ npm test
 npm run studio
 ```
 
-Mở `http://127.0.0.1:8766`.
-
+Mở `http://127.0.0.1:8796`.
