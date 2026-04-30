@@ -9,6 +9,13 @@ const chatFormEl = document.getElementById("chat-form");
 const chatInputEl = document.getElementById("chat-input");
 const selectedLabelEl = document.getElementById("selected-label");
 const inspectorFormEl = document.getElementById("inspector-form");
+const projectManifestEl = document.getElementById("project-manifest");
+const projectSummaryEl = document.getElementById("project-summary");
+const projectFilesEl = document.getElementById("project-files");
+const projectStructureEl = document.getElementById("project-structure");
+const projectStatusEl = document.getElementById("project-status");
+const projectFileCountEl = document.getElementById("project-file-count");
+const projectPathEl = document.getElementById("project-path");
 
 const fields = {
   kind: document.getElementById("field-kind"),
@@ -27,6 +34,12 @@ const fields = {
 
 let selectedRef = "";
 let nodeRefs = new Map();
+let currentProjectPayload = {
+  manifest: AAPS.sampleProject,
+  project_path: ".",
+  files: AAPS.projectFileIndex(AAPS.sampleProject),
+  manifest_exists: false,
+};
 
 function escapeHtml(value) {
   return String(value || "")
@@ -38,6 +51,71 @@ function escapeHtml(value) {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function getProjectManifest() {
+  try {
+    return AAPS.normalizeProjectManifest(JSON.parse(projectManifestEl.value || "{}"));
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+function renderProject(payload = currentProjectPayload) {
+  currentProjectPayload = payload;
+  const manifest = AAPS.normalizeProjectManifest(payload.manifest || AAPS.sampleProject);
+  const files = payload.files && payload.files.length ? payload.files : AAPS.projectFileIndex(manifest);
+  const validation = AAPS.validateProjectManifest(manifest, files);
+  const diagnostics = validation.diagnostics;
+  const errorCount = diagnostics.filter((item) => item.severity === "error").length;
+  const warningCount = diagnostics.filter((item) => item.severity === "warning").length;
+
+  projectManifestEl.value = JSON.stringify(manifest, null, 2);
+  projectPathEl.value = payload.project_path || projectPathEl.value || ".";
+  projectStatusEl.textContent = errorCount
+    ? `${errorCount} error${errorCount === 1 ? "" : "s"}`
+    : warningCount
+      ? `${warningCount} warning${warningCount === 1 ? "" : "s"}`
+      : "valid";
+  projectFileCountEl.textContent = `${files.length} file${files.length === 1 ? "" : "s"}`;
+  projectStructureEl.textContent = AAPS.projectStructureText(manifest);
+
+  projectSummaryEl.innerHTML = `
+    <div><strong>${escapeHtml(manifest.name)}</strong> · ${escapeHtml(manifest.domain)} · ${escapeHtml(manifest.defaultMain)}</div>
+    <div>${escapeHtml(manifest.description || "No project description.")}</div>
+    <div class="project-kpis">
+      <div class="project-kpi"><strong>${AAPS.projectFileIndex(manifest).length}</strong>manifest files</div>
+      <div class="project-kpi"><strong>${manifest.tools.length}</strong>tools</div>
+      <div class="project-kpi"><strong>${manifest.models.length}</strong>models</div>
+    </div>
+    ${
+      diagnostics.length
+        ? `<div>${diagnostics
+            .map((item) => `${escapeHtml(item.severity)}: ${escapeHtml(item.message)}`)
+            .join("<br>")}</div>`
+        : "<div>No project manifest diagnostics.</div>"
+    }
+  `;
+
+  projectFilesEl.innerHTML = AAPS.PROJECT_FILE_CATEGORIES.map((category) => {
+    const categoryFiles = manifest.files[category] || [];
+    if (!categoryFiles.length) return "";
+    return `
+      <section class="project-category">
+        <h3>${escapeHtml(category)}</h3>
+        ${categoryFiles
+          .map(
+            (file) => `
+              <button class="project-file${file === manifest.activeFile ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
+                <span>${escapeHtml(file)}</span>
+                <span>${files.includes(file) ? "found" : "listed"}</span>
+              </button>
+            `
+          )
+          .join("")}
+      </section>
+    `;
+  }).join("") || '<div class="message">No `.aaps` files listed in this project.</div>';
 }
 
 function getIr() {
@@ -439,6 +517,67 @@ async function requestChatEdit(instruction) {
   return result.message || result.summary || "Applied routed edit.";
 }
 
+async function loadProject(path = projectPathEl.value || ".") {
+  const response = await fetch(`/api/aaps/project?path=${encodeURIComponent(path)}`);
+  if (!response.ok) throw new Error(`project API returned ${response.status}`);
+  const payload = await response.json();
+  renderProject(payload);
+  return payload;
+}
+
+async function saveProject() {
+  const manifest = getProjectManifest();
+  if (manifest.error) {
+    projectStatusEl.textContent = "invalid JSON";
+    addMessage("assistant", `Project manifest JSON error: ${manifest.error}`);
+    return;
+  }
+  const response = await fetch("/api/aaps/project", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: projectPathEl.value || ".", manifest }),
+  });
+  if (!response.ok) throw new Error(`project save returned ${response.status}`);
+  const payload = await response.json();
+  renderProject(payload);
+  addMessage("assistant", `Saved project manifest for ${payload.manifest.name}.`);
+}
+
+async function loadProjectFile(file) {
+  const response = await fetch(
+    `/api/aaps/project/file?path=${encodeURIComponent(projectPathEl.value || ".")}&file=${encodeURIComponent(file)}`
+  );
+  if (!response.ok) throw new Error(`file API returned ${response.status}`);
+  const payload = await response.json();
+  sourceEl.value = payload.source;
+  const manifest = getProjectManifest();
+  if (!manifest.error) {
+    manifest.activeFile = file;
+    renderProject({ ...currentProjectPayload, manifest });
+  }
+  selectedRef = "";
+  render();
+  addMessage("assistant", `Loaded ${file}.`);
+}
+
+async function saveActiveProjectFile() {
+  const manifest = getProjectManifest();
+  if (manifest.error) {
+    projectStatusEl.textContent = "invalid JSON";
+    return;
+  }
+  const file = manifest.activeFile || manifest.defaultMain;
+  const response = await fetch("/api/aaps/project/file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: projectPathEl.value || ".", file, source: sourceEl.value }),
+  });
+  if (!response.ok) throw new Error(`file save returned ${response.status}`);
+  const payload = await response.json();
+  renderProject({ ...currentProjectPayload, files: payload.files, manifest });
+  addMessage("assistant", `Saved ${file}.`);
+}
+
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll("[data-tab]").forEach((item) => item.classList.remove("is-active"));
@@ -515,9 +654,57 @@ document.getElementById("download-btn").addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+projectFilesEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-project-file]");
+  if (!button) return;
+  loadProjectFile(button.dataset.projectFile).catch((error) => {
+    addMessage("assistant", `Could not load project file: ${error.message}`);
+  });
+});
+
+document.getElementById("load-project-btn").addEventListener("click", () => {
+  loadProject().catch((error) => {
+    addMessage("assistant", `Could not load project: ${error.message}`);
+  });
+});
+
+document.getElementById("sample-project-btn").addEventListener("click", () => {
+  renderProject({
+    manifest: AAPS.sampleProject,
+    project_path: "examples/projects/organoid-analysis",
+    files: AAPS.projectFileIndex(AAPS.sampleProject),
+    manifest_exists: false,
+  });
+});
+
+document.getElementById("validate-project-btn").addEventListener("click", () => {
+  const manifest = getProjectManifest();
+  if (manifest.error) {
+    projectStatusEl.textContent = "invalid JSON";
+    addMessage("assistant", `Project manifest JSON error: ${manifest.error}`);
+    return;
+  }
+  renderProject({ ...currentProjectPayload, manifest });
+  addMessage("assistant", "Validated project manifest.");
+});
+
+document.getElementById("save-project-btn").addEventListener("click", () => {
+  saveProject().catch((error) => {
+    addMessage("assistant", `Could not save project: ${error.message}`);
+  });
+});
+
+document.getElementById("save-active-file-btn").addEventListener("click", () => {
+  saveActiveProjectFile().catch((error) => {
+    addMessage("assistant", `Could not save active file: ${error.message}`);
+  });
+});
+
 sourceEl.value = AAPS.samples.biology;
 addMessage("assistant", "AAPS Studio is ready. Use chat to prepare skills or edit source directly.");
 render();
+renderProject(currentProjectPayload);
+loadProject().catch(() => {});
 
 if ("serviceWorker" in navigator) {
   const localhost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);

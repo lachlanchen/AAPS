@@ -8,7 +8,18 @@
   "use strict";
 
   const VERSION = "aaps_ir/0.2";
+  const PROJECT_VERSION = "aaps_project/0.1";
   const CHILD_KINDS = new Set(["stage", "method", "action", "guard", "handoff", "choose"]);
+  const PROJECT_FILE_CATEGORIES = [
+    "blocks",
+    "skills",
+    "modules",
+    "subworkflows",
+    "workflows",
+    "drafts",
+    "archives",
+    "references",
+  ];
 
   function unquote(value) {
     const text = String(value || "").trim();
@@ -40,6 +51,17 @@
       .split(",")
       .map((item) => unquote(item).trim())
       .filter(Boolean);
+  }
+
+  function uniqueList(items) {
+    return [...new Set((items || []).map((item) => String(item || "").trim()).filter(Boolean))];
+  }
+
+  function relativeProjectPath(value) {
+    const text = String(value || "").trim();
+    if (!text || text === ".") return true;
+    if (text.startsWith("/") || text.startsWith("~") || /^[A-Za-z]:[\\/]/.test(text)) return false;
+    return !text.split(/[\\/]+/).some((part) => part === "..");
   }
 
   function parseKeyValue(line) {
@@ -86,6 +108,7 @@
       logPath: "",
       requiredTools: [],
       requiredModels: [],
+      includes: [],
       inputs: {},
       inputPorts: [],
       outputPorts: [],
@@ -328,6 +351,16 @@
         return;
       }
 
+      match = line.match(/^include\s+(.+)$/i);
+      if (match && target === ir.pipeline) {
+        const includePath = unquote(match[1]);
+        ir.pipeline.includes.push(includePath);
+        if (!relativeProjectPath(includePath)) {
+          diagnostic(lineNumber, `include path must be project-relative: ${includePath}`);
+        }
+        return;
+      }
+
       match = line.match(/^(requires_tools|requires_models)\s+(.+)$/i);
       if (match && target === ir.pipeline) {
         const key = match[1].toLowerCase() === "requires_tools" ? "requiredTools" : "requiredModels";
@@ -550,6 +583,7 @@
     if (pipeline.updated) lines.push(`  updated ${quote(pipeline.updated)}`);
     if (pipeline.domain) lines.push(`  domain ${quote(pipeline.domain)}`);
     if (pipeline.tags && pipeline.tags.length) lines.push(`  tags ${quote(pipeline.tags.join(", "))}`);
+    (pipeline.includes || []).forEach((includePath) => lines.push(`  include ${quote(includePath)}`));
     if (pipeline.requiredTools && pipeline.requiredTools.length) lines.push(`  requires_tools ${quote(pipeline.requiredTools.join(", "))}`);
     if (pipeline.requiredModels && pipeline.requiredModels.length) lines.push(`  requires_models ${quote(pipeline.requiredModels.join(", "))}`);
     if (pipeline.artifactDir) lines.push(`  artifact_dir ${quote(pipeline.artifactDir)}`);
@@ -610,6 +644,7 @@
       lines.push("## Metadata", "");
       if (pipeline.workflowVersion) lines.push(`- Version: ${pipeline.workflowVersion}`);
       if (pipeline.author) lines.push(`- Author: ${pipeline.author}`);
+      if (pipeline.includes && pipeline.includes.length) lines.push(`- Includes: ${pipeline.includes.join(", ")}`);
       if (pipeline.artifactDir) lines.push(`- Artifact dir: ${pipeline.artifactDir}`);
       if (pipeline.databasePath) lines.push(`- Database: ${pipeline.databasePath}`);
       if (pipeline.logPath) lines.push(`- Log path: ${pipeline.logPath}`);
@@ -803,13 +838,219 @@
 }`,
   };
 
+  function createProjectManifest(overrides = {}) {
+    const now = new Date().toISOString();
+    const base = {
+      schema: PROJECT_VERSION,
+      name: "Untitled AAPS Project",
+      path: ".",
+      description: "A multi-file AAPS project.",
+      domain: "general",
+      tags: [],
+      defaultMain: "workflows/main.aaps",
+      activeFile: "workflows/main.aaps",
+      created: now,
+      updated: now,
+      paths: {
+        blocks: "blocks",
+        skills: "skills",
+        modules: "modules",
+        subworkflows: "subworkflows",
+        workflows: "workflows",
+        drafts: "drafts",
+        archives: "archive",
+        data: "data",
+        artifacts: "artifacts",
+        runs: "runs",
+        reports: "reports",
+        notes: "notes",
+      },
+      dataFolders: ["data"],
+      artifactRoot: "artifacts",
+      runDatabase: "runs/aaps-runs.jsonl",
+      variables: {},
+      tools: [],
+      models: [],
+      notes: [],
+      files: {
+        blocks: [],
+        skills: [],
+        modules: [],
+        subworkflows: [],
+        workflows: ["workflows/main.aaps"],
+        drafts: [],
+        archives: [],
+        references: [],
+      },
+    };
+    return normalizeProjectManifest({
+      ...base,
+      ...overrides,
+      paths: { ...base.paths, ...(overrides.paths || {}) },
+      files: { ...base.files, ...(overrides.files || {}) },
+    });
+  }
+
+  function normalizeProjectManifest(manifest = {}) {
+    const normalized = {
+      schema: manifest.schema || PROJECT_VERSION,
+      name: manifest.name || "Untitled AAPS Project",
+      path: manifest.path || ".",
+      description: manifest.description || "",
+      domain: manifest.domain || "general",
+      tags: uniqueList(manifest.tags || []),
+      defaultMain: manifest.defaultMain || manifest.default_main || "workflows/main.aaps",
+      activeFile: manifest.activeFile || manifest.active_file || manifest.defaultMain || "workflows/main.aaps",
+      created: manifest.created || "",
+      updated: manifest.updated || "",
+      paths: { ...(manifest.paths || {}) },
+      dataFolders: uniqueList(manifest.dataFolders || manifest.data_folders || []),
+      artifactRoot: manifest.artifactRoot || manifest.artifact_root || "artifacts",
+      runDatabase: manifest.runDatabase || manifest.run_database || "runs/aaps-runs.jsonl",
+      variables: { ...(manifest.variables || {}) },
+      tools: uniqueList(manifest.tools || []),
+      models: uniqueList(manifest.models || []),
+      notes: Array.isArray(manifest.notes) ? manifest.notes.map(String) : [],
+      files: {},
+    };
+    PROJECT_FILE_CATEGORIES.forEach((category) => {
+      normalized.files[category] = uniqueList((manifest.files && manifest.files[category]) || []);
+    });
+    if (!normalized.files.workflows.includes(normalized.defaultMain)) {
+      normalized.files.workflows.unshift(normalized.defaultMain);
+    }
+    if (
+      normalized.activeFile &&
+      normalized.activeFile.endsWith(".aaps") &&
+      !projectFileIndex(normalized).includes(normalized.activeFile)
+    ) {
+      normalized.files.drafts.push(normalized.activeFile);
+      normalized.files.drafts = uniqueList(normalized.files.drafts);
+    }
+    return normalized;
+  }
+
+  function projectFileIndex(manifest = {}) {
+    const project = manifest.files ? manifest : normalizeProjectManifest(manifest);
+    return uniqueList(PROJECT_FILE_CATEGORIES.flatMap((category) => project.files[category] || []));
+  }
+
+  function validateProjectManifest(manifest = {}, knownFiles = []) {
+    const project = normalizeProjectManifest(manifest);
+    const diagnostics = [];
+    const known = new Set(knownFiles || []);
+    const indexed = new Set(projectFileIndex(project));
+
+    function issue(severity, field, message) {
+      diagnostics.push({ severity, field, message });
+    }
+
+    ["name", "domain", "defaultMain", "activeFile", "artifactRoot", "runDatabase"].forEach((field) => {
+      if (!String(project[field] || "").trim()) issue("error", field, `${field} is required.`);
+    });
+    if (project.schema !== PROJECT_VERSION) {
+      issue("error", "schema", `schema must be ${PROJECT_VERSION}.`);
+    }
+
+    ["path", "defaultMain", "activeFile", "artifactRoot", "runDatabase", ...project.dataFolders].forEach((value) => {
+      if (!relativeProjectPath(value)) issue("error", "path", `Path must be project-relative: ${value}`);
+    });
+
+    Object.entries(project.paths || {}).forEach(([key, value]) => {
+      if (!relativeProjectPath(value)) issue("error", `paths.${key}`, `Path must be project-relative: ${value}`);
+    });
+
+    projectFileIndex(project).forEach((file) => {
+      if (!relativeProjectPath(file)) issue("error", "files", `AAPS file path must be project-relative: ${file}`);
+      if (!file.endsWith(".aaps")) issue("error", "files", `Project source file must end with .aaps: ${file}`);
+      if (known.size && !known.has(file)) issue("warning", "files", `Manifest lists a file that was not found: ${file}`);
+    });
+
+    [project.defaultMain, project.activeFile].forEach((file) => {
+      if (file && !file.endsWith(".aaps")) issue("error", "main", `Main project file must end with .aaps: ${file}`);
+      if (file && !indexed.has(file)) issue("warning", "main", `Main file is not listed in files: ${file}`);
+      if (known.size && file && !known.has(file)) issue("warning", "main", `Main file was not found on disk: ${file}`);
+    });
+
+    return {
+      ok: !diagnostics.some((diagnostic) => diagnostic.severity === "error"),
+      project,
+      diagnostics,
+      files: projectFileIndex(project),
+    };
+  }
+
+  function projectStructureText(manifest = {}) {
+    const project = normalizeProjectManifest(manifest);
+    const paths = project.paths || {};
+    return [
+      `${project.name}/`,
+      "  aaps.project.json",
+      `  ${paths.blocks || "blocks"}/`,
+      `  ${paths.skills || "skills"}/`,
+      `  ${paths.modules || "modules"}/`,
+      `  ${paths.workflows || "workflows"}/`,
+      `  ${paths.data || "data"}/`,
+      `  ${project.artifactRoot || "artifacts"}/`,
+      `  ${paths.runs || "runs"}/`,
+      `  ${paths.reports || "reports"}/`,
+      `  ${paths.notes || "notes"}/`,
+    ].join("\n");
+  }
+
+  const sampleProject = createProjectManifest({
+    name: "Organoid Analysis Project",
+    description: "Reusable AAPS blocks and workflows for microscopy QC, organoid segmentation, quantification, and report generation.",
+    domain: "biology",
+    tags: ["organoid", "microscopy", "segmentation", "qc"],
+    defaultMain: "workflows/main.aaps",
+    activeFile: "workflows/main.aaps",
+    dataFolders: ["data/raw", "data/processed"],
+    artifactRoot: "artifacts",
+    runDatabase: "runs/organoid-aaps-runs.jsonl",
+    variables: {
+      image_glob: "data/raw/**/*.tif",
+      qc_threshold: "domain_defined",
+      review_mode: "required_when_low_confidence",
+    },
+    tools: ["python", "cellpose", "scikit-image", "opencv", "codex"],
+    models: ["gpt-5", "cellpose", "vision-mask"],
+    notes: [
+      "Keep blocks small, typed, and reusable.",
+      "Main workflows include project-root relative block files.",
+    ],
+    files: {
+      blocks: [
+        "blocks/qc_image.aaps",
+        "blocks/segment_organoid.aaps",
+        "blocks/quantify_growth.aaps",
+        "blocks/generate_report.aaps",
+      ],
+      skills: ["skills/microscopy_qc.aaps", "skills/report_generation.aaps"],
+      modules: [],
+      subworkflows: ["workflows/test_segmentation_methods.aaps"],
+      workflows: ["workflows/main.aaps", "workflows/batch_analysis.aaps"],
+      drafts: [],
+      archives: [],
+      references: [],
+    },
+  });
+
   return {
     VERSION,
+    PROJECT_VERSION,
+    PROJECT_FILE_CATEGORIES,
     parseAAPS,
     serializeAAPS,
     toMarkdown,
+    createProjectManifest,
+    normalizeProjectManifest,
+    validateProjectManifest,
+    projectFileIndex,
+    projectStructureText,
     sample: samples.general,
     samples,
+    sampleProject,
     slug,
   };
 });

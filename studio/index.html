@@ -23,6 +23,7 @@
       <nav class="mode-tabs" aria-label="Studio views">
         <button class="mode-tab is-active" type="button" data-tab="lab">Block Lab</button>
         <button class="mode-tab" type="button" data-tab="program">Program</button>
+        <button class="mode-tab" type="button" data-tab="project">Project</button>
       </nav>
       <div class="toolbar" role="group" aria-label="Pipeline actions">
         <button id="sample-general" type="button">General</button>
@@ -136,6 +137,52 @@
             <span id="ir-summary">0 nodes</span>
           </div>
           <pre id="ir"></pre>
+        </section>
+      </section>
+
+      <section class="tab-panel" data-panel="project">
+        <section class="panel project-manifest-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Project Manifest</h2>
+              <p><code>aaps.project.json</code> defines project files, paths, tools, models, artifacts, and runs.</p>
+            </div>
+            <span id="project-status">not loaded</span>
+          </div>
+          <div class="project-controls">
+            <label>Project Path <input id="project-path" value="." /></label>
+            <div class="form-actions">
+              <button id="load-project-btn" type="button">Load</button>
+              <button id="sample-project-btn" type="button">Sample</button>
+              <button id="validate-project-btn" type="button">Validate</button>
+              <button id="save-project-btn" type="button">Save Manifest</button>
+              <button id="save-active-file-btn" type="button">Save Active File</button>
+            </div>
+          </div>
+          <textarea id="project-manifest" spellcheck="false"></textarea>
+        </section>
+
+        <section class="panel project-files-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Project Files</h2>
+              <p>Blocks, skills, modules, subworkflows, workflows, drafts, and archives.</p>
+            </div>
+            <span id="project-file-count">0 files</span>
+          </div>
+          <div id="project-summary" class="project-summary"></div>
+          <div id="project-files" class="project-files"></div>
+        </section>
+
+        <section class="panel project-structure-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Structure</h2>
+              <p>Recommended folder contract for a multi-file AAPS project.</p>
+            </div>
+            <span>aaps_project/0.1</span>
+          </div>
+          <pre id="project-structure"></pre>
         </section>
       </section>
     </main>
