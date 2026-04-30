@@ -323,6 +323,7 @@ h2 {
 .summary-grid article,
 .deploy-panel,
 .code-card,
+.studio-preview,
 .studio-shot-frame {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -389,6 +390,96 @@ code {
 
 .studio-grid {
   perspective: 1600px;
+}
+
+.studio-showcase {
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+
+.studio-preview {
+  min-height: 250px;
+  overflow: hidden;
+  transform: rotateX(2deg) rotateY(-4deg);
+  transform-origin: center;
+  box-shadow:
+    0 28px 70px rgba(42, 24, 84, 0.18),
+    14px 16px 0 rgba(40, 199, 111, 0.12),
+    -14px -14px 0 rgba(255, 159, 28, 0.12);
+}
+
+.preview-top {
+  height: 38px;
+  background: linear-gradient(90deg, var(--pink), var(--orange), var(--green), var(--cyan));
+}
+
+.preview-layout {
+  display: grid;
+  grid-template-columns: 86px 1fr 116px;
+  gap: 12px;
+  padding: 16px;
+  min-height: 212px;
+  background: #fffdf8;
+}
+
+.preview-palette,
+.preview-canvas,
+.preview-chat {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.preview-palette,
+.preview-chat {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 10px;
+}
+
+.mini-block,
+.flow-block,
+.preview-chat span {
+  display: block;
+  border-radius: 8px;
+}
+
+.mini-block {
+  height: 28px;
+}
+
+.pink {
+  background: var(--pink);
+}
+
+.yellow {
+  background: var(--orange);
+}
+
+.green {
+  background: var(--green);
+}
+
+.preview-canvas {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 18px;
+}
+
+.flow-block {
+  width: min(230px, 100%);
+  padding: 11px 16px;
+  color: #fff;
+  background: var(--violet);
+  font-weight: 850;
+}
+
+.preview-chat span {
+  height: 18px;
+  background: #efeafb;
 }
 
 .studio-carousel {
@@ -608,8 +699,18 @@ code {
 
   .summary-grid,
   .two-col,
-  .studio-grid {
+  .studio-grid,
+  .preview-layout {
     grid-template-columns: 1fr;
+  }
+
+  .studio-preview {
+    transform: none;
+  }
+
+  .preview-palette,
+  .preview-chat {
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .studio-shot-frame {
