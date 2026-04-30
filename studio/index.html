@@ -21,9 +21,9 @@
         </span>
       </a>
       <nav class="mode-tabs" aria-label="Studio views">
-        <button class="mode-tab is-active" type="button" data-tab="lab">Block Lab</button>
-        <button class="mode-tab" type="button" data-tab="program">Program</button>
-        <button class="mode-tab" type="button" data-tab="project">Project</button>
+        <button class="mode-tab is-active" type="button" data-tab="project">Project</button>
+        <button class="mode-tab" type="button" data-tab="lab">Blocks</button>
+        <button class="mode-tab" type="button" data-tab="program">Programs</button>
       </nav>
       <div class="toolbar" role="group" aria-label="Pipeline actions">
         <button id="sample-general" type="button">General</button>
@@ -49,7 +49,7 @@
     </header>
 
     <main>
-      <section class="tab-panel is-active" data-panel="lab">
+      <section class="tab-panel" data-panel="lab">
         <section class="panel library-panel">
           <div class="panel-head">
             <div>
@@ -163,7 +163,7 @@
         </section>
       </section>
 
-      <section class="tab-panel" data-panel="project">
+      <section class="tab-panel is-active" data-panel="project">
         <section class="panel project-manifest-panel">
           <div class="panel-head">
             <div>
@@ -177,6 +177,16 @@
               A project is a research/app/book/lecture workspace. Keep several workflows in it, run one active `.aaps`, and reuse its blocks, tools, agents, and environments across tmux panes or Studio runs.
             </div>
             <label>Project Path <input id="project-path" value="." /></label>
+            <section class="project-create-box" aria-label="Create AAPS project">
+              <h3>Create Project</h3>
+              <label>New Project Path <input id="new-project-path" placeholder="projects/my-aaps-project" /></label>
+              <label>Name <input id="new-project-name" placeholder="My AAPS Project" /></label>
+              <label>Domain <input id="new-project-domain" placeholder="research, app, writing, biology" /></label>
+              <label>Goal <textarea id="new-project-goal" rows="3" placeholder="Describe the topic and first pipeline goal."></textarea></label>
+              <div class="form-actions">
+                <button id="create-project-btn" type="button">Create Starter Project</button>
+              </div>
+            </section>
             <div class="form-actions">
               <button id="load-project-btn" type="button">Load</button>
               <button id="sample-project-btn" type="button">Sample</button>
@@ -197,6 +207,48 @@
               <button id="archive-active-file-btn" type="button">Archive Active</button>
               <button id="save-open-text-file-btn" type="button">Save Open Script</button>
             </div>
+            <section class="settings-box" aria-label="Agent backend settings">
+              <div class="settings-head">
+                <h3>Backend Agent Settings</h3>
+                <span id="settings-status">not loaded</span>
+              </div>
+              <div class="settings-grid">
+                <label>Backend
+                  <select id="agent-provider">
+                    <option value="codex">Codex wrapper</option>
+                    <option value="deepseek">DeepSeek API</option>
+                  </select>
+                </label>
+                <label>Codex Model
+                  <input id="codex-model" placeholder="gpt-5.3-codex" />
+                </label>
+                <label>Reasoning
+                  <select id="codex-reasoning">
+                    <option value="medium">medium</option>
+                    <option value="low">low</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh</option>
+                  </select>
+                </label>
+                <label>DeepSeek Model
+                  <select id="deepseek-model">
+                    <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                    <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                  </select>
+                </label>
+                <label>DeepSeek Base URL
+                  <input id="deepseek-base-url" placeholder="https://api.deepseek.com" />
+                </label>
+                <label class="settings-check">
+                  <input id="auto-compile-after-chat" type="checkbox" />
+                  <span>Auto compile after chat edits</span>
+                </label>
+              </div>
+              <div class="form-actions">
+                <button id="save-settings-btn" type="button">Save Settings</button>
+              </div>
+              <div id="settings-availability" class="settings-availability"></div>
+            </section>
           </div>
           <textarea id="project-manifest" spellcheck="false"></textarea>
         </section>
