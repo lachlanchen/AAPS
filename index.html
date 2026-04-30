@@ -126,18 +126,55 @@ aaps run workflows/main.aaps --project . --json</code></pre>
             </p>
             <a class="button button-primary" href="./studio/">Launch Studio</a>
           </div>
-          <figure class="studio-shot-frame" aria-label="AAPS Studio screenshot">
-            <div class="studio-shot-chrome">
-              <span></span><span></span><span></span>
-              <strong>http://127.0.0.1:8796</strong>
+          <div class="studio-carousel" data-studio-carousel aria-label="AAPS Studio screenshots">
+            <div class="studio-carousel-stage">
+              <figure class="studio-shot-frame is-active" data-carousel-slide>
+                <div class="studio-shot-chrome">
+                  <span></span><span></span><span></span>
+                  <strong>Project</strong>
+                </div>
+                <img
+                  src="assets/aaps-studio-project-tab.png"
+                  alt="AAPS Studio Project tab with project creation, workspace files, compile runtime panel, and bottom chat dock"
+                  loading="lazy"
+                />
+                <figcaption>Project workspace: create a topic project, browse files, compile, dry-run, and manage backend settings.</figcaption>
+              </figure>
+              <figure class="studio-shot-frame is-next" data-carousel-slide>
+                <div class="studio-shot-chrome">
+                  <span></span><span></span><span></span>
+                  <strong>Blocks</strong>
+                </div>
+                <img
+                  src="assets/aaps-studio-blocks-tab.png"
+                  alt="AAPS Studio Blocks tab with reusable skill library and block inspector"
+                  loading="lazy"
+                />
+                <figcaption>Blocks lab: prepare reusable skills, typed ports, executable actions, validation, and block chat.</figcaption>
+              </figure>
+              <figure class="studio-shot-frame is-prev" data-carousel-slide>
+                <div class="studio-shot-chrome">
+                  <span></span><span></span><span></span>
+                  <strong>Programs</strong>
+                </div>
+                <img
+                  src="assets/aaps-studio-programs-tab.png"
+                  alt="AAPS Studio Programs tab with visual program tree, source editor, and JSON IR preview"
+                  loading="lazy"
+                />
+                <figcaption>Programs view: edit `.aaps`, inspect the visual workflow tree, and review parser IR.</figcaption>
+              </figure>
             </div>
-            <img
-              src="assets/aaps-studio-project.png"
-              alt="AAPS Studio project workspace with project creation, workspace files, compile runtime panel, and bottom chat dock"
-              loading="lazy"
-            />
-            <figcaption>Project-first Studio with backend settings, reusable blocks, compile checks, runtime controls, and chat dock.</figcaption>
-          </figure>
+            <div class="studio-carousel-controls">
+              <button type="button" data-carousel-prev aria-label="Previous Studio screenshot">‹</button>
+              <div class="studio-carousel-dots" aria-label="Studio screenshot picker">
+                <button class="is-active" type="button" data-carousel-dot="0" aria-label="Show Project tab"></button>
+                <button type="button" data-carousel-dot="1" aria-label="Show Blocks tab"></button>
+                <button type="button" data-carousel-dot="2" aria-label="Show Programs tab"></button>
+              </div>
+              <button type="button" data-carousel-next aria-label="Next Studio screenshot">›</button>
+            </div>
+          </div>
         </div>
       </section>
 

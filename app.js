@@ -112,6 +112,60 @@ document.querySelectorAll("[data-copy-target]").forEach((button) => {
   });
 });
 
+document.querySelectorAll("[data-studio-carousel]").forEach((carousel) => {
+  const slides = [...carousel.querySelectorAll("[data-carousel-slide]")];
+  const dots = [...carousel.querySelectorAll("[data-carousel-dot]")];
+  const previous = carousel.querySelector("[data-carousel-prev]");
+  const next = carousel.querySelector("[data-carousel-next]");
+  let index = 0;
+  let timer = null;
+
+  function setSlide(nextIndex) {
+    index = (nextIndex + slides.length) % slides.length;
+    slides.forEach((slide, slideIndex) => {
+      slide.classList.toggle("is-active", slideIndex === index);
+      slide.classList.toggle("is-prev", slideIndex === (index - 1 + slides.length) % slides.length);
+      slide.classList.toggle("is-next", slideIndex === (index + 1) % slides.length);
+      slide.setAttribute("aria-hidden", slideIndex === index ? "false" : "true");
+    });
+    dots.forEach((dot, dotIndex) => {
+      dot.classList.toggle("is-active", dotIndex === index);
+      dot.setAttribute("aria-current", dotIndex === index ? "true" : "false");
+    });
+  }
+
+  function stop() {
+    if (timer) window.clearInterval(timer);
+    timer = null;
+  }
+
+  function start() {
+    stop();
+    timer = window.setInterval(() => setSlide(index + 1), 5200);
+  }
+
+  previous?.addEventListener("click", () => {
+    setSlide(index - 1);
+    start();
+  });
+  next?.addEventListener("click", () => {
+    setSlide(index + 1);
+    start();
+  });
+  dots.forEach((dot) => {
+    dot.addEventListener("click", () => {
+      setSlide(Number(dot.dataset.carouselDot || 0));
+      start();
+    });
+  });
+  carousel.addEventListener("mouseenter", stop);
+  carousel.addEventListener("mouseleave", start);
+  carousel.addEventListener("focusin", stop);
+  carousel.addEventListener("focusout", start);
+  setSlide(0);
+  start();
+});
+
 if (languageSelect) {
   applyLanguage(localStorage.getItem("aaps.website.language") || "en");
   languageSelect.addEventListener("change", () => {
