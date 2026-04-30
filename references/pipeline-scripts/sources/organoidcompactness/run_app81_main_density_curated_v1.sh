@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=/home/lachlan/ProjectsLFS/Zhengyu
+ROOT="${ORGANOID_COMPACTNESS_ROOT:-$PWD}"
 OUT="$ROOT/analysis-output/app81_main_density_curated_v1"
 
-source /home/lachlan/miniconda3/etc/profile.d/conda.sh
+source "${CONDA_PROFILE:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 conda activate organoid-gpu
 export PYTHONNOUSERSITE=1
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export ZQ_CUDA_VISIBLE_DEVICES="${ZQ_CUDA_VISIBLE_DEVICES:-0}"
-export CUDA_VISIBLE_DEVICES="$ZQ_CUDA_VISIBLE_DEVICES"
+export ORGANOID_CUDA_VISIBLE_DEVICES="${ORGANOID_CUDA_VISIBLE_DEVICES:-0}"
+export CUDA_VISIBLE_DEVICES="$ORGANOID_CUDA_VISIBLE_DEVICES"
 export TORCHDYNAMO_DISABLE=1
 export TORCH_DISABLE_DYNAMO=1
 export PYTORCH_JIT=0

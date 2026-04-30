@@ -15,7 +15,7 @@ La version actuelle ajoute `skill`, `stage`, `action`, `method`, `guard`, `if`, 
 - `backend/` : wrapper Codex avec `/api/aaps/edit` et `/api/codex/*`.
 - `website/` : page de présentation publiée sur `https://aaps.lazying.art`.
 - `vendor/AgInTiFlow` : sous-module candidat pour le futur backend.
-- `references/pipeline-scripts/` : scripts sources et conversions `.aaps` générales depuis AutoAppDev, LazyBlog et les analyses biologiques Zhengyu.
+- `references/pipeline-scripts/` : scripts sources et conversions `.aaps` générales depuis AutoAppDev, LazyBlog, OrganoidQuant et OrganoidCompactnessAnalysis.
 
 ## Démarrage
 

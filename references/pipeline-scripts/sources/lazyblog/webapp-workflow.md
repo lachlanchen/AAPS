@@ -2,7 +2,7 @@
 
 LazyBlog Studio is the local chat-to-post PWA for `BLOG`.
 
-It belongs in this repo because it is an operating tool. It does not modify the pure WordPress code repo in `../myblog`.
+It belongs in the operating-tool repo and does not modify the companion WordPress codebase directly.
 
 ## Start
 
@@ -64,7 +64,7 @@ Both tools use:
 ```bash
 codex exec --ephemeral --model <model> -c 'model_reasoning_effort="<reasoning>"' \
   --dangerously-bypass-approvals-and-sandbox \
-  --cd BLOG \
+  --cd <repo-root> \
   --output-schema schemas/<schema>.json \
   --output-last-message content/chat/<session>/tool-runs/<run>/output.json -
 ```

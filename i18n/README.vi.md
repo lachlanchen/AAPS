@@ -15,7 +15,7 @@ Phiên bản hiện tại thêm `skill`, `stage`, `action`, `method`, `guard`, `
 - `backend/`: Codex wrapper với `/api/aaps/edit` và `/api/codex/*`.
 - `website/`: trang giới thiệu tại `https://aaps.lazying.art`.
 - `vendor/AgInTiFlow`: submodule cho backend agent tương lai.
-- `references/pipeline-scripts/`: script nguồn và bản chuyển đổi `.aaps` tổng quát từ AutoAppDev, LazyBlog và phân tích sinh học Zhengyu.
+- `references/pipeline-scripts/`: script nguồn và bản chuyển đổi `.aaps` tổng quát từ AutoAppDev, LazyBlog, OrganoidQuant và OrganoidCompactnessAnalysis.
 
 ## Bắt đầu nhanh
 

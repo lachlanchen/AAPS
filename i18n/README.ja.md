@@ -15,7 +15,7 @@ AAPS は Autonomous Agentic Pipeline Script です。プロンプトを第一級
 - `backend/`: Codex wrapper API。`/api/aaps/edit` と `/api/codex/*` を提供。
 - `website/`: `https://aaps.lazying.art` に公開するランディングページ。
 - `vendor/AgInTiFlow`: 将来のバックエンド候補サブモジュール。
-- `references/pipeline-scripts/`: AutoAppDev、LazyBlog、Zhengyu 生物解析などの元スクリプトと汎用 `.aaps` 変換版。
+- `references/pipeline-scripts/`: AutoAppDev、LazyBlog、OrganoidQuant、OrganoidCompactnessAnalysis などの元スクリプトと汎用 `.aaps` 変換版。
 
 ## クイックスタート
 

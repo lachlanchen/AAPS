@@ -18,7 +18,7 @@
 
 ## Overview
 
-AAPS turns prompts into explicit, resumable, verifiable agent workflows. It abstracts the practical loop used across AutoAppDev, AutoNovelWriter, LazyBlog, OrganoidAgent, Zhengyu/App80/App81 biology analysis, and future AgInTiFlow-backed agents: inspect, route, act, verify, summarize, and publish.
+AAPS turns prompts into explicit, resumable, verifiable agent workflows. It abstracts the practical loop used across public project patterns such as AutoAppDev, AutoNovelWriter, LazyBlog, OrganoidQuant, OrganoidCompactnessAnalysis, OrganoidAgent, and future AgInTiFlow-backed agents: inspect, route, act, verify, summarize, and publish.
 
 The public product site is `https://aaps.lazying.art`. The broader agent portal is `https://agent.lazying.art`.
 

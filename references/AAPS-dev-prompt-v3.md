@@ -52,22 +52,22 @@ AAPS should be useful for at least these domains:
 - agentic report generation
 - database/artifact logging workflows
 
-Nearby repos/directories to learn from where accessible:
+Public project patterns to learn from where accessible:
 
-- `../AutoAppDev`
-- `../HeyCyan`
-- `../lightmind-rokit`
-- `~/Documents/VoicAbyss/`
-- `../Zhengyu`
-- `../OrganoidCompactAnalysis`
-- `../leonardsusskind`
-- `../LazyEarn`
-- `../LazyLearn`
-- `../OrganoidAgent`
-- `../EchoMind`
-- `../BLOG`
+- AutoAppDev
+- HeyCyan
+- lightmind-rokit
+- VoicAbyss
+- OrganoidQuant
+- OrganoidCompactnessAnalysis
+- leonardsusskind
+- LazyEarn
+- LazyLearn
+- OrganoidAgent
+- EchoMind
+- LazyBlog
 
-Please especially inspect `../BLOG` and the lazyblog studio to learn how it wraps Codex/tools in a web interface. Use similar ideas where suitable, but keep AAPS focused on structured workflow scripts, project management, visual editing, execution, and repair.
+Please especially inspect LazyBlog Studio to learn how it wraps Codex/tools in a web interface. Use similar ideas where suitable, but keep AAPS focused on structured workflow scripts, project management, visual editing, execution, and repair.
 
 ============================================================
 PART 1 — Improve the AAPS language philosophy, grammar, and parser

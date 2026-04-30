@@ -14,20 +14,20 @@ I am thinking the web app should have at least two main tabs:
 
 The Chat / Builder tab should be used to prepare blocks, skills, and small reusable functions. These blocks may be used for biology image analysis, app development, book writing, novel writing, and other agentic workflows.
 
-Example source projects and nearby repos/directories to learn from:
+Example source projects and public project patterns to learn from:
 
-../AutoAppDev
-../HeyCyan
-../lightmind-rokit
-~/Documents/VoicAbyss/
-../Zhengyu
-../OrganoidCompactAnalysis
-../leonardsusskind
-../LazyEarn
-../LazyLearn
-../OrganoidAgent
-../EchoMind
-../BLOG lazyblog studio
+- AutoAppDev
+- HeyCyan
+- lightmind-rokit
+- VoicAbyss
+- OrganoidQuant
+- OrganoidCompactnessAnalysis
+- leonardsusskind
+- LazyEarn
+- LazyLearn
+- OrganoidAgent
+- EchoMind
+- LazyBlog Studio
 
 Some of these contain pipeline scripts, book/script workflows, app generation workflows, and agentic analysis logic. Please inspect them carefully where accessible and learn their pipeline philosophy.
 
@@ -423,7 +423,7 @@ The chat should support actions such as:
 
 The chat should not only answer textually. It should route actions to update the current script, trigger parser updates, and refresh the visualization.
 
-Please inspect `../BLOG` and the lazyblog studio, especially how it wraps Codex/tools in a web tool interface. Learn from its API and interaction philosophy. Use similar ideas where suitable, but keep AAPS focused on workflow scripts and structured visual editing.
+Please inspect LazyBlog Studio, especially how it wraps Codex/tools in a web tool interface. Learn from its API and interaction philosophy. Use similar ideas where suitable, but keep AAPS focused on workflow scripts and structured visual editing.
 
 Tab 2: Script / Visual Studio
 

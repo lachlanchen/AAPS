@@ -47,7 +47,7 @@ This toolkit implements a prompt-driven DEO analysis pipeline for one image, the
 
 ```bash
 prompt-tools/deo-codex/scripts/run_single_image_test.sh \
-  "/home/lachlan/ProjectsLFS/Zhengyu/DEO/App80 DEO/10uM/05-十二月-2025/4x00.tif"
+  "/data/organoidquant/app80/10uM/date-001/4x00.tif"
 ```
 
 ## 10x Guarded Pipeline (Recommended for App80 10x)
@@ -58,7 +58,7 @@ prompt-tools/deo-codex/scripts/run_single_image_test.sh \
 
 ```bash
 prompt-tools/deo-codex/scripts/run_single_image_10x_guarded.sh \
-  "/home/lachlan/ProjectsLFS/Zhengyu/DEO/App80 DEO/10uM/05-十二月-2025/10x00.tif"
+  "/data/organoidquant/app80/10uM/date-001/10x00.tif"
 ```
 
 - `run_app80_10x_guarded_batch.sh`
@@ -73,12 +73,12 @@ prompt-tools/deo-codex/scripts/run_single_image_10x_guarded.sh \
 ```bash
 DEO_CELLPOSE_MODE=auto \
 prompt-tools/deo-codex/scripts/start_tmux_app80_10x_guarded.sh \
-  "/home/lachlan/ProjectsLFS/Zhengyu/DEO/App80 DEO" \
+  "/data/organoidquant/app80" \
   deo_app
 ```
 
 Default Python interpreter:
-- `/home/lachlan/miniconda3/envs/organoid/bin/python`
+- `python` from an activated organoid analysis environment
 
 Cellpose toggle:
 - `DEO_CELLPOSE_MODE=auto` (default): run Cellpose priors for organoid mode only.

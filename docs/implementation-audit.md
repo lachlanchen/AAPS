@@ -42,7 +42,7 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
 - Parser diagnostics currently include line numbers, not columns.
 - Chat local fallback supports common edit commands; full natural-language editing depends on the Codex wrapper.
 - Human review, recovery, artifact tracking, database paths, and execution logs are represented in grammar/IR but are not yet executed by a runtime.
-- Source references are selective and strongest for AutoAppDev, LazyBlog, and Zhengyu/App80/App81. Broader repos were inspected for relevant files, but not every listed project produced a copied source reference.
+- Source references are selective and strongest for AutoAppDev, LazyBlog, OrganoidQuant, and OrganoidCompactnessAnalysis. Broader repos were inspected for relevant files, but not every listed project produced a copied source reference.
 
 ## Not Yet Implemented
 
