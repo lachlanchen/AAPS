@@ -78,6 +78,16 @@ a {
   text-decoration: none;
 }
 
+.language-select {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  font-weight: 850;
+}
+
 .hero {
   position: relative;
   min-height: 92svh;

@@ -50,7 +50,7 @@ button {
   top: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: auto auto 1fr;
+  grid-template-columns: auto auto 1fr auto;
   align-items: center;
   gap: 18px;
   min-height: 72px;
@@ -58,6 +58,16 @@ button {
   background: rgba(255, 255, 255, 0.92);
   border-bottom: 1px solid rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(16px);
+}
+
+.language-select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  font-weight: 900;
 }
 
 .brand {
@@ -592,6 +602,10 @@ main {
   grid-template-rows: auto auto 1fr;
 }
 
+.project-structure-panel {
+  grid-template-rows: auto auto minmax(120px, 0.72fr) auto minmax(140px, 1fr);
+}
+
 .project-controls {
   display: grid;
   gap: 10px;
@@ -650,6 +664,59 @@ main {
   line-height: 1.45;
 }
 
+.compile-summary {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  background: #f7fffd;
+}
+
+.project-concept {
+  padding: 10px;
+  border: 1px solid #bdeff4;
+  border-radius: 8px;
+  color: #13515b;
+  background: #effcff;
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 700;
+}
+
+.project-topic {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.project-topic span {
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.tmux-command {
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  color: #f7f5ff;
+  background: #171321;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.missing-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
 .project-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
@@ -704,6 +771,7 @@ main {
 }
 
 #run-log,
+#compile-log,
 #project-structure {
   color: #f7f5ff;
   background: #171321;

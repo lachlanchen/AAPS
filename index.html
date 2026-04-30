@@ -30,6 +30,19 @@
         <a href="#deploy">Deploy</a>
         <a href="https://github.com/lachlanchen/AAPS">GitHub</a>
       </nav>
+      <select id="language-select" class="language-select" aria-label="Language">
+        <option value="en">EN</option>
+        <option value="zh-Hans">简</option>
+        <option value="zh-Hant">繁</option>
+        <option value="ja">日</option>
+        <option value="ko">한</option>
+        <option value="es">ES</option>
+        <option value="fr">FR</option>
+        <option value="de">DE</option>
+        <option value="ru">RU</option>
+        <option value="ar">AR</option>
+        <option value="vi">VI</option>
+      </select>
     </header>
 
     <main id="top">
@@ -79,7 +92,7 @@
             <ul class="check-list">
               <li>CLI binary: `aaps`.</li>
               <li>Local webapp: `aaps studio --host 127.0.0.1 --port 8796`.</li>
-              <li>Parser/compiler: `aaps parse`, `aaps plan`, `aaps check`, and `aaps validate`.</li>
+            <li>Parser/compiler: `aaps parse`, `aaps compile`, `aaps plan`, `aaps check`, and `aaps validate`.</li>
               <li>Runtime: `aaps run`, `aaps run-block`, readiness checks, and compile prompts.</li>
               <li>License: Apache-2.0 for research, commercial use, and company-backed development.</li>
               <li>Publisher: GitHub `lachlanchen/AAPS`, workflow `npm-publish.yml`.</li>
@@ -88,6 +101,7 @@
           <pre class="code-card"><code>npm install -g @lazyingart/aaps
 aaps studio --host 127.0.0.1 --port 8796
 aaps parse workflows/main.aaps --project .
+aaps compile workflows/main.aaps --project . --mode check
 aaps check workflows/main.aaps --project .
 aaps run workflows/main.aaps --project . --json</code></pre>
         </div>
@@ -101,12 +115,12 @@ aaps run workflows/main.aaps --project . --json</code></pre>
             <p>
               The Studio webapp is separate from this landing page. It has a Block Lab for
               chat-driven skill preparation, a Program tab for source editing, and a Project tab
-              for manifest validation, multi-file workflow management, readiness checks, dry-runs, and real runtime runs.
+              for manifest validation, multi-file workflow management, agent-based compile checks, dry-runs, and real runtime runs.
               It now keeps chat in a fixed bottom dock available on every tab, with the transcript
               tucked behind a History button and colored user/AAPS messages. It supports project file actions, script browsing, block inspection, block-level chat,
               inline/external code editing, environment/tool/agent registry browsing,
               typed ports, artifacts, validations, recovery policies, human review markers,
-              tree visualization, loops, conditions, functional blocks, block readiness, compile prompts, and JSON IR preview.
+              tree visualization, loops, conditions, functional blocks, block readiness, compile reports, setup prompts, and JSON IR preview.
             </p>
             <a class="button button-primary" href="./studio/">Launch Studio</a>
           </div>
@@ -242,14 +256,16 @@ aaps run workflows/main.aaps --project . --json</code></pre>
             <p class="eyebrow">Runtime</p>
             <h2>Readable workflows that can actually run</h2>
             <p>
-              AAPS now compiles scripts into an execution plan, checks block readiness, resolves
-              tools and agents, and runs supported local actions. The first runtime executes shell,
+              AAPS now separates parse, compile, plan, and execute. The compiler resolves missing
+              blocks, scripts, tools, agents, dependencies, setup prompts, and provenance before
+              the runtime builds an execution plan. The first runtime executes shell,
               Python, inline Python, Node, npm, agent-prompt, noop, and manual steps, writes stdout/stderr logs,
               checks artifacts, validates JSON/non-empty files and masks, retries failures, runs fallback
               commands or fallback blocks, and creates repair/setup prompts when recovery is needed.
             </p>
             <ul class="check-list">
               <li>Generate `aaps_plan/0.1` from the same parser used by Studio.</li>
+              <li>Run `aaps compile` in check, suggest, apply, interactive, or force mode.</li>
               <li>Write `block_readiness.json`, `tool_resolution.json`, and `agent_compile_plan.json`.</li>
               <li>Resolve project imports and expose missing or circular dependency diagnostics.</li>
               <li>Execute `for_each list_files(...)` loops for folder-level image pipelines.</li>

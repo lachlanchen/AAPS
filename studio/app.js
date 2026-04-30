@@ -30,6 +30,10 @@ const blockChatInputEl = document.getElementById("block-chat-input");
 const blockLogEl = document.getElementById("block-log");
 const blockReadinessEl = document.getElementById("block-readiness");
 const projectFileTargetEl = document.getElementById("project-file-target");
+const compileSummaryEl = document.getElementById("compile-summary");
+const compileLogEl = document.getElementById("compile-log");
+const tmuxCommandEl = document.getElementById("tmux-command");
+const languageSelectEl = document.getElementById("language-select");
 
 const fields = {
   kind: document.getElementById("field-kind"),
@@ -65,9 +69,125 @@ let currentProjectPayload = {
   manifest_exists: false,
 };
 let activeRunId = "";
+let activeCompileId = "";
 let chatMessageCount = 0;
 let activeTab = "lab";
 let lastRuntimeResult = null;
+let lastCompileResult = null;
+
+const STUDIO_I18N = {
+  en: {
+    lab: "Block Lab",
+    program: "Program",
+    project: "Project",
+    general: "General",
+    biology: "Biology",
+    writing: "Writing",
+    format: "Format",
+    runbook: "Runbook",
+    download: "Download",
+    skillLibrary: "Skill Library",
+    skillLibraryText: "Reusable blocks for app development, biology, writing, and general agents.",
+    blockInspector: "Block Inspector",
+    blockInspectorText: "Edit the selected block. Save reparses and redraws the source.",
+    projectWorkspace: "Project Workspace",
+    projectWorkspaceText: "aaps.project.json describes one topic workspace: workflows, reusable blocks, scripts, tools, agents, data, artifacts, and runs.",
+    workspaceFiles: "Workspace Files",
+    workspaceFilesText: "Workflows are runnable programs. Blocks/skills are reusable capabilities. Scripts, tools, agents, and environments make blocks executable.",
+    compileRuntime: "Compile / Runtime",
+    compileRuntimeText: "Compile resolves missing blocks, scripts, tools, agents, and setup prompts before dry-runs or real runs.",
+    structure: "Structure",
+    load: "Load",
+    sample: "Sample",
+    validate: "Validate",
+    saveManifest: "Save Manifest",
+    checkMissing: "Check Missing",
+    compile: "Compile",
+    applyCompile: "Apply Safe Compile",
+    saveActive: "Save Active File",
+    dryRun: "Dry Run",
+    run: "Run",
+    send: "Send",
+    history: "History",
+    close: "Close",
+    chatPlaceholder: "Ask AAPS to edit this tab: add block qc_image, explain current workflow, add a loop, prepare project summary",
+  },
+  "zh-Hans": {
+    lab: "积木实验室", program: "程序", project: "项目", general: "通用", biology: "生物", writing: "写作", format: "格式化", runbook: "运行手册", download: "下载",
+    skillLibrary: "技能库", skillLibraryText: "用于应用开发、生物、写作和通用智能体的可复用模块。", blockInspector: "模块检查器", blockInspectorText: "编辑选中的模块，保存后重新解析并重绘源码。",
+    projectWorkspace: "项目工作区", projectWorkspaceText: "aaps.project.json 描述一个主题工作区：工作流、模块、脚本、工具、智能体、数据、产物和运行记录。",
+    workspaceFiles: "工作区文件", workspaceFilesText: "工作流是可运行程序；模块/技能是可复用能力；脚本、工具、智能体和环境让模块可执行。",
+    compileRuntime: "编译 / 运行", compileRuntimeText: "编译会在干跑或真实运行前解析缺失的模块、脚本、工具、智能体和安装提示。", structure: "结构",
+    load: "加载", sample: "示例", validate: "校验", saveManifest: "保存清单", checkMissing: "检查缺失", compile: "编译", applyCompile: "安全应用编译", saveActive: "保存当前文件", dryRun: "干跑", run: "运行", send: "发送", history: "历史", close: "关闭", chatPlaceholder: "让 AAPS 编辑当前标签：添加 qc_image、解释工作流、添加循环、总结项目",
+  },
+  "zh-Hant": {
+    lab: "積木實驗室", program: "程式", project: "專案", general: "通用", biology: "生物", writing: "寫作", format: "格式化", runbook: "執行手冊", download: "下載",
+    skillLibrary: "技能庫", skillLibraryText: "用於應用開發、生物、寫作和通用智能體的可重用模組。", blockInspector: "模組檢查器", blockInspectorText: "編輯選中的模組，保存後重新解析並重繪源碼。",
+    projectWorkspace: "專案工作區", projectWorkspaceText: "aaps.project.json 描述一個主題工作區：工作流、模組、腳本、工具、智能體、資料、產物和執行紀錄。",
+    workspaceFiles: "工作區檔案", workspaceFilesText: "工作流是可執行程式；模組/技能是可重用能力；腳本、工具、智能體和環境讓模組可執行。",
+    compileRuntime: "編譯 / 執行", compileRuntimeText: "編譯會在 dry-run 或真正執行前解析缺失的模組、腳本、工具、智能體和安裝提示。", structure: "結構",
+    load: "載入", sample: "示例", validate: "驗證", saveManifest: "保存清單", checkMissing: "檢查缺失", compile: "編譯", applyCompile: "安全套用編譯", saveActive: "保存目前檔案", dryRun: "Dry Run", run: "執行", send: "送出", history: "歷史", close: "關閉", chatPlaceholder: "讓 AAPS 編輯目前分頁：新增 qc_image、解釋工作流、加入迴圈、總結專案",
+  },
+  ja: { lab: "ブロック", program: "プログラム", project: "プロジェクト", general: "汎用", biology: "生物", writing: "執筆", format: "整形", runbook: "手順書", download: "保存", skillLibrary: "スキルライブラリ", skillLibraryText: "アプリ開発、生物、執筆、汎用エージェント向けの再利用ブロック。", blockInspector: "ブロック詳細", blockInspectorText: "選択ブロックを編集し、保存すると再解析します。", projectWorkspace: "プロジェクト作業領域", projectWorkspaceText: "1つのテーマに複数のワークフロー、ブロック、スクリプト、ツール、エージェントをまとめます。", workspaceFiles: "作業領域ファイル", workspaceFilesText: "ワークフローは実行可能なプログラム、ブロックは再利用能力です。", compileRuntime: "コンパイル / 実行", compileRuntimeText: "実行前に不足ブロック、スクリプト、ツール、エージェント、設定を解決します。", structure: "構造", load: "読込", sample: "例", validate: "検証", saveManifest: "清單保存", checkMissing: "不足確認", compile: "コンパイル", applyCompile: "安全適用", saveActive: "保存", dryRun: "Dry Run", run: "実行", send: "送信", history: "履歴", close: "閉じる", chatPlaceholder: "AAPSに編集を依頼: ブロック追加、説明、ループ追加、プロジェクト要約" },
+  ko: { lab: "블록 랩", program: "프로그램", project: "프로젝트", general: "일반", biology: "생물", writing: "쓰기", format: "정리", runbook: "런북", download: "다운로드", skillLibrary: "스킬 라이브러리", skillLibraryText: "앱 개발, 생물, 글쓰기, 에이전트용 재사용 블록.", blockInspector: "블록 검사기", blockInspectorText: "선택한 블록을 편집하고 저장하면 다시 파싱합니다.", projectWorkspace: "프로젝트 작업공간", projectWorkspaceText: "하나의 주제에 여러 워크플로, 블록, 스크립트, 도구, 에이전트를 묶습니다.", workspaceFiles: "작업공간 파일", workspaceFilesText: "워크플로는 실행 프로그램이고 블록은 재사용 기능입니다.", compileRuntime: "컴파일 / 실행", compileRuntimeText: "실행 전에 누락 블록, 스크립트, 도구, 에이전트, 설정을 해결합니다.", structure: "구조", load: "열기", sample: "예제", validate: "검증", saveManifest: "매니페스트 저장", checkMissing: "누락 확인", compile: "컴파일", applyCompile: "안전 적용", saveActive: "활성 파일 저장", dryRun: "드라이런", run: "실행", send: "전송", history: "기록", close: "닫기", chatPlaceholder: "AAPS에 요청: 블록 추가, 워크플로 설명, 루프 추가, 프로젝트 요약" },
+  es: { lab: "Bloques", program: "Programa", project: "Proyecto", general: "General", biology: "Biología", writing: "Escritura", format: "Formatear", runbook: "Runbook", download: "Descargar", skillLibrary: "Biblioteca de skills", skillLibraryText: "Bloques reutilizables para apps, biología, escritura y agentes.", blockInspector: "Inspector de bloque", blockInspectorText: "Edita el bloque seleccionado y vuelve a parsear al guardar.", projectWorkspace: "Espacio del proyecto", projectWorkspaceText: "Un proyecto agrupa workflows, bloques, scripts, herramientas, agentes, datos, artefactos y ejecuciones de un tema.", workspaceFiles: "Archivos", workspaceFilesText: "Workflows ejecutables; bloques reutilizables; scripts, herramientas, agentes y entornos los hacen ejecutables.", compileRuntime: "Compilar / Ejecutar", compileRuntimeText: "La compilación resuelve faltantes antes de dry-runs o ejecuciones reales.", structure: "Estructura", load: "Cargar", sample: "Ejemplo", validate: "Validar", saveManifest: "Guardar manifest", checkMissing: "Faltantes", compile: "Compilar", applyCompile: "Aplicar seguro", saveActive: "Guardar activo", dryRun: "Dry run", run: "Ejecutar", send: "Enviar", history: "Historial", close: "Cerrar", chatPlaceholder: "Pide a AAPS editar: añadir bloque, explicar workflow, añadir loop, resumir proyecto" },
+  fr: { lab: "Blocs", program: "Programme", project: "Projet", general: "Général", biology: "Biologie", writing: "Écriture", format: "Formater", runbook: "Runbook", download: "Télécharger", skillLibrary: "Bibliothèque de skills", skillLibraryText: "Blocs réutilisables pour apps, biologie, écriture et agents.", blockInspector: "Inspecteur de bloc", blockInspectorText: "Modifiez le bloc sélectionné; l'enregistrement reparse la source.", projectWorkspace: "Espace projet", projectWorkspaceText: "Un projet regroupe workflows, blocs, scripts, outils, agents, données, artefacts et runs d'un même sujet.", workspaceFiles: "Fichiers", workspaceFilesText: "Les workflows sont exécutables; les blocs sont des capacités réutilisables.", compileRuntime: "Compiler / Exécuter", compileRuntimeText: "La compilation résout les composants manquants avant dry-run ou run réel.", structure: "Structure", load: "Charger", sample: "Exemple", validate: "Valider", saveManifest: "Enregistrer", checkMissing: "Manquants", compile: "Compiler", applyCompile: "Appliquer sûr", saveActive: "Enregistrer actif", dryRun: "Dry run", run: "Exécuter", send: "Envoyer", history: "Historique", close: "Fermer", chatPlaceholder: "Demandez à AAPS de modifier: bloc, explication, boucle, résumé projet" },
+  de: { lab: "Blocklabor", program: "Programm", project: "Projekt", general: "Allgemein", biology: "Biologie", writing: "Schreiben", format: "Format", runbook: "Runbook", download: "Download", skillLibrary: "Skill-Bibliothek", skillLibraryText: "Wiederverwendbare Blöcke für Apps, Biologie, Schreiben und Agenten.", blockInspector: "Blockinspektor", blockInspectorText: "Ausgewählten Block bearbeiten; Speichern parst neu.", projectWorkspace: "Projektarbeitsbereich", projectWorkspaceText: "Ein Projekt bündelt Workflows, Blöcke, Skripte, Tools, Agenten, Daten, Artefakte und Runs zu einem Thema.", workspaceFiles: "Arbeitsdateien", workspaceFilesText: "Workflows sind ausführbare Programme; Blöcke sind wiederverwendbare Fähigkeiten.", compileRuntime: "Kompilieren / Ausführen", compileRuntimeText: "Kompilieren löst fehlende Komponenten vor Dry-runs oder echten Runs.", structure: "Struktur", load: "Laden", sample: "Beispiel", validate: "Prüfen", saveManifest: "Manifest speichern", checkMissing: "Fehlendes prüfen", compile: "Kompilieren", applyCompile: "Sicher anwenden", saveActive: "Aktive Datei speichern", dryRun: "Dry Run", run: "Ausführen", send: "Senden", history: "Verlauf", close: "Schließen", chatPlaceholder: "AAPS bitten: Block hinzufügen, Workflow erklären, Loop hinzufügen, Projekt zusammenfassen" },
+  ru: { lab: "Блоки", program: "Программа", project: "Проект", general: "Общее", biology: "Биология", writing: "Текст", format: "Формат", runbook: "Runbook", download: "Скачать", skillLibrary: "Библиотека навыков", skillLibraryText: "Переиспользуемые блоки для приложений, биологии, письма и агентов.", blockInspector: "Инспектор блока", blockInspectorText: "Редактируйте выбранный блок; сохранение заново парсит исходник.", projectWorkspace: "Рабочая область", projectWorkspaceText: "Проект объединяет workflow, блоки, скрипты, инструменты, агентов, данные, артефакты и запуски одной темы.", workspaceFiles: "Файлы", workspaceFilesText: "Workflow исполняемы; блоки переиспользуемы; скрипты и окружения делают их runnable.", compileRuntime: "Компиляция / запуск", compileRuntimeText: "Компиляция решает отсутствующие компоненты перед dry-run или запуском.", structure: "Структура", load: "Открыть", sample: "Пример", validate: "Проверить", saveManifest: "Сохранить manifest", checkMissing: "Недостающее", compile: "Компилировать", applyCompile: "Безопасно применить", saveActive: "Сохранить активный", dryRun: "Dry run", run: "Запуск", send: "Отправить", history: "История", close: "Закрыть", chatPlaceholder: "Попросите AAPS: добавить блок, объяснить workflow, добавить цикл, резюмировать проект" },
+  ar: { lab: "المكعبات", program: "البرنامج", project: "المشروع", general: "عام", biology: "أحياء", writing: "كتابة", format: "تنسيق", runbook: "دليل التشغيل", download: "تنزيل", skillLibrary: "مكتبة المهارات", skillLibraryText: "مكعبات قابلة لإعادة الاستخدام للتطبيقات والأحياء والكتابة والوكلاء.", blockInspector: "فاحص المكعب", blockInspectorText: "حرر المكعب المحدد؛ الحفظ يعيد التحليل والرسم.", projectWorkspace: "مساحة المشروع", projectWorkspaceText: "المشروع يجمع workflows ومكعبات وسكربتات وأدوات ووكلاء وبيانات ومخرجات وتشغيلات لموضوع واحد.", workspaceFiles: "ملفات العمل", workspaceFilesText: "الـ workflows برامج قابلة للتشغيل، والمكعبات قدرات قابلة لإعادة الاستخدام.", compileRuntime: "ترجمة / تشغيل", compileRuntimeText: "الترجمة تحل العناصر المفقودة قبل dry-run أو التشغيل الحقيقي.", structure: "البنية", load: "تحميل", sample: "مثال", validate: "تحقق", saveManifest: "حفظ البيان", checkMissing: "فحص الناقص", compile: "ترجمة", applyCompile: "تطبيق آمن", saveActive: "حفظ الحالي", dryRun: "تجربة", run: "تشغيل", send: "إرسال", history: "السجل", close: "إغلاق", chatPlaceholder: "اطلب من AAPS: إضافة مكعب، شرح workflow، إضافة حلقة، تلخيص المشروع" },
+  vi: { lab: "Block Lab", program: "Chương trình", project: "Dự án", general: "Chung", biology: "Sinh học", writing: "Viết", format: "Định dạng", runbook: "Runbook", download: "Tải xuống", skillLibrary: "Thư viện kỹ năng", skillLibraryText: "Block tái sử dụng cho app, sinh học, viết và agent.", blockInspector: "Trình xem block", blockInspectorText: "Sửa block được chọn; lưu sẽ parse và vẽ lại.", projectWorkspace: "Không gian dự án", projectWorkspaceText: "Một dự án gom workflow, block, script, công cụ, agent, dữ liệu, artifact và lần chạy cho một chủ đề.", workspaceFiles: "Tệp dự án", workspaceFilesText: "Workflow là chương trình chạy được; block là năng lực tái sử dụng.", compileRuntime: "Compile / Chạy", compileRuntimeText: "Compile xử lý phần thiếu trước dry-run hoặc chạy thật.", structure: "Cấu trúc", load: "Mở", sample: "Mẫu", validate: "Kiểm tra", saveManifest: "Lưu manifest", checkMissing: "Kiểm tra thiếu", compile: "Compile", applyCompile: "Áp dụng an toàn", saveActive: "Lưu tệp hiện tại", dryRun: "Dry run", run: "Chạy", send: "Gửi", history: "Lịch sử", close: "Đóng", chatPlaceholder: "Yêu cầu AAPS sửa: thêm block, giải thích workflow, thêm loop, tóm tắt dự án" },
+};
+
+function t(key) {
+  const lang = languageSelectEl?.value || "en";
+  return (STUDIO_I18N[lang] && STUDIO_I18N[lang][key]) || STUDIO_I18N.en[key] || key;
+}
+
+function applyStudioLanguage(lang) {
+  if (!languageSelectEl) return;
+  languageSelectEl.value = STUDIO_I18N[lang] ? lang : "en";
+  document.documentElement.lang = languageSelectEl.value;
+  document.documentElement.dir = languageSelectEl.value === "ar" ? "rtl" : "ltr";
+  const set = (selector, key) => {
+    const node = document.querySelector(selector);
+    if (node) node.textContent = t(key);
+  };
+  set('[data-tab="lab"]', "lab");
+  set('[data-tab="program"]', "program");
+  set('[data-tab="project"]', "project");
+  set("#sample-general", "general");
+  set("#sample-biology", "biology");
+  set("#sample-writing", "writing");
+  set("#format-btn", "format");
+  set("#markdown-btn", "runbook");
+  set("#download-btn", "download");
+  set(".library-panel .panel-head h2", "skillLibrary");
+  set(".library-panel .panel-head p", "skillLibraryText");
+  set(".inspector-panel .panel-head h2", "blockInspector");
+  set(".inspector-panel .panel-head p", "blockInspectorText");
+  set(".project-manifest-panel .panel-head h2", "projectWorkspace");
+  set(".project-manifest-panel .panel-head p", "projectWorkspaceText");
+  set(".project-files-panel .panel-head h2", "workspaceFiles");
+  set(".project-files-panel .panel-head p", "workspaceFilesText");
+  set('[data-panel="project"] .project-structure-panel .panel-head h2', "compileRuntime");
+  set('[data-panel="project"] .project-structure-panel .panel-head p', "compileRuntimeText");
+  set("#load-project-btn", "load");
+  set("#sample-project-btn", "sample");
+  set("#validate-project-btn", "validate");
+  set("#save-project-btn", "saveManifest");
+  set("#compile-check-btn", "checkMissing");
+  set("#compile-suggest-btn", "compile");
+  set("#compile-apply-btn", "applyCompile");
+  set("#save-active-file-btn", "saveActive");
+  set("#dry-run-active-file-btn", "dryRun");
+  set("#run-active-file-btn", "run");
+  const sendButton = chatFormEl?.querySelector('button[type="submit"]');
+  if (sendButton) sendButton.textContent = t("send");
+  if (chatHistoryToggleEl) chatHistoryToggleEl.firstChild.textContent = `${t("history")} `;
+  if (chatHistoryCloseEl) chatHistoryCloseEl.textContent = t("close");
+  if (chatInputEl) chatInputEl.placeholder = t("chatPlaceholder");
+  updateChatContext();
+}
 
 function escapeHtml(value) {
   return String(value || "")
@@ -89,6 +209,28 @@ function getProjectManifest() {
   }
 }
 
+function projectCounts(manifest, payload) {
+  const files = payload.files || [];
+  const countByPrefix = (prefix) => files.filter((file) => file.startsWith(`${prefix}/`)).length;
+  return {
+    workflows: (manifest.files?.workflows || []).length || countByPrefix("workflows"),
+    blocks: (manifest.files?.blocks || []).length || countByPrefix("blocks"),
+    skills: (manifest.files?.skills || []).length || countByPrefix("skills"),
+    scripts: (payload.script_files || []).length,
+    tools: (payload.tool_files || []).length || (manifest.tools || []).length,
+    agents: (payload.agent_files || []).length || (manifest.agents || []).length,
+    environments: (payload.environment_files || []).length,
+    runs: countByPrefix(manifest.paths?.runs || "runs"),
+  };
+}
+
+function tmuxCommand(manifest) {
+  const project = projectPathEl.value || ".";
+  const session = `aaps-${(AAPS.slug(manifest.name || "project").slice(0, 24) || "project")}`;
+  const workflow = manifest.activeFile || manifest.defaultMain || "workflows/main.aaps";
+  return `tmux new-session -d -s ${session} 'cd ${project} && aaps run ${workflow} --project . --json'`;
+}
+
 function renderProject(payload = currentProjectPayload) {
   currentProjectPayload = payload;
   const manifest = AAPS.normalizeProjectManifest(payload.manifest || AAPS.sampleProject);
@@ -99,6 +241,7 @@ function renderProject(payload = currentProjectPayload) {
   const agentFiles = payload.agent_files || [];
   const validation = AAPS.validateProjectManifest(manifest, files);
   const diagnostics = validation.diagnostics;
+  const counts = projectCounts(manifest, payload);
   const errorCount = diagnostics.filter((item) => item.severity === "error").length;
   const warningCount = diagnostics.filter((item) => item.severity === "warning").length;
 
@@ -111,16 +254,23 @@ function renderProject(payload = currentProjectPayload) {
       : "valid";
   projectFileCountEl.textContent = `${files.length} file${files.length === 1 ? "" : "s"}`;
   projectStructureEl.textContent = AAPS.projectStructureText(manifest);
+  tmuxCommandEl.textContent = tmuxCommand(manifest);
 
   projectSummaryEl.innerHTML = `
-    <div><strong>${escapeHtml(manifest.name)}</strong> · ${escapeHtml(manifest.domain)} · ${escapeHtml(manifest.defaultMain)}</div>
-    <div>${escapeHtml(manifest.description || "No project description.")}</div>
+    <div class="project-topic">
+      <strong>${escapeHtml(manifest.name)}</strong>
+      <span>${escapeHtml(manifest.domain)} project</span>
+      <span>active: ${escapeHtml(manifest.activeFile || manifest.defaultMain || "(none)")}</span>
+      <span>main: ${escapeHtml(manifest.defaultMain || "(none)")}</span>
+    </div>
+    <div>${escapeHtml(manifest.description || "Use this workspace for one topic, then keep many pipelines and reusable capabilities inside it.")}</div>
     <div class="project-kpis">
-      <div class="project-kpi"><strong>${AAPS.projectFileIndex(manifest).length}</strong>manifest files</div>
-      <div class="project-kpi"><strong>${scriptFiles.length}</strong>scripts</div>
-      <div class="project-kpi"><strong>${manifest.tools.length}</strong>tools</div>
-      <div class="project-kpi"><strong>${manifest.agents.length}</strong>agents</div>
-      <div class="project-kpi"><strong>${environmentFiles.length}</strong>env files</div>
+      <div class="project-kpi"><strong>${counts.workflows}</strong>workflows</div>
+      <div class="project-kpi"><strong>${counts.blocks}</strong>blocks</div>
+      <div class="project-kpi"><strong>${counts.scripts}</strong>scripts</div>
+      <div class="project-kpi"><strong>${counts.tools}</strong>tools</div>
+      <div class="project-kpi"><strong>${counts.agents}</strong>agents</div>
+      <div class="project-kpi"><strong>${counts.environments}</strong>env files</div>
     </div>
     ${
       diagnostics.length
@@ -225,6 +375,39 @@ function renderRuntime(record) {
   `;
   runLogEl.textContent = JSON.stringify(result, null, 2);
   renderSelectedReadiness(result);
+}
+
+function renderCompile(record) {
+  if (!record) {
+    lastCompileResult = null;
+    compileSummaryEl.innerHTML = "<div>No compile has started.</div>";
+    compileLogEl.textContent = "";
+    return;
+  }
+  const result = record.result || record;
+  lastCompileResult = result;
+  const missing = result.missingComponents || [];
+  const written = [...(result.generatedFiles || []), ...(result.modifiedFiles || [])].filter((item) => item.written);
+  const prompts = (result.agentPrompts || []).length + (result.setupPrompts || []).length;
+  compileSummaryEl.innerHTML = `
+    <div><strong>Compile ${escapeHtml(record.id || result.compileId || "")}</strong> · ${escapeHtml(record.status || result.status || "unknown")} · ${escapeHtml(result.mode || record.mode || "")}</div>
+    <div class="project-kpis">
+      <div class="project-kpi"><strong>${missing.length}</strong>missing</div>
+      <div class="project-kpi"><strong>${written.length}</strong>written</div>
+      <div class="project-kpi"><strong>${prompts}</strong>prompts</div>
+      <div class="project-kpi"><strong>${result.plan?.steps || 0}</strong>steps</div>
+    </div>
+    <div>${escapeHtml(result.compileDir || "")}</div>
+    ${
+      missing.length
+        ? `<ul class="missing-list">${missing
+            .slice(0, 8)
+            .map((item) => `<li>${escapeHtml(item.type)}: ${escapeHtml(item.name || item.expected || "")}</li>`)
+            .join("")}</ul>`
+        : "<div>Compile status is ready for planning and execution.</div>"
+    }
+  `;
+  compileLogEl.textContent = JSON.stringify(result, null, 2);
 }
 
 function getIr() {
@@ -399,9 +582,9 @@ function environmentLines(environment) {
 
 function tabLabel(tab) {
   return {
-    lab: "Block Lab",
-    program: "Program",
-    project: "Project",
+    lab: t("lab"),
+    program: t("program"),
+    project: t("project"),
   }[tab] || "Studio";
 }
 
@@ -810,6 +993,13 @@ function localChatEdit(text) {
     render();
     return "Loaded the general app-development template.";
   }
+  if (lower.includes("compile") || lower.includes("missing component")) {
+    const mode = lower.includes("apply") ? "apply" : lower.includes("suggest") ? "suggest" : "check";
+    startCompile(mode).catch((error) => {
+      compileLogEl.textContent = error.message;
+    });
+    return `Started an AAPS ${mode} compile for the active workflow.`;
+  }
   match = raw.match(/^rename pipeline\s+(.+)$/i);
   if (match) {
     ir.pipeline.name = match[1].trim();
@@ -1047,6 +1237,52 @@ async function pollRun(id) {
   } else {
     addMessage("assistant", `AAPS run ${id} ${record.status}.`);
   }
+}
+
+async function pollCompile(id) {
+  const response = await fetch(`/api/aaps/compile?id=${encodeURIComponent(id)}`);
+  if (!response.ok) throw new Error(`compile status returned ${response.status}`);
+  const record = await response.json();
+  renderCompile(record);
+  if (record.status === "running") {
+    window.setTimeout(() => {
+      pollCompile(id).catch((error) => {
+        compileLogEl.textContent = error.message;
+      });
+    }, 1200);
+  } else {
+    addMessage("assistant", `AAPS compile ${id} ${record.status}.`);
+  }
+}
+
+async function startCompile(mode = "check", projectWide = false) {
+  const manifest = getProjectManifest();
+  if (manifest.error) {
+    projectStatusEl.textContent = "invalid JSON";
+    throw new Error(manifest.error);
+  }
+  const file = manifest.activeFile || manifest.defaultMain || "pipeline.aaps";
+  compileSummaryEl.innerHTML = `<div>Starting ${mode} compile...</div>`;
+  compileLogEl.textContent = "";
+  const response = await fetch("/api/aaps/compile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: projectPathEl.value || ".",
+      file,
+      source: projectWide ? "" : sourceEl.value,
+      mode,
+      projectWide,
+    }),
+  });
+  if (!response.ok) throw new Error(`compile API returned ${response.status}`);
+  const record = await response.json();
+  activeCompileId = record.id;
+  renderCompile(record);
+  pollCompile(record.id).catch((error) => {
+    compileLogEl.textContent = error.message;
+  });
+  return record;
 }
 
 async function startRuntimeRun(dryRun, blockId = "") {
@@ -1408,6 +1644,24 @@ document.getElementById("validate-project-btn").addEventListener("click", () => 
   addMessage("assistant", "Validated project manifest.");
 });
 
+document.getElementById("compile-check-btn").addEventListener("click", () => {
+  startCompile("check").catch((error) => {
+    addMessage("assistant", `Could not compile/check active workflow: ${error.message}`);
+  });
+});
+
+document.getElementById("compile-suggest-btn").addEventListener("click", () => {
+  startCompile("suggest").catch((error) => {
+    addMessage("assistant", `Could not compile active workflow: ${error.message}`);
+  });
+});
+
+document.getElementById("compile-apply-btn").addEventListener("click", () => {
+  startCompile("apply").catch((error) => {
+    addMessage("assistant", `Could not apply safe compile: ${error.message}`);
+  });
+});
+
 document.getElementById("save-project-btn").addEventListener("click", () => {
   saveProject().catch((error) => {
     addMessage("assistant", `Could not save project: ${error.message}`);
@@ -1510,11 +1764,21 @@ document.getElementById("run-block-btn").addEventListener("click", () => {
 
 document.getElementById("repair-prompt-btn").addEventListener("click", prepareRepairPrompt);
 
+if (languageSelectEl) {
+  const savedLanguage = localStorage.getItem("aaps.studio.language") || "en";
+  applyStudioLanguage(savedLanguage);
+  languageSelectEl.addEventListener("change", () => {
+    localStorage.setItem("aaps.studio.language", languageSelectEl.value);
+    applyStudioLanguage(languageSelectEl.value);
+  });
+}
+
 sourceEl.value = AAPS.samples.biology;
 addMessage("assistant", "AAPS Studio is ready. Use chat to prepare skills or edit source directly.");
 render();
 renderProject(currentProjectPayload);
 renderRuntime(null);
+renderCompile(null);
 setHistoryOpen(false);
 loadProject().catch(() => {});
 
