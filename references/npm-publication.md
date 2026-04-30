@@ -5,10 +5,12 @@ This note records the public, non-secret publication setup for AAPS.
 ## Package
 
 - npm package: `@lazyingart/aaps`
-- Current initial release: `0.1.0`
+- Initial release: `0.1.0`
+- Current package version: follows `package.json`
 - Homepage: `https://aaps.lazying.art`
 - Repository: `https://github.com/lachlanchen/AAPS`
 - CLI binary: `aaps`
+- License: Apache-2.0
 
 ## Install
 

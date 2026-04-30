@@ -1,6 +1,6 @@
 {
   "name": "@lazyingart/aaps",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Autonomous Agentic Pipeline Script: prompt-native skills, tasks, loops, guards, and Studio.",
   "type": "commonjs",
   "private": false,
@@ -61,5 +61,5 @@
     "workflow",
     "language"
   ],
-  "license": "UNLICENSED"
+  "license": "Apache-2.0"
 }

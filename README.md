@@ -233,6 +233,10 @@ GitHub Pages deploys `website/` and copies `studio/` to `/studio/`. The custom d
 aaps.lazying.art
 ```
 
+## License
+
+AAPS is released under the Apache License 2.0. This keeps the project open source while preserving attribution and providing a patent grant suitable for research, commercial use, and future company-backed development.
+
 ## Development Commands
 
 ```bash
