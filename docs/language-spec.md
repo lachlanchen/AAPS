@@ -21,6 +21,7 @@ Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.proje
 | --- | --- |
 | `pipeline` | One workflow with domain, tags, inputs, outputs, agents, skills, and tasks. |
 | `agent` | Role, model, and tools that can execute or review work. |
+| `block` | Small reusable capability that can live in its own `.aaps` file. |
 | `skill` | Reusable function-like block with typed ports and internal stages/actions. |
 | `task` | Top-level orchestration step; may `call` skills and depend on other tasks. |
 | `stage` | Human-readable phase inside a skill or task. |
@@ -53,8 +54,28 @@ Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.proje
 | `metric` | `metric boundary_overlap = "required"` |
 | `policy` | `policy destructive_actions = "disabled"` |
 | `include` | `include "blocks/qc_image.aaps"` |
+| `import` | `import block "blocks/qc_image.aaps" as qc_image` |
+| `requires_commands` | `requires_commands "python3, git"` |
+| `requires_files` | `requires_files "scripts/qc_image.py"` |
+| `requires_python_packages` | `requires_python_packages "numpy, scikit-image"` |
+| `execution_mode` | `execution_mode "local_deterministic"` |
+| `safety` | `safety allow_destructive_shell = "false"` |
 
-Multiline prompts use triple quotes.
+Multiline prompts and inline executable code use triple quotes:
+
+```aaps
+action write_report {
+  output report: json = "${run.artifacts}/report.json"
+  exec python_inline
+  code """
+from pathlib import Path
+Path("runtime/report.json").write_text('{"ok": true}\\n', encoding="utf-8")
+"""
+  validate json "${output.report}"
+}
+```
+
+Supported executable action types in the current runtime are `shell`, `sh`, `bash`, `python_script`, `python`, `python_inline`, `node_script`, `npm_script`, `manual`, `noop`, and `internal` (recorded unless an adapter is registered).
 
 ## Example
 
@@ -66,7 +87,8 @@ pipeline "Biology Image Segmentation QC" {
   database "runtime/aaps-runs.jsonl"
   log_path "runtime/logs/segmentation.log"
   domain "biology"
-  include "blocks/qc_image.aaps"
+  import block "blocks/qc_image.aaps" as qc_image
+  requires_commands "python3"
   input image_batch: collection required = "data/images"
   output metrics: table = "runtime/metrics.csv"
 
@@ -129,4 +151,4 @@ An AAPS runtime should:
 6. Require `validate`, `verify`, and `guard` checks before advancing.
 7. Apply `recover` policies or `review` checkpoints when confidence is low or validation fails.
 
-The current runtime implements a minimal subset: shell and Python execution, run logs, artifact existence checks, `exists` / `nonempty` / `json` validation, retry, fallback commands or fallback block IDs, and repair request files. See [runtime.md](runtime.md).
+The current runtime implements project-aware imports, shell/Python/Node/noop/manual adapters, run logs, artifact existence checks, `exists` / `nonempty` / `json` validation, retry, fallback commands or fallback block IDs, and repair request files. See [runtime.md](runtime.md).

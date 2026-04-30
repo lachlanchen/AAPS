@@ -1,0 +1,16 @@
+pipeline "Check Consistency Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "writing"
+
+  block check_consistency {
+    input draft: markdown required
+    input canon: markdown optional
+    output consistency_report: json
+    action check {
+      prompt "Check names, timeline, tone, promises, facts, citations, and unresolved continuity risks."
+      validate "Report lists blocking issues, minor issues, and accepted constraints."
+      review "Human resolves blocking canon conflicts before revision."
+    }
+  }
+}

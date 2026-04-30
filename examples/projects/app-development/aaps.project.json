@@ -1,0 +1,55 @@
+{
+  "schema": "aaps_project/0.1",
+  "name": "App Development Review Project",
+  "path": ".",
+  "description": "Reusable AAPS blocks for static project checks, page review, UI testing, and release summaries.",
+  "domain": "software",
+  "tags": ["appdev", "pwa", "android", "ios", "review"],
+  "defaultMain": "workflows/main_app_review.aaps",
+  "activeFile": "workflows/executable_static_check.aaps",
+  "created": "2026-04-30T00:00:00Z",
+  "updated": "2026-04-30T00:00:00Z",
+  "paths": {
+    "blocks": "blocks",
+    "skills": "skills",
+    "modules": "modules",
+    "subworkflows": "workflows",
+    "workflows": "workflows",
+    "drafts": "drafts",
+    "archives": "archive",
+    "scripts": "scripts",
+    "data": "data",
+    "artifacts": "artifacts",
+    "runs": "runs",
+    "reports": "reports",
+    "notes": "notes"
+  },
+  "dataFolders": ["data"],
+  "artifactRoot": "artifacts",
+  "runDatabase": "runs/app-development-aaps-runs.jsonl",
+  "variables": {
+    "target_app": ".",
+    "page_glob": "src/**/*.{js,ts,tsx,jsx,html}"
+  },
+  "tools": ["python3", "node", "npm", "playwright", "codex"],
+  "models": ["gpt-5"],
+  "notes": ["Use executable static checks before routing to browser tests or Codex repair."],
+  "files": {
+    "blocks": [
+      "blocks/scan_pages.aaps",
+      "blocks/test_page.aaps",
+      "blocks/fix_bug.aaps",
+      "blocks/run_browser_check.aaps"
+    ],
+    "skills": [],
+    "modules": [],
+    "subworkflows": [],
+    "workflows": [
+      "workflows/main_app_review.aaps",
+      "workflows/executable_static_check.aaps"
+    ],
+    "drafts": [],
+    "archives": [],
+    "references": []
+  }
+}

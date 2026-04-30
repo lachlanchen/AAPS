@@ -1,0 +1,15 @@
+pipeline "Fix Bug Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "software"
+
+  block fix_bug {
+    input bug_report: json required
+    output patch_summary: markdown
+    action patch {
+      prompt "Apply the smallest code change that fixes the bug without unrelated refactors."
+      validate "Relevant tests pass and the patch summary lists changed files."
+      repair true
+    }
+  }
+}

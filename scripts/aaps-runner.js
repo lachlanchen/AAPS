@@ -47,6 +47,23 @@ function readManifest(projectDir) {
   return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 }
 
+function collectAapsFiles(projectDir) {
+  const files = {};
+  const skip = new Set([".git", ".aaps-work", "node_modules", "vendor", "runtime"]);
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!skip.has(entry.name)) walk(path.join(dir, entry.name));
+      } else if (entry.name.endsWith(".aaps")) {
+        const full = path.join(dir, entry.name);
+        files[path.relative(projectDir, full).split(path.sep).join("/")] = fs.readFileSync(full, "utf8");
+      }
+    }
+  }
+  walk(projectDir);
+  return files;
+}
+
 function loadSource(options, projectDir, manifest) {
   if (options.source) {
     return {
@@ -58,6 +75,14 @@ function loadSource(options, projectDir, manifest) {
   if (!file) throw new Error("Provide --source or --file, or set activeFile/defaultMain in aaps.project.json.");
   const sourcePath = safeRelative(projectDir, file, "AAPS file");
   return { file, source: fs.readFileSync(sourcePath, "utf8") };
+}
+
+function parseLoaded(options, projectDir, manifest, loaded) {
+  if (manifest && !options.source) {
+    const files = collectAapsFiles(projectDir);
+    return AAPS.parseAAPSProject(files, loaded.file, manifest);
+  }
+  return AAPS.parseAAPS(loaded.source, { sourceFile: loaded.file });
 }
 
 function ensureDir(dir) {
@@ -76,32 +101,68 @@ function appendJsonl(file, value) {
 function contextFrom(ir, manifest, runId, projectDir, runDir) {
   const pipeline = ir.pipeline || {};
   const variables = (manifest && manifest.variables) || {};
+  const artifactRoot = pipeline.artifactDir || (manifest && manifest.artifactRoot) || "artifacts";
+  const dataRoot = manifest && manifest.paths && manifest.paths.data ? manifest.paths.data : "data";
+  const scriptsRoot = manifest && manifest.paths && manifest.paths.scripts ? manifest.paths.scripts : "scripts";
+  const logsRoot = manifest && manifest.paths && manifest.paths.runs ? manifest.paths.runs : "runs";
   const context = {
     ...variables,
     run_id: runId,
     project: projectDir,
     run_dir: runDir,
-    artifacts: pipeline.artifactDir || (manifest && manifest.artifactRoot) || "artifacts",
-    artifact_dir: pipeline.artifactDir || (manifest && manifest.artifactRoot) || "artifacts",
+    artifacts: artifactRoot,
+    artifact_dir: artifactRoot,
     database: pipeline.databasePath || (manifest && manifest.runDatabase) || "runtime/runs/aaps-runs.jsonl",
+    "project.root": projectDir,
+    "project.data": dataRoot,
+    "project.artifacts": artifactRoot,
+    "project.scripts": scriptsRoot,
+    "project.runs": logsRoot,
+    "run.id": runId,
+    "run.dir": runDir,
+    "run.artifacts": path.join(runDir, "artifacts"),
+    "run.logs": path.join(runDir, "block_logs"),
   };
   (pipeline.inputPorts || []).forEach((port) => {
     context[port.name] = port.value || "";
+    context[`input.${port.name}`] = port.value || "";
   });
   (pipeline.outputPorts || []).forEach((port) => {
     context[port.name] = port.value || "";
+    context[`output.${port.name}`] = port.value || "";
+  });
+  Object.entries(process.env).forEach(([key, value]) => {
+    context[`env.${key}`] = value;
   });
   return context;
 }
 
 function expand(value, context) {
-  return String(value || "")
-    .replace(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, (_, key) => String(context[key] ?? ""))
-    .replace(/\$\{\s*([A-Za-z_][\w.-]*)\s*\}/g, (_, key) => String(context[key] ?? ""));
+  let output = String(value || "");
+  for (let index = 0; index < 5; index += 1) {
+    const next = output
+      .replace(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, (_, key) => String(context[key] ?? ""))
+      .replace(/\$\{\s*([A-Za-z_][\w.-]*)\s*\}/g, (_, key) => String(context[key] ?? ""));
+    if (next === output) break;
+    output = next;
+  }
+  return output;
+}
+
+function unresolvedVariables(value, context) {
+  const missing = [];
+  String(value || "").replace(/\$\{\s*([A-Za-z_][\w.-]*)\s*\}|\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g, (_, a, b) => {
+    const key = a || b;
+    if (!Object.prototype.hasOwnProperty.call(context, key)) missing.push(key);
+    return "";
+  });
+  return [...new Set(missing)];
 }
 
 function resolveRuntimePath(projectDir, value, context) {
-  return safeRelative(projectDir, expand(value, context), "runtime path");
+  const expanded = expand(value, context);
+  if (path.isAbsolute(expanded)) return expanded;
+  return safeRelative(projectDir, expanded, "runtime path");
 }
 
 function parseValidation(raw) {
@@ -184,6 +245,91 @@ function pythonAction(action, projectDir, context, timeoutMs, dryRun) {
   };
 }
 
+function pythonInlineAction(action, projectDir, context, timeoutMs, dryRun, runDir, stepSlug) {
+  const code = expand(action.code || "", context);
+  if (!code.trim()) return { status: "failed", code: 1, stdout: "", stderr: "python_inline exec requires code" };
+  const script = path.join(runDir, `${stepSlug}.inline.py`);
+  fs.writeFileSync(script, code, "utf8");
+  if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command: `python3 ${script}` };
+  const result = spawnSync("python3", [script], {
+    cwd: projectDir,
+    encoding: "utf8",
+    timeout: timeoutMs || undefined,
+    maxBuffer: 10 * 1024 * 1024,
+    env: { ...process.env, ...Object.fromEntries(Object.entries(context).map(([key, value]) => [`AAPS_${key.replace(/[^A-Za-z0-9_]/g, "_").toUpperCase()}`, String(value)])) },
+  });
+  return {
+    status: result.status === 0 ? "succeeded" : "failed",
+    code: result.status,
+    signal: result.signal || "",
+    stdout: result.stdout || "",
+    stderr: result.stderr || result.error?.message || "",
+    command: `python3 ${script}`,
+  };
+}
+
+function nodeScriptAction(action, projectDir, context, timeoutMs, dryRun) {
+  const entry = expand(action.entry || action.command || "", context);
+  if (!entry) return { status: "failed", code: 1, stdout: "", stderr: "node_script exec requires an entry" };
+  const entryPath = safeRelative(projectDir, entry, "node entry");
+  const args = [];
+  Object.entries(action.args || {}).forEach(([key, value]) => {
+    args.push(`--${key.replace(/_/g, "-")}`, expand(value, context));
+  });
+  if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command: `node ${entry} ${args.join(" ")}` };
+  const result = spawnSync("node", [entryPath, ...args], {
+    cwd: projectDir,
+    encoding: "utf8",
+    timeout: timeoutMs || undefined,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  return {
+    status: result.status === 0 ? "succeeded" : "failed",
+    code: result.status,
+    signal: result.signal || "",
+    stdout: result.stdout || "",
+    stderr: result.stderr || result.error?.message || "",
+    command: `node ${entry} ${args.join(" ")}`,
+  };
+}
+
+function npmScriptAction(action, projectDir, context, timeoutMs, dryRun) {
+  const script = expand(action.command || action.entry || "", context);
+  if (!script) return { status: "failed", code: 1, stdout: "", stderr: "npm_script exec requires a script name" };
+  if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command: `npm run ${script}` };
+  const result = spawnSync("npm", ["run", script], {
+    cwd: projectDir,
+    encoding: "utf8",
+    timeout: timeoutMs || undefined,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  return {
+    status: result.status === 0 ? "succeeded" : "failed",
+    code: result.status,
+    signal: result.signal || "",
+    stdout: result.stdout || "",
+    stderr: result.stderr || result.error?.message || "",
+    command: `npm run ${script}`,
+  };
+}
+
+function checkRequirements(ir, projectDir) {
+  const pipeline = ir.pipeline || {};
+  const checks = [];
+  (pipeline.requiredCommands || []).forEach((command) => {
+    const result = spawnSync("sh", ["-lc", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], { cwd: projectDir });
+    checks.push({ kind: "command", name: command, ok: result.status === 0 });
+  });
+  (pipeline.requiredFiles || []).forEach((file) => {
+    checks.push({ kind: "file", name: file, ok: fs.existsSync(safeRelative(projectDir, file, "required file")) });
+  });
+  (pipeline.requiredPythonPackages || []).forEach((pkg) => {
+    const result = spawnSync("python3", ["-c", `import ${pkg.replace(/-/g, "_")}`], { cwd: projectDir });
+    checks.push({ kind: "python_package", name: pkg, ok: result.status === 0 });
+  });
+  return checks;
+}
+
 function timeoutMs(step) {
   const raw = String(step.timeout || "").trim();
   if (!raw) return 0;
@@ -200,12 +346,24 @@ function run(options) {
   const projectDir = path.resolve(options.project || ".");
   const manifest = readManifest(projectDir);
   const loaded = loadSource(options, projectDir, manifest);
-  const ir = AAPS.parseAAPS(loaded.source);
-  const plan = AAPS.buildExecutionPlan(ir);
+  const ir = parseLoaded(options, projectDir, manifest, loaded);
+  let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
+  if (options.block) {
+    plan = { ...plan, steps: plan.steps.filter((step) => step.id === options.block || step.path.includes(options.block)) };
+    plan.executableSteps = plan.steps.filter((step) => step.executable).length;
+    plan.promptOnlySteps = plan.steps.filter((step) => step.promptOnly).length;
+  }
   const runId = options.runId || `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const runRoot = path.resolve(options.runRoot || path.join(projectDir, "runtime", "runs"));
   const runDir = path.join(runRoot, runId);
   ensureDir(runDir);
+  ensureDir(path.join(runDir, "artifacts"));
+  ensureDir(path.join(runDir, "block_logs"));
+  ensureDir(path.join(runDir, "reports"));
+  ensureDir(path.join(runDir, "errors"));
+  ensureDir(path.join(runDir, "repair_prompts"));
+  writeJson(path.join(runDir, "resolved_workflow.json"), ir);
+  writeJson(path.join(runDir, "execution_plan.json"), plan);
 
   const context = contextFrom(ir, manifest, runId, projectDir, runDir);
   const dryRun = Boolean(options.dryRun);
@@ -218,7 +376,7 @@ function run(options) {
   }
 
   function repairRecord(step, reason) {
-    const file = path.join(runDir, `${step.id || "step"}-repair.md`);
+    const file = path.join(runDir, "repair_prompts", `${step.id || "step"}-repair.md`);
     const body = [
       `# Repair Request: ${step.id}`,
       "",
@@ -236,14 +394,65 @@ function run(options) {
     return file;
   }
 
+  function contextForStep(step) {
+    const local = {
+      ...context,
+      "block.name": step.id || "",
+      "block.kind": step.kind || "",
+      "block.path": step.path || "",
+    };
+    (step.inputs || []).forEach((port) => {
+      local[port.name] = port.value || local[port.name] || "";
+      local[`input.${port.name}`] = port.value || local[`input.${port.name}`] || "";
+    });
+    (step.outputs || []).forEach((port) => {
+      local[port.name] = port.value || local[port.name] || "";
+      local[`output.${port.name}`] = port.value || local[`output.${port.name}`] || "";
+    });
+    (step.artifacts || []).forEach((artifact) => {
+      local[`artifact.${artifact.name}`] = artifact.path || "";
+    });
+    return local;
+  }
+
   function executeAction(step, action, attempt) {
     const stepSlug = AAPS.slug(`${step.id}-${action.id}-${attempt}`, "step");
-    const expandedCommand = expand(action.command || "", context);
+    const stepContext = contextForStep(step);
+    const expandedCommand = expand(action.command || "", stepContext);
+    const missingVariables = [
+      ...unresolvedVariables(action.command || "", stepContext),
+      ...unresolvedVariables(action.entry || "", stepContext),
+      ...unresolvedVariables(action.code || "", stepContext),
+      ...Object.values(action.args || {}).flatMap((value) => unresolvedVariables(value, stepContext)),
+    ];
+    if (missingVariables.length) {
+      const outcome = {
+        status: "failed",
+        code: 1,
+        stdout: "",
+        stderr: `Unresolved runtime variables: ${missingVariables.join(", ")}`,
+        command: action.command || action.entry || action.type,
+      };
+      event({ type: "action", step: step.path, action: action.id, attempt, outcome });
+      return outcome;
+    }
     let outcome;
     if (["shell", "sh", "bash"].includes(action.type)) {
       outcome = shellAction(expandedCommand, projectDir, timeoutMs(step), dryRun);
-    } else if (action.type === "python") {
-      outcome = pythonAction(action, projectDir, context, timeoutMs(step), dryRun);
+    } else if (["python", "python_script"].includes(action.type)) {
+      outcome = pythonAction(action, projectDir, stepContext, timeoutMs(step), dryRun);
+    } else if (action.type === "python_inline") {
+      outcome = pythonInlineAction(action, projectDir, stepContext, timeoutMs(step), dryRun, runDir, stepSlug);
+    } else if (action.type === "node_script") {
+      outcome = nodeScriptAction(action, projectDir, stepContext, timeoutMs(step), dryRun);
+    } else if (action.type === "npm_script") {
+      outcome = npmScriptAction(action, projectDir, stepContext, timeoutMs(step), dryRun);
+    } else if (action.type === "noop") {
+      outcome = { status: "succeeded", code: 0, stdout: "noop\n", stderr: "", command: "noop" };
+    } else if (action.type === "manual") {
+      outcome = { status: "manual_review", code: 0, stdout: "", stderr: "", command: action.command || "manual review" };
+    } else if (action.type === "internal") {
+      outcome = { status: "skipped", code: 0, stdout: "", stderr: "Internal adapters are not registered in this runtime.", command: action.command || "" };
     } else {
       outcome = {
         status: "skipped",
@@ -253,13 +462,14 @@ function run(options) {
         command: action.command || action.entry || "",
       };
     }
-    fs.writeFileSync(path.join(runDir, `${stepSlug}.stdout.log`), outcome.stdout || "", "utf8");
-    fs.writeFileSync(path.join(runDir, `${stepSlug}.stderr.log`), outcome.stderr || "", "utf8");
+    fs.writeFileSync(path.join(runDir, "block_logs", `${stepSlug}.stdout.log`), outcome.stdout || "", "utf8");
+    fs.writeFileSync(path.join(runDir, "block_logs", `${stepSlug}.stderr.log`), outcome.stderr || "", "utf8");
     event({ type: "action", step: step.path, action: action.id, attempt, outcome });
     return outcome;
   }
 
   function executeStep(step) {
+    const stepContext = contextForStep(step);
     event({ type: "step_start", step: step.path, executable: step.executable });
     if (!step.executable) {
       const status = step.promptOnly ? "prompt_only" : "planned";
@@ -289,7 +499,9 @@ function run(options) {
       if (artifact.validation) validationRules.push(artifact.validation);
     });
     validationRules.forEach((rule) => {
-      const checked = checkValidation(rule, projectDir, context);
+      const checked = dryRun
+        ? { ok: true, status: "dry_run", rule, message: "Validation skipped during dry run." }
+        : checkValidation(rule, projectDir, stepContext);
       validations.push(checked);
       if (!checked.ok) ok = false;
       event({ type: "validation", step: step.path, validation: checked });
@@ -300,7 +512,7 @@ function run(options) {
     if (!ok && step.fallback) {
       event({ type: "fallback_start", step: step.path, fallback: step.fallback });
       if (/^run\s*:/i.test(step.fallback)) {
-        const command = expand(step.fallback.replace(/^run\s*:/i, "").trim(), context);
+        const command = expand(step.fallback.replace(/^run\s*:/i, "").trim(), stepContext);
         fallbackResult = shellAction(command, projectDir, timeoutMs(step), dryRun);
         event({ type: "fallback_action", step: step.path, outcome: fallbackResult });
         ok = fallbackResult.status !== "failed";
@@ -328,22 +540,30 @@ function run(options) {
     return result;
   }
 
-  event({ type: "run_start", file: loaded.file, dryRun });
+  const requirements = checkRequirements(ir, projectDir);
+  requirements.forEach((check) => event({ type: "requirement", check }));
+  event({ type: "run_start", file: loaded.file, dryRun, block: options.block || "" });
   if (ir.diagnostics.length) {
     ir.diagnostics.forEach((diagnostic) => event({ type: "parser_diagnostic", diagnostic }));
   }
+  requirements.filter((check) => !check.ok).forEach((check) => {
+    event({ type: "missing_requirement", check });
+  });
   plan.steps.forEach(executeStep);
 
   const failed = results.filter((item) => item.status === "failed");
+  const missingRequirements = requirements.filter((item) => !item.ok);
+  const summaryStatus = ir.diagnostics.length || missingRequirements.length ? "failed" : failed.length ? "failed" : "succeeded";
   const summary = {
-    ok: ir.diagnostics.length === 0 && failed.length === 0,
+    ok: ir.diagnostics.length === 0 && failed.length === 0 && missingRequirements.length === 0,
     runId,
-    status: ir.diagnostics.length ? "failed" : failed.length ? "failed" : "succeeded",
+    status: summaryStatus,
     file: loaded.file,
     project: projectDir,
     runDir,
     dryRun,
     diagnostics: ir.diagnostics,
+    requirements,
     plan: {
       steps: plan.steps.length,
       executableSteps: plan.executableSteps,
@@ -376,6 +596,7 @@ function run(options) {
     file: loaded.file,
     status: summary.status,
     runDir,
+    block: options.block || "",
     finishedAt: summary.finishedAt,
   });
   event({ type: "run_end", status: summary.status });
@@ -390,9 +611,14 @@ function main() {
   const projectDir = path.resolve(options.project || ".");
   const manifest = readManifest(projectDir);
   const loaded = loadSource(options, projectDir, manifest);
-  const ir = AAPS.parseAAPS(loaded.source);
+  const ir = parseLoaded(options, projectDir, manifest, loaded);
   if (options.command === "plan") {
-    const plan = AAPS.buildExecutionPlan(ir);
+    let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
+    if (options.block) {
+      plan = { ...plan, steps: plan.steps.filter((step) => step.id === options.block || step.path.includes(options.block)) };
+      plan.executableSteps = plan.steps.filter((step) => step.executable).length;
+      plan.promptOnlySteps = plan.steps.filter((step) => step.promptOnly).length;
+    }
     console.log(JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, plan }, null, 2));
     process.exit(ir.diagnostics.length ? 1 : 0);
   }

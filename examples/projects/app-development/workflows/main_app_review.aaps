@@ -1,0 +1,45 @@
+pipeline "Main App Review" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "software"
+  tags "appdev, review, ui, release"
+  import block "blocks/scan_pages.aaps" as scan_pages
+  import block "blocks/test_page.aaps" as test_page
+  import block "blocks/fix_bug.aaps" as fix_bug
+  import block "blocks/run_browser_check.aaps" as run_browser_check
+  artifact_dir "artifacts"
+  database "runs/app-development-aaps-runs.jsonl"
+  input app_root: folder required = "."
+  output review_report: markdown = "reports/app-review.md"
+
+  agent reviewer {
+    role "App review agent that separates static checks, browser tests, patches, and release notes."
+    model "gpt-5"
+    tools "filesystem, node, npm, playwright, codex"
+  }
+
+  task review_app {
+    uses reviewer
+    call scan_pages
+    for_each page in "page_inventory.pages" {
+      action inspect_page {
+        call test_page
+      }
+      if "test_result.has_blocking_bug == true" {
+        action repair_page {
+          call fix_bug
+          validate "Patch summary and test evidence are produced."
+        }
+      }
+      else {
+        action accept_page {
+          prompt "Record page as passing with any non-blocking recommendations."
+        }
+      }
+    }
+    action write_report {
+      prompt "Summarize pages, bugs, patches, screenshots, tests, and remaining risks."
+      output review_report: markdown = "reports/app-review.md"
+    }
+  }
+}

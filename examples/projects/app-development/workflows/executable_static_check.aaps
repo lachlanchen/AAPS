@@ -1,0 +1,30 @@
+pipeline "Executable Static App Check" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "software"
+  tags "executable, appdev, static-check"
+  execution_mode "local_deterministic"
+  requires_commands "python3"
+  requires_files "scripts/static_project_check.py"
+  artifact_dir "artifacts"
+  database "runs/static-check-runs.jsonl"
+  input app_root: folder required = "."
+  output static_report: json = "${run.artifacts}/static_project_check.json"
+
+  task scan_project {
+    input app_root: folder required = "."
+    output static_report: json = "${run.artifacts}/static_project_check.json"
+    exec python_script "scripts/static_project_check.py"
+    arg app_root = "${input.app_root}"
+    arg output_json = "${output.static_report}"
+    validate json "${output.static_report}"
+    repair true
+  }
+
+  task summarize after scan_project {
+    input static_report: json required = "${run.artifacts}/static_project_check.json"
+    output review_notes: markdown = "reports/static-check-notes.md"
+    exec shell "mkdir -p reports && printf 'Static check complete. Review JSON artifact: ${input.static_report}\n' > reports/static-check-notes.md"
+    validate nonempty "${output.review_notes}"
+  }
+}

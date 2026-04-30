@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "description": "Autonomous Agentic Pipeline Script: prompt-native skills, tasks, loops, guards, and Studio.",
   "type": "commonjs",
+  "bin": {
+    "aaps": "scripts/aaps.js"
+  },
   "scripts": {
     "test": "node tests/aaps.test.js",
     "project:validate": "node scripts/aaps-project.js validate .",
+    "aaps": "node scripts/aaps.js",
     "aaps:plan": "node scripts/aaps-runner.js plan --project .",
     "aaps:run": "node scripts/aaps-runner.js run --project . --json",
     "studio": "python3 backend/aaps_codex_server.py --host 127.0.0.1 --port 8796",

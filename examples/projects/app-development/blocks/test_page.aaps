@@ -1,0 +1,18 @@
+pipeline "Test Page Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "software"
+
+  block test_page {
+    input page_file: path required
+    output test_result: json
+    action inspect {
+      prompt "Inspect UI copy, layout density, missing states, controls, accessibility, and likely runtime errors."
+    }
+    action run_checks {
+      tool "playwright, unit_tests, screenshot_comparison"
+      validate "Page loads, core controls work, and screenshot has no obvious overlap."
+      recover "If browser testing is unavailable, fall back to static inspection and mark browser check pending."
+    }
+  }
+}

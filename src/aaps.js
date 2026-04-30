@@ -108,11 +108,19 @@
       logPath: "",
       requiredTools: [],
       requiredModels: [],
+      requiredCommands: [],
+      requiredFiles: [],
+      requiredPythonPackages: [],
+      executionMode: "",
+      safety: {},
       includes: [],
+      imports: [],
+      sourceFile: "",
       inputs: {},
       inputPorts: [],
       outputPorts: [],
       agents: [],
+      blocks: [],
       skills: [],
       tasks: [],
       policies: {},
@@ -151,6 +159,8 @@
       args: {},
       repair: false,
       fallback: "",
+      code: "",
+      sourceFile: "",
       calls: [],
       run: [],
       verify: [],
@@ -193,6 +203,7 @@
     const parent = parentFrame ? parentFrame.node : ir.pipeline;
     if (!parentFrame || parentFrame.kind === "pipeline") {
       if (node.kind === "agent") ir.pipeline.agents.push(node);
+      else if (node.kind === "block") ir.pipeline.blocks.push(node);
       else if (node.kind === "skill") ir.pipeline.skills.push(node);
       else if (node.kind === "task") ir.pipeline.tasks.push(node);
       else ir.pipeline.tasks.push(node);
@@ -208,9 +219,11 @@
     return null;
   }
 
-  function parseAAPS(source) {
+  function parseAAPS(source, options = {}) {
     const lines = String(source || "").replace(/\r\n/g, "\n").split("\n");
     const ir = { version: VERSION, pipeline: createPipeline(), diagnostics: [] };
+    ir.sourceFile = options.sourceFile || "";
+    ir.pipeline.sourceFile = options.sourceFile || "";
     const stack = [];
     let blockText = null;
     let sawPipeline = false;
@@ -294,10 +307,11 @@
         return;
       }
 
-      match = line.match(/^(agent|skill|stage|method|action|guard|handoff|choose)\s+([A-Za-z_][\w.-]*)(?:\s+(.+?))?\s*\{$/i);
+      match = line.match(/^(agent|block|skill|stage|method|action|guard|handoff|choose)\s+([A-Za-z_][\w.-]*)(?:\s+(.+?))?\s*\{$/i);
       if (match) {
         const node = createNode(match[1].toLowerCase(), match[2], {
           title: match[3] ? unquote(match[3]) : "",
+          sourceFile: options.sourceFile || "",
         });
         addNodeToParent(ir, stack, node);
         stack.push({ kind: node.kind, node });
@@ -307,7 +321,7 @@
       const target = currentTarget();
       const scope = stack[stack.length - 1];
 
-      match = line.match(/^(prompt|description|note)\s+"""(.*)$/i);
+      match = line.match(/^(prompt|description|note|code)\s+"""(.*)$/i);
       if (match) {
         const key = match[1].toLowerCase() === "description" ? "prompt" : match[1].toLowerCase();
         const end = match[2].indexOf('"""');
@@ -334,7 +348,7 @@
         return;
       }
 
-      match = line.match(/^(version|author|created|updated|artifact_dir|database|log_path)\s+(.+)$/i);
+      match = line.match(/^(version|author|created|updated|artifact_dir|database|log_path|execution_mode)\s+(.+)$/i);
       if (match && target === ir.pipeline) {
         const keyMap = {
           version: "workflowVersion",
@@ -344,6 +358,7 @@
           artifact_dir: "artifactDir",
           database: "databasePath",
           log_path: "logPath",
+          execution_mode: "executionMode",
         };
         ir.pipeline[keyMap[match[1].toLowerCase()]] = unquote(match[2]);
         return;
@@ -359,8 +374,25 @@
       if (match && target === ir.pipeline) {
         const includePath = unquote(match[1]);
         ir.pipeline.includes.push(includePath);
+        ir.pipeline.imports.push({ kind: "include", path: includePath, as: slug(includePath), sourceFile: options.sourceFile || "" });
         if (!relativeProjectPath(includePath)) {
           diagnostic(lineNumber, `include path must be project-relative: ${includePath}`);
+        }
+        return;
+      }
+
+      match = line.match(/^import\s+(block|skill|workflow|module)\s+(.+?)(?:\s+as\s+([A-Za-z_][\w.-]*))?$/i);
+      if (match && target === ir.pipeline) {
+        const importPath = unquote(match[2]);
+        const alias = match[3] || slug(importPath);
+        ir.pipeline.imports.push({
+          kind: match[1].toLowerCase(),
+          path: importPath,
+          as: alias,
+          sourceFile: options.sourceFile || "",
+        });
+        if (!relativeProjectPath(importPath)) {
+          diagnostic(lineNumber, `import path must be project-relative: ${importPath}`);
         }
         return;
       }
@@ -369,6 +401,28 @@
       if (match && target === ir.pipeline) {
         const key = match[1].toLowerCase() === "requires_tools" ? "requiredTools" : "requiredModels";
         ir.pipeline[key] = parseList(unquote(match[2]));
+        return;
+      }
+
+      match = line.match(/^(requires_commands|requires_files|requires_python_packages)\s+(.+)$/i);
+      if (match && target === ir.pipeline) {
+        const map = {
+          requires_commands: "requiredCommands",
+          requires_files: "requiredFiles",
+          requires_python_packages: "requiredPythonPackages",
+        };
+        ir.pipeline[map[match[1].toLowerCase()]] = parseList(unquote(match[2]));
+        return;
+      }
+
+      match = line.match(/^safety\s+(.+)$/i);
+      if (match && target === ir.pipeline) {
+        const kv = parseKeyValue(match[1]);
+        if (!kv) {
+          diagnostic(lineNumber, "safety must use name = value.");
+          return;
+        }
+        ir.pipeline.safety[kv.key] = kv.value;
         return;
       }
 
@@ -411,10 +465,11 @@
       if (match && target !== ir.pipeline) {
         const type = match[2].toLowerCase();
         const value = unquote(match[3] || "");
+        const commandTypes = new Set(["shell", "sh", "bash", "node_script", "npm_script", "manual", "noop", "internal"]);
         target.exec.push({
           type,
-          command: ["shell", "sh", "bash"].includes(type) ? value : "",
-          entry: ["shell", "sh", "bash"].includes(type) ? "" : value,
+          command: commandTypes.has(type) ? value : "",
+          entry: commandTypes.has(type) ? "" : value,
           args: {},
         });
         return;
@@ -576,7 +631,7 @@
     }
     if (node.kind === "if") return `${indent}if ${quote(node.condition || "condition")} {`;
     if (node.kind === "else") return `${indent}else {`;
-    if (CHILD_KINDS.has(node.kind) || node.kind === "agent" || node.kind === "skill") {
+    if (CHILD_KINDS.has(node.kind) || node.kind === "agent" || node.kind === "block" || node.kind === "skill") {
       return `${indent}${node.kind} ${node.id}${node.title ? ` ${quote(node.title)}` : ""} {`;
     }
     return `${indent}${node.kind} ${node.id} {`;
@@ -609,6 +664,11 @@
       lines.push(...String(node.prompt).split("\n").map((part) => `${childIndent}${part}`));
       lines.push(`${childIndent}"""`);
     }
+    if (node.code) {
+      lines.push(`${childIndent}code """`);
+      lines.push(...String(node.code).split("\n").map((part) => `${childIndent}${part}`));
+      lines.push(`${childIndent}"""`);
+    }
     (node.run || []).forEach((command) => lines.push(`${childIndent}run ${quote(command)}`));
     (node.validations || []).forEach((check) => lines.push(`${childIndent}validate ${quote(check)}`));
     (node.verify || []).forEach((check) => lines.push(`${childIndent}verify ${quote(check)}`));
@@ -636,11 +696,19 @@
     if (pipeline.domain) lines.push(`  domain ${quote(pipeline.domain)}`);
     if (pipeline.tags && pipeline.tags.length) lines.push(`  tags ${quote(pipeline.tags.join(", "))}`);
     (pipeline.includes || []).forEach((includePath) => lines.push(`  include ${quote(includePath)}`));
+    (pipeline.imports || [])
+      .filter((item) => item.kind !== "include" && !pipeline.includes.includes(item.path))
+      .forEach((item) => lines.push(`  import ${item.kind || "block"} ${quote(item.path)}${item.as ? ` as ${item.as}` : ""}`));
     if (pipeline.requiredTools && pipeline.requiredTools.length) lines.push(`  requires_tools ${quote(pipeline.requiredTools.join(", "))}`);
     if (pipeline.requiredModels && pipeline.requiredModels.length) lines.push(`  requires_models ${quote(pipeline.requiredModels.join(", "))}`);
+    if (pipeline.requiredCommands && pipeline.requiredCommands.length) lines.push(`  requires_commands ${quote(pipeline.requiredCommands.join(", "))}`);
+    if (pipeline.requiredFiles && pipeline.requiredFiles.length) lines.push(`  requires_files ${quote(pipeline.requiredFiles.join(", "))}`);
+    if (pipeline.requiredPythonPackages && pipeline.requiredPythonPackages.length) lines.push(`  requires_python_packages ${quote(pipeline.requiredPythonPackages.join(", "))}`);
     if (pipeline.artifactDir) lines.push(`  artifact_dir ${quote(pipeline.artifactDir)}`);
     if (pipeline.databasePath) lines.push(`  database ${quote(pipeline.databasePath)}`);
     if (pipeline.logPath) lines.push(`  log_path ${quote(pipeline.logPath)}`);
+    if (pipeline.executionMode) lines.push(`  execution_mode ${quote(pipeline.executionMode)}`);
+    Object.entries(pipeline.safety || {}).forEach(([key, value]) => lines.push(`  safety ${key} = ${quote(value)}`));
     if (pipeline.goal) lines.push(`  goal ${quote(pipeline.goal)}`);
     if (pipeline.prompt) {
       lines.push('  prompt """');
@@ -654,7 +722,7 @@
     (pipeline.validations || []).forEach((check) => lines.push(`  validate ${quote(check)}`));
     (pipeline.recovery || []).forEach((step) => lines.push(`  recover ${quote(step)}`));
     (pipeline.reviews || []).forEach((review) => lines.push(`  review ${quote(review)}`));
-    [...(pipeline.agents || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach((node) => {
+    [...(pipeline.agents || []), ...(pipeline.blocks || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach((node) => {
       lines.push("");
       lines.push(...serializeNode(node, 1));
     });
@@ -716,6 +784,11 @@
       pipeline.agents.forEach((agent) => nodeSummary(agent, 0, lines));
       lines.push("");
     }
+    if (pipeline.blocks && pipeline.blocks.length) {
+      lines.push("## Blocks", "");
+      pipeline.blocks.forEach((block) => nodeSummary(block, 0, lines));
+      lines.push("");
+    }
     if (pipeline.skills && pipeline.skills.length) {
       lines.push("## Skills", "");
       pipeline.skills.forEach((skill) => nodeSummary(skill, 0, lines));
@@ -744,6 +817,7 @@
         type: step.type || "shell",
         command: step.command || "",
         entry: step.entry || "",
+        code: step.code || node.code || "",
         args: { ...(node.args || {}), ...(step.args || {}) },
         source: "exec",
       });
@@ -769,7 +843,7 @@
       if (node && node.id && !definitions.has(node.id)) definitions.set(node.id, node);
       (node.children || []).forEach(walk);
     }
-    [...(pipeline.agents || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach(walk);
+    [...(pipeline.agents || []), ...(pipeline.blocks || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach(walk);
     return definitions;
   }
 
@@ -782,9 +856,11 @@
       options.roots ||
       (pipeline.tasks && pipeline.tasks.length
         ? pipeline.tasks
-        : pipeline.skills && pipeline.skills.length
-          ? pipeline.skills
-          : []);
+        : pipeline.blocks && pipeline.blocks.length
+          ? pipeline.blocks
+          : pipeline.skills && pipeline.skills.length
+            ? pipeline.skills
+            : []);
 
     function addWarning(message, path) {
       warnings.push({ message, path: path.join("/") });
@@ -803,6 +879,7 @@
         condition: node.condition || "",
         iterator: node.iterator || null,
         agent: node.agent || "",
+        sourceFile: node.sourceFile || pipeline.sourceFile || "",
         actions,
         executable: actions.length > 0,
         promptOnly: Boolean(node.prompt && actions.length === 0),
@@ -861,6 +938,11 @@
       inputs: pipeline.inputPorts || [],
       outputs: pipeline.outputPorts || [],
       includes: pipeline.includes || [],
+      imports: pipeline.imports || [],
+      project: options.project || ir.project || null,
+      importGraph: options.importGraph || ir.importGraph || {},
+      unresolvedImports: options.unresolvedImports || ir.unresolvedImports || [],
+      circularImports: options.circularImports || ir.circularImports || [],
       steps,
       warnings,
       executableSteps: steps.filter((step) => step.executable).length,
@@ -1195,6 +1277,108 @@
     ].join("\n");
   }
 
+  function normalizeProjectFile(file) {
+    return String(file || "")
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "")
+      .replace(/\/+/g, "/");
+  }
+
+  function parseAAPSProject(fileMap = {}, entryFile = "", manifest = {}) {
+    const project = normalizeProjectManifest(manifest || {});
+    const normalizedMap = {};
+    Object.entries(fileMap || {}).forEach(([file, source]) => {
+      normalizedMap[normalizeProjectFile(file)] = String(source || "");
+    });
+    const activeFile = normalizeProjectFile(entryFile || project.activeFile || project.defaultMain);
+    const parsedFiles = {};
+    const importGraph = {};
+    const unresolvedImports = [];
+    const circularImports = [];
+
+    function dependencyFiles(ir) {
+      const deps = [];
+      (ir.pipeline.includes || []).forEach((file) => {
+        deps.push({ kind: "include", path: normalizeProjectFile(file), as: slug(file) });
+      });
+      (ir.pipeline.imports || []).forEach((item) => {
+        deps.push({ ...item, path: normalizeProjectFile(item.path), as: item.as || slug(item.path) });
+      });
+      return deps.filter((item, index, all) => all.findIndex((other) => other.path === item.path && other.as === item.as) === index);
+    }
+
+    function parseFile(file, stack = []) {
+      const normalized = normalizeProjectFile(file);
+      if (stack.includes(normalized)) {
+        circularImports.push({ path: normalized, chain: stack.concat(normalized) });
+        return null;
+      }
+      if (parsedFiles[normalized]) return parsedFiles[normalized];
+      if (!Object.prototype.hasOwnProperty.call(normalizedMap, normalized)) {
+        unresolvedImports.push({ path: normalized, importedBy: stack[stack.length - 1] || "" });
+        return null;
+      }
+      const ir = parseAAPS(normalizedMap[normalized], { sourceFile: normalized });
+      parsedFiles[normalized] = ir;
+      const deps = dependencyFiles(ir);
+      importGraph[normalized] = deps.map((dep) => dep.path);
+      deps.forEach((dep) => parseFile(dep.path, stack.concat(normalized)));
+      return ir;
+    }
+
+    const entry = parseFile(activeFile, []);
+    if (!entry) {
+      return {
+        version: "aaps_project_ir/0.1",
+        project,
+        activeFile,
+        files: parsedFiles,
+        entry: null,
+        diagnostics: [{ line: 1, message: `Active AAPS file was not found: ${activeFile}` }],
+        importGraph,
+        unresolvedImports,
+        circularImports,
+      };
+    }
+
+    const merged = JSON.parse(JSON.stringify(entry));
+    merged.project = project;
+    merged.activeFile = activeFile;
+    merged.files = parsedFiles;
+    merged.importGraph = importGraph;
+    merged.unresolvedImports = unresolvedImports;
+    merged.circularImports = circularImports;
+    merged.diagnostics = [...(merged.diagnostics || [])];
+    unresolvedImports.forEach((item) => {
+      merged.diagnostics.push({ line: 1, message: `Unresolved import ${item.path}${item.importedBy ? ` imported by ${item.importedBy}` : ""}.` });
+    });
+    circularImports.forEach((item) => {
+      merged.diagnostics.push({ line: 1, message: `Circular import: ${item.chain.join(" -> ")}.` });
+    });
+
+    function appendImported(collection, nodes, sourceFile) {
+      const existing = new Set(collection.map((node) => node.id));
+      nodes.forEach((node) => {
+        if (existing.has(node.id)) return;
+        const copy = JSON.parse(JSON.stringify(node));
+        copy.imported = true;
+        copy.sourceFile = copy.sourceFile || sourceFile;
+        collection.push(copy);
+        existing.add(copy.id);
+      });
+    }
+
+    Object.entries(parsedFiles).forEach(([file, ir]) => {
+      if (file === activeFile) return;
+      appendImported(merged.pipeline.blocks, ir.pipeline.blocks || [], file);
+      appendImported(merged.pipeline.skills, ir.pipeline.skills || [], file);
+      appendImported(merged.pipeline.tasks, ir.pipeline.tasks || [], file);
+      appendImported(merged.pipeline.agents, ir.pipeline.agents || [], file);
+    });
+
+    return merged;
+  }
+
   const sampleProject = createProjectManifest({
     name: "Organoid Analysis Project",
     description: "Reusable AAPS blocks and workflows for microscopy QC, organoid segmentation, quantification, and report generation.",
@@ -1238,6 +1422,7 @@
     PROJECT_VERSION,
     PROJECT_FILE_CATEGORIES,
     parseAAPS,
+    parseAAPSProject,
     serializeAAPS,
     toMarkdown,
     buildExecutionPlan,
@@ -1246,6 +1431,7 @@
     validateProjectManifest,
     projectFileIndex,
     projectStructureText,
+    normalizeProjectFile,
     sample: samples.general,
     samples,
     sampleProject,

@@ -19,6 +19,9 @@ const projectPathEl = document.getElementById("project-path");
 const runStatusEl = document.getElementById("run-status");
 const runSummaryEl = document.getElementById("run-summary");
 const runLogEl = document.getElementById("run-log");
+const blockChatInputEl = document.getElementById("block-chat-input");
+const blockLogEl = document.getElementById("block-log");
+const projectFileTargetEl = document.getElementById("project-file-target");
 
 const fields = {
   kind: document.getElementById("field-kind"),
@@ -30,6 +33,7 @@ const fields = {
   artifacts: document.getElementById("field-artifacts"),
   exec: document.getElementById("field-exec"),
   args: document.getElementById("field-args"),
+  code: document.getElementById("field-code"),
   run: document.getElementById("field-run"),
   validations: document.getElementById("field-validations"),
   verify: document.getElementById("field-verify"),
@@ -41,6 +45,7 @@ const fields = {
 
 let selectedRef = "";
 let nodeRefs = new Map();
+let openTextFile = "";
 let currentProjectPayload = {
   manifest: AAPS.sampleProject,
   project_path: ".",
@@ -73,6 +78,7 @@ function renderProject(payload = currentProjectPayload) {
   currentProjectPayload = payload;
   const manifest = AAPS.normalizeProjectManifest(payload.manifest || AAPS.sampleProject);
   const files = payload.files && payload.files.length ? payload.files : AAPS.projectFileIndex(manifest);
+  const scriptFiles = payload.script_files || [];
   const validation = AAPS.validateProjectManifest(manifest, files);
   const diagnostics = validation.diagnostics;
   const errorCount = diagnostics.filter((item) => item.severity === "error").length;
@@ -93,8 +99,8 @@ function renderProject(payload = currentProjectPayload) {
     <div>${escapeHtml(manifest.description || "No project description.")}</div>
     <div class="project-kpis">
       <div class="project-kpi"><strong>${AAPS.projectFileIndex(manifest).length}</strong>manifest files</div>
+      <div class="project-kpi"><strong>${scriptFiles.length}</strong>scripts</div>
       <div class="project-kpi"><strong>${manifest.tools.length}</strong>tools</div>
-      <div class="project-kpi"><strong>${manifest.models.length}</strong>models</div>
     </div>
     ${
       diagnostics.length
@@ -105,7 +111,7 @@ function renderProject(payload = currentProjectPayload) {
     }
   `;
 
-  projectFilesEl.innerHTML = AAPS.PROJECT_FILE_CATEGORIES.map((category) => {
+  const aapsSections = AAPS.PROJECT_FILE_CATEGORIES.map((category) => {
     const categoryFiles = manifest.files[category] || [];
     if (!categoryFiles.length) return "";
     return `
@@ -123,7 +129,25 @@ function renderProject(payload = currentProjectPayload) {
           .join("")}
       </section>
     `;
-  }).join("") || '<div class="message">No `.aaps` files listed in this project.</div>';
+  }).join("");
+  const scriptSection = scriptFiles.length
+    ? `
+      <section class="project-category">
+        <h3>scripts</h3>
+        ${scriptFiles
+          .map(
+            (file) => `
+              <button class="project-file${file === openTextFile ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
+                <span>${escapeHtml(file)}</span>
+                <span>script</span>
+              </button>
+            `
+          )
+          .join("")}
+      </section>
+    `
+    : "";
+  projectFilesEl.innerHTML = aapsSections || scriptSection ? `${aapsSections}${scriptSection}` : '<div class="message">No project files found.</div>';
 }
 
 function renderRuntime(record) {
@@ -164,7 +188,7 @@ function allNodes(ir) {
     nodes.push(node);
     (node.children || []).forEach(walk);
   }
-  [...(ir.pipeline.agents || []), ...(ir.pipeline.skills || []), ...(ir.pipeline.tasks || [])].forEach(walk);
+  [...(ir.pipeline.agents || []), ...(ir.pipeline.blocks || []), ...(ir.pipeline.skills || []), ...(ir.pipeline.tasks || [])].forEach(walk);
   return nodes;
 }
 
@@ -241,6 +265,7 @@ function addMessage(role, text) {
 function nodeColor(kind) {
   return {
     agent: "#7c3aed",
+    block: "#ff4f8b",
     skill: "#00bcd4",
     task: "#ff9f1c",
     stage: "#ff4f8b",
@@ -315,6 +340,7 @@ function fillInspector(node) {
   fields.artifacts.value = portLines(node.artifacts || []);
   fields.exec.value = execLines(node.exec || []);
   fields.args.value = keyValueLines(node.args || {});
+  fields.code.value = node.code || (node.exec && node.exec[0] && node.exec[0].code) || "";
   fields.run.value = (node.run || []).join("\n");
   fields.validations.value = (node.validations || []).join("\n");
   fields.verify.value = (node.verify || []).join("\n");
@@ -330,6 +356,7 @@ function render() {
   const totalNodes = allNodes(ir).length;
   treeEl.innerHTML = [
     renderSection("Agents", ir.pipeline.agents || [], "agent"),
+    renderSection("Blocks", ir.pipeline.blocks || [], "block"),
     renderSection("Skills", ir.pipeline.skills || [], "skill"),
     renderSection("Tasks", ir.pipeline.tasks || [], "task"),
   ].join("");
@@ -382,6 +409,40 @@ function templateNode(kind, ir) {
   if (kind === "skill_segment") return clone(AAPS.parseAAPS(AAPS.samples.biology).pipeline.skills[0]);
   if (kind === "skill_writing") return clone(AAPS.parseAAPS(AAPS.samples.writing).pipeline.skills[0]);
   if (kind === "skill_appdev") return clone(AAPS.parseAAPS(AAPS.samples.general).pipeline.skills[0]);
+  if (kind === "block") {
+    return {
+      kind: "block",
+      id: "new_block",
+      title: "",
+      after: [],
+      agent: "",
+      model: "",
+      role: "",
+      tools: [],
+      prompt: "Reusable typed block.",
+      condition: "",
+      iterator: null,
+      inputs: [],
+      outputs: [],
+      params: {},
+      metrics: {},
+      policies: {},
+      validations: [],
+      recovery: [],
+      reviews: [],
+      artifacts: [],
+      exec: [],
+      args: {},
+      repair: false,
+      fallback: "",
+      code: "",
+      calls: [],
+      run: [],
+      verify: [],
+      notes: [],
+      children: [],
+    };
+  }
   const base = {
     kind: kind === "for_each" || kind === "if" || kind === "action" ? kind : "task",
     id: kind === "task" ? "new_task" : kind,
@@ -435,6 +496,8 @@ function addTemplate(kind) {
     selected.children.push(node);
   } else if (node.kind === "agent") {
     ir.pipeline.agents.push(node);
+  } else if (node.kind === "block") {
+    ir.pipeline.blocks.push(node);
   } else if (node.kind === "skill") {
     ir.pipeline.skills.push(node);
   } else {
@@ -455,6 +518,7 @@ function deleteSelected() {
       .map((node) => ({ ...node, children: remove(node.children || []) }));
   }
   ir.pipeline.agents = remove(ir.pipeline.agents || []);
+  ir.pipeline.blocks = remove(ir.pipeline.blocks || []);
   ir.pipeline.skills = remove(ir.pipeline.skills || []);
   ir.pipeline.tasks = remove(ir.pipeline.tasks || []);
   selectedRef = "";
@@ -476,6 +540,8 @@ function applyInspector() {
   node.exec = parseExecActions(fields.exec.value);
   node.args = parseKeyValues(fields.args.value);
   if (node.exec.length) node.exec[node.exec.length - 1].args = { ...node.args };
+  node.code = fields.code.value.trim();
+  if (node.code && node.exec.length) node.exec[node.exec.length - 1].code = node.code;
   node.run = parseLines(fields.run.value);
   node.validations = parseLines(fields.validations.value);
   node.verify = parseLines(fields.verify.value);
@@ -492,6 +558,7 @@ function applyInspector() {
     });
   }
   ir.pipeline.agents = replace(ir.pipeline.agents || []);
+  ir.pipeline.blocks = replace(ir.pipeline.blocks || []);
   ir.pipeline.skills = replace(ir.pipeline.skills || []);
   ir.pipeline.tasks = replace(ir.pipeline.tasks || []);
   setIr(ir);
@@ -539,6 +606,15 @@ function localChatEdit(text) {
     ir.pipeline.skills.push(skill);
     setIr(ir);
     return `Added skill ${skill.id}.`;
+  }
+  match = raw.match(/^add block\s+([A-Za-z_][\w.-]*)/i);
+  if (match) {
+    const block = templateNode("block", ir);
+    block.id = uniqueId(match[1], allNodes(ir));
+    block.prompt = `Reusable block for ${match[1]}.`;
+    ir.pipeline.blocks.push(block);
+    setIr(ir);
+    return `Added block ${block.id}.`;
   }
   match = raw.match(/^add task\s+([A-Za-z_][\w.-]*)(?:\s+after\s+([A-Za-z0-9_, .-]+))?/i);
   if (match) {
@@ -645,6 +721,19 @@ async function loadProjectFile(file) {
   addMessage("assistant", `Loaded ${file}.`);
 }
 
+async function loadTextFile(file) {
+  const response = await fetch(
+    `/api/aaps/project/text-file?path=${encodeURIComponent(projectPathEl.value || ".")}&file=${encodeURIComponent(file)}`
+  );
+  if (!response.ok) throw new Error(`text file API returned ${response.status}`);
+  const payload = await response.json();
+  openTextFile = payload.file;
+  fields.code.value = payload.source;
+  blockLogEl.textContent = `Opened ${payload.file}`;
+  renderProject(currentProjectPayload);
+  addMessage("assistant", `Opened script ${payload.file} in the block code editor.`);
+}
+
 async function saveActiveProjectFile() {
   const manifest = getProjectManifest();
   if (manifest.error) {
@@ -661,6 +750,52 @@ async function saveActiveProjectFile() {
   const payload = await response.json();
   renderProject({ ...currentProjectPayload, files: payload.files, manifest });
   addMessage("assistant", `Saved ${file}.`);
+}
+
+async function saveOpenTextFile() {
+  if (!openTextFile) {
+    addMessage("assistant", "Open a script or text file first.");
+    return;
+  }
+  const response = await fetch("/api/aaps/project/text-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: projectPathEl.value || ".", file: openTextFile, source: fields.code.value }),
+  });
+  if (!response.ok) throw new Error(`text file save returned ${response.status}`);
+  const payload = await response.json();
+  renderProject({ ...currentProjectPayload, ...payload });
+  addMessage("assistant", `Saved ${openTextFile}.`);
+}
+
+async function projectFileAction(action) {
+  const manifest = getProjectManifest();
+  if (manifest.error) {
+    addMessage("assistant", `Project manifest JSON error: ${manifest.error}`);
+    return;
+  }
+  const active = manifest.activeFile || manifest.defaultMain || "";
+  const target = projectFileTargetEl.value.trim();
+  const file = action === "create" ? target : active;
+  if (!file) {
+    addMessage("assistant", "Set an active file or a file action target.");
+    return;
+  }
+  const response = await fetch("/api/aaps/project/file-action", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: projectPathEl.value || ".",
+      action,
+      file,
+      target,
+      kind: target.includes("/blocks/") || target.startsWith("blocks/") ? "block" : "workflow",
+    }),
+  });
+  if (!response.ok) throw new Error(`file action returned ${response.status}`);
+  const payload = await response.json();
+  renderProject(payload);
+  addMessage("assistant", `${action} completed for ${file}.`);
 }
 
 async function pollRun(id) {
@@ -680,7 +815,7 @@ async function pollRun(id) {
   }
 }
 
-async function startRuntimeRun(dryRun) {
+async function startRuntimeRun(dryRun, blockId = "") {
   const manifest = getProjectManifest();
   if (manifest.error) {
     projectStatusEl.textContent = "invalid JSON";
@@ -698,6 +833,7 @@ async function startRuntimeRun(dryRun) {
       file,
       source: sourceEl.value,
       dryRun,
+      block: blockId,
     }),
   });
   if (!response.ok) throw new Error(`run API returned ${response.status}`);
@@ -708,6 +844,168 @@ async function startRuntimeRun(dryRun) {
     runStatusEl.textContent = "poll failed";
     runLogEl.textContent = error.message;
   });
+}
+
+function selectedNodeId() {
+  return nodeRefs.get(selectedRef)?.id || "";
+}
+
+function updateSelectedNode(mutator) {
+  const snapshot = nodeRefs.get(selectedRef);
+  if (!snapshot) return false;
+  const ir = getIr();
+  let changed = false;
+  function replace(nodes) {
+    return (nodes || []).map((node) => {
+      if (node.id === snapshot.id && node.kind === snapshot.kind) {
+        const copy = clone(node);
+        mutator(copy);
+        changed = true;
+        return copy;
+      }
+      return { ...node, children: replace(node.children || []) };
+    });
+  }
+  ir.pipeline.agents = replace(ir.pipeline.agents || []);
+  ir.pipeline.blocks = replace(ir.pipeline.blocks || []);
+  ir.pipeline.skills = replace(ir.pipeline.skills || []);
+  ir.pipeline.tasks = replace(ir.pipeline.tasks || []);
+  if (changed) setIr(ir);
+  return changed;
+}
+
+async function applyBlockChat() {
+  const node = nodeRefs.get(selectedRef);
+  const message = blockChatInputEl.value.trim();
+  if (!node) {
+    blockLogEl.textContent = "Select a block first.";
+    return;
+  }
+  if (!message) return;
+  blockLogEl.textContent = "Routing block chat...";
+  const response = await fetch("/api/aaps/block/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: projectPathEl.value || ".",
+      blockId: node.id,
+      message,
+      source: sourceEl.value,
+    }),
+  });
+  if (!response.ok) throw new Error(`block chat returned ${response.status}`);
+  const payload = await response.json();
+  updateSelectedNode((target) => {
+    const action = payload.action || {};
+    if (action.type) {
+      target.exec = target.exec || [];
+      target.exec.push({
+        id: `exec_${target.exec.length + 1}`,
+        type: action.type,
+        command: action.command || "",
+        entry: action.entry || "",
+        code: action.code || "",
+        args: action.args || {},
+        source: "block_chat",
+      });
+      target.args = { ...(target.args || {}), ...(action.args || {}) };
+      if (action.code) target.code = action.code;
+    }
+    target.validations = [...new Set([...(target.validations || []), ...((payload.validations || []))])];
+    target.repair = true;
+  });
+  blockChatInputEl.value = "";
+  blockLogEl.textContent = JSON.stringify(payload, null, 2);
+  addMessage("assistant", payload.summary || "Applied block chat action.");
+  if (payload.script) {
+    const latest = await loadProject(projectPathEl.value || ".");
+    renderProject(latest);
+  }
+}
+
+async function saveBlockCode() {
+  const node = nodeRefs.get(selectedRef);
+  if (!node) {
+    blockLogEl.textContent = "Select a block first.";
+    return;
+  }
+  const firstExec = (node.exec || [])[0];
+  if (firstExec && firstExec.entry) {
+    const response = await fetch("/api/aaps/project/text-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: projectPathEl.value || ".", file: firstExec.entry, source: fields.code.value }),
+    });
+    if (!response.ok) throw new Error(`script save returned ${response.status}`);
+    blockLogEl.textContent = `Saved ${firstExec.entry}`;
+    addMessage("assistant", `Saved code to ${firstExec.entry}.`);
+    return;
+  }
+  updateSelectedNode((target) => {
+    target.code = fields.code.value;
+    if (target.exec && target.exec.length) target.exec[0].code = fields.code.value;
+  });
+  blockLogEl.textContent = "Saved inline code into the selected block.";
+}
+
+async function externalizeBlockCode() {
+  const node = nodeRefs.get(selectedRef);
+  if (!node) {
+    blockLogEl.textContent = "Select a block first.";
+    return;
+  }
+  const file = `scripts/${AAPS.slug(node.id)}.py`;
+  const response = await fetch("/api/aaps/project/text-file", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: projectPathEl.value || ".", file, source: fields.code.value }),
+  });
+  if (!response.ok) throw new Error(`script save returned ${response.status}`);
+  updateSelectedNode((target) => {
+    target.exec = target.exec && target.exec.length ? target.exec : [{ id: "exec_1", type: "python_script", command: "", entry: "", args: {} }];
+    target.exec[0].type = "python_script";
+    target.exec[0].entry = file;
+    target.exec[0].command = "";
+    target.exec[0].code = "";
+    target.code = "";
+  });
+  openTextFile = file;
+  blockLogEl.textContent = `Saved inline code to ${file}`;
+  const latest = await loadProject(projectPathEl.value || ".");
+  renderProject(latest);
+}
+
+function prepareRepairPrompt() {
+  const node = nodeRefs.get(selectedRef);
+  if (!node) {
+    blockLogEl.textContent = "Select a block first.";
+    return;
+  }
+  const prompt = [
+    `# AAPS Block Repair: ${node.id}`,
+    "",
+    `Kind: ${node.kind}`,
+    `Project: ${projectPathEl.value || "."}`,
+    "",
+    "## Purpose",
+    node.prompt || "(no prompt)",
+    "",
+    "## Inputs",
+    portLines(node.inputs || []) || "(none)",
+    "",
+    "## Outputs",
+    portLines(node.outputs || []) || "(none)",
+    "",
+    "## Actions",
+    execLines(node.exec || []) || "(none)",
+    "",
+    "## Validations",
+    (node.validations || []).join("\n") || "(none)",
+    "",
+    "## Latest Runtime Record",
+    runLogEl.textContent || "(no run yet)",
+  ].join("\n");
+  blockLogEl.textContent = prompt;
 }
 
 document.querySelectorAll("[data-tab]").forEach((button) => {
@@ -788,10 +1086,18 @@ document.getElementById("download-btn").addEventListener("click", () => {
 
 projectFilesEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-project-file]");
-  if (!button) return;
-  loadProjectFile(button.dataset.projectFile).catch((error) => {
-    addMessage("assistant", `Could not load project file: ${error.message}`);
-  });
+  const textButton = event.target.closest("[data-project-text-file]");
+  if (button) {
+    loadProjectFile(button.dataset.projectFile).catch((error) => {
+      addMessage("assistant", `Could not load project file: ${error.message}`);
+    });
+    return;
+  }
+  if (textButton) {
+    loadTextFile(textButton.dataset.projectTextFile).catch((error) => {
+      addMessage("assistant", `Could not load script file: ${error.message}`);
+    });
+  }
 });
 
 document.getElementById("load-project-btn").addEventListener("click", () => {
@@ -843,6 +1149,77 @@ document.getElementById("run-active-file-btn").addEventListener("click", () => {
     addMessage("assistant", `Could not run active file: ${error.message}`);
   });
 });
+
+document.getElementById("new-workflow-btn").addEventListener("click", () => {
+  if (!projectFileTargetEl.value.trim()) projectFileTargetEl.value = "workflows/new_workflow.aaps";
+  projectFileAction("create").catch((error) => {
+    addMessage("assistant", `Could not create file: ${error.message}`);
+  });
+});
+
+document.getElementById("duplicate-active-file-btn").addEventListener("click", () => {
+  if (!projectFileTargetEl.value.trim()) projectFileTargetEl.value = "workflows/copy.aaps";
+  projectFileAction("duplicate").catch((error) => {
+    addMessage("assistant", `Could not duplicate file: ${error.message}`);
+  });
+});
+
+document.getElementById("archive-active-file-btn").addEventListener("click", () => {
+  projectFileAction("archive").catch((error) => {
+    addMessage("assistant", `Could not archive file: ${error.message}`);
+  });
+});
+
+document.getElementById("save-open-text-file-btn").addEventListener("click", () => {
+  saveOpenTextFile().catch((error) => {
+    addMessage("assistant", `Could not save script: ${error.message}`);
+  });
+});
+
+document.getElementById("block-chat-btn").addEventListener("click", () => {
+  applyBlockChat().catch((error) => {
+    blockLogEl.textContent = error.message;
+    addMessage("assistant", `Block chat failed: ${error.message}`);
+  });
+});
+
+document.getElementById("save-block-code-btn").addEventListener("click", () => {
+  saveBlockCode().catch((error) => {
+    blockLogEl.textContent = error.message;
+    addMessage("assistant", `Could not save block code: ${error.message}`);
+  });
+});
+
+document.getElementById("externalize-block-code-btn").addEventListener("click", () => {
+  externalizeBlockCode().catch((error) => {
+    blockLogEl.textContent = error.message;
+    addMessage("assistant", `Could not save inline code as script: ${error.message}`);
+  });
+});
+
+document.getElementById("dry-run-block-btn").addEventListener("click", () => {
+  const id = selectedNodeId();
+  if (!id) {
+    blockLogEl.textContent = "Select a block first.";
+    return;
+  }
+  startRuntimeRun(true, id).catch((error) => {
+    addMessage("assistant", `Could not dry run block: ${error.message}`);
+  });
+});
+
+document.getElementById("run-block-btn").addEventListener("click", () => {
+  const id = selectedNodeId();
+  if (!id) {
+    blockLogEl.textContent = "Select a block first.";
+    return;
+  }
+  startRuntimeRun(false, id).catch((error) => {
+    addMessage("assistant", `Could not run block: ${error.message}`);
+  });
+});
+
+document.getElementById("repair-prompt-btn").addEventListener("click", prepareRepairPrompt);
 
 sourceEl.value = AAPS.samples.biology;
 addMessage("assistant", "AAPS Studio is ready. Use chat to prepare skills or edit source directly.");

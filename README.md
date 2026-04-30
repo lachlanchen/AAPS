@@ -25,9 +25,9 @@ The public product site is `https://aaps.lazying.art`. The broader agent portal 
 ## What This Repo Contains
 
 - `aaps.project.json`: project manifest for this repository.
-- `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for parsing scripts and validating projects.
-- `studio/`: AAPS Studio, a three-tab PWA with Block Lab chat, project management, block inspector, source editing, tree visualization, and IR preview.
-- `backend/`: local Codex wrapper server for `/api/aaps/project`, `/api/aaps/edit`, and `/api/codex/*`.
+- `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for parsing scripts, resolving imports, building plans, and validating projects.
+- `studio/`: AAPS Studio, a three-tab PWA with Block Lab chat, project management, block inspector, block-level code chat, source editing, tree visualization, runtime controls, and IR preview.
+- `backend/`: local Codex wrapper and project filesystem server for `/api/aaps/project`, `/api/aaps/block/chat`, `/api/aaps/run`, `/api/aaps/edit`, and `/api/codex/*`.
 - `website/`: bright landing page deployed by GitHub Pages.
 - `docs/`: language spec, project management guide, Codex wrapper guide, and roadmap.
 - `references/pipeline-scripts/`: copied source pipeline materials plus converted general `.aaps` scripts.
@@ -85,6 +85,7 @@ my-aaps-project/
   modules/
   subworkflows/
   workflows/
+  scripts/
   drafts/
   archive/
   data/
@@ -94,14 +95,14 @@ my-aaps-project/
   notes/
 ```
 
-The manifest records project metadata, default and active `.aaps` files, data folders, artifact root, run database, variables, tools, models, notes, and file categories. Workflows can declare dependencies with project-root relative includes:
+The manifest records project metadata, default and active `.aaps` files, data folders, artifact root, run database, variables, tools, models, notes, and file categories. Workflows can declare dependencies with project-root relative imports/includes:
 
 ```aaps
-include "blocks/qc_image.aaps"
+import block "blocks/qc_image.aaps" as qc_image
 include "skills/microscopy_qc.aaps"
 ```
 
-See [docs/project-management.md](docs/project-management.md) and [examples/projects/organoid-analysis](examples/projects/organoid-analysis).
+The project-aware parser resolves these files, records source files, builds an import graph, and reports missing or circular imports. See [docs/project-management.md](docs/project-management.md), [examples/projects/organoid-analysis](examples/projects/organoid-analysis), [examples/projects/app-development](examples/projects/app-development), and [examples/projects/book-writing](examples/projects/book-writing).
 
 ## Design Philosophy
 
@@ -121,6 +122,8 @@ For biology, this means segmentation is modeled as inspect image -> build priors
 - [examples/app_development_review.aaps](examples/app_development_review.aaps): app page scanning, screenshots, bug detection, patching, and reruns.
 - [examples/book_writing_pipeline.aaps](examples/book_writing_pipeline.aaps): outline, chapter drafting, consistency/style checks, revision, and export.
 - [examples/general_agentic_workflow.aaps](examples/general_agentic_workflow.aaps): domain-neutral loops, routing, validation, recovery, artifacts, and review.
+- [examples/projects/organoid-analysis/workflows/executable_organoid_demo.aaps](examples/projects/organoid-analysis/workflows/executable_organoid_demo.aaps): local standard-library Python demo that generates an image, runs QC, thresholds a mask, quantifies objects, and writes a report.
+- [examples/projects/app-development/workflows/executable_static_check.aaps](examples/projects/app-development/workflows/executable_static_check.aaps): local static app-project checker.
 
 ## Quick Start
 
@@ -131,6 +134,12 @@ npm run studio
 ```
 
 Open `http://127.0.0.1:8796`.
+
+Studio tabs:
+
+- **Block Lab**: chat to create blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions.
+- **Program**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
+- **Project**: load a project, edit `aaps.project.json`, browse `.aaps` and script files, create/duplicate/archive workflow files, dry-run or run workflows.
 
 For wrapper smoke tests without model calls:
 
@@ -153,11 +162,17 @@ task qc_image {
 }
 ```
 
+Supported adapters include `shell`, `python_script`, `python_inline`, `node_script`, `npm_script`, `manual`, and `noop`. Runtime variables include `${project.root}`, `${project.data}`, `${run.dir}`, `${run.artifacts}`, `${block.name}`, `${input.name}`, and `${output.name}`.
+
 Run locally:
 
 ```bash
-node scripts/aaps-runner.js plan --source examples/executable_runtime.aaps --project . --json
-node scripts/aaps-runner.js run --source examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js parse examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js plan examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js run examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js run-block workflows/executable_organoid_demo.aaps --project examples/projects/organoid-analysis --block qc_image --json
+node scripts/aaps.js validate --project examples/projects/organoid-analysis --json
+node scripts/aaps.js run workflows/executable_static_check.aaps --project examples/projects/app-development --json
 ```
 
 Runs write `run.json`, `events.jsonl`, stdout/stderr logs, repair requests, and `report.md` under `runtime/aaps-runs/<run-id>/`. See [docs/runtime.md](docs/runtime.md).
@@ -174,6 +189,10 @@ GET  /api/aaps/project
 POST /api/aaps/project
 GET  /api/aaps/project/file
 POST /api/aaps/project/file
+GET  /api/aaps/project/text-file
+POST /api/aaps/project/text-file
+POST /api/aaps/project/file-action
+POST /api/aaps/block/chat
 POST /api/aaps/run
 GET  /api/aaps/run?id=<run-id>
 POST /api/codex/respond
@@ -210,6 +229,7 @@ npm test
 python3 -m py_compile backend/aaps_codex_server.py
 npm run project:validate
 node scripts/aaps-runner.js run --source examples/executable_runtime.aaps --project . --json
+node scripts/aaps.js validate --project examples/projects/book-writing --json
 npm run build:website
 ```
 

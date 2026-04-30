@@ -5,10 +5,18 @@
 runtime/
 .aaps-work/
 website/studio/
+examples/projects/*/runtime/
+examples/projects/*/runs/*.jsonl
+examples/projects/*/artifacts/**
+!examples/projects/*/artifacts/.gitkeep
+examples/projects/*/reports/*.md
+examples/projects/*/data/synthetic_*.pgm
+examples/projects/*/${run.artifacts}/
 
 # Dependencies and caches
 node_modules/
 __pycache__/
+*.pyc
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

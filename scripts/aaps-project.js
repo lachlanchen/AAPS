@@ -37,12 +37,15 @@ function scanAapsFiles(projectDir) {
 function validate(projectDir) {
   const manifest = readManifest(projectDir);
   const files = scanAapsFiles(projectDir);
+  const fileMap = Object.fromEntries(
+    files.map((file) => [file, fs.readFileSync(path.join(projectDir, file), "utf8")])
+  );
   const result = AAPS.validateProjectManifest(manifest, files);
   const parseDiagnostics = [];
 
-  files.forEach((file) => {
-    const source = fs.readFileSync(path.join(projectDir, file), "utf8");
-    const parsed = AAPS.parseAAPS(source);
+  const targets = AAPS.projectFileIndex(manifest).filter((file) => Object.prototype.hasOwnProperty.call(fileMap, file));
+  targets.forEach((file) => {
+    const parsed = AAPS.parseAAPSProject(fileMap, file, manifest);
     parsed.diagnostics.forEach((diagnostic) => {
       parseDiagnostics.push({
         severity: "error",

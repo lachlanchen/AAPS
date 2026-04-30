@@ -1,0 +1,16 @@
+pipeline "Revise Style Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "writing"
+
+  block revise_style {
+    input draft: markdown required
+    input consistency_report: json required
+    output revised_chapter: markdown
+    action revise {
+      prompt "Revise for clarity, pacing, voice, scene energy, and consistency without changing approved facts."
+      validate "Revision preserves required names, timeline facts, and chapter purpose."
+      repair true
+    }
+  }
+}

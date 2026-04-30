@@ -1,0 +1,52 @@
+{
+  "schema": "aaps_project/0.1",
+  "name": "Book Writing Project",
+  "path": ".",
+  "description": "Reusable AAPS blocks for outline, drafting, consistency checks, style revision, and manuscript export.",
+  "domain": "writing",
+  "tags": ["book", "novel", "script", "long-form"],
+  "defaultMain": "workflows/main_book_pipeline.aaps",
+  "activeFile": "workflows/main_book_pipeline.aaps",
+  "created": "2026-04-30T00:00:00Z",
+  "updated": "2026-04-30T00:00:00Z",
+  "paths": {
+    "blocks": "blocks",
+    "skills": "skills",
+    "modules": "modules",
+    "subworkflows": "workflows",
+    "workflows": "workflows",
+    "drafts": "drafts",
+    "archives": "archive",
+    "scripts": "scripts",
+    "data": "data",
+    "artifacts": "artifacts",
+    "runs": "runs",
+    "reports": "reports",
+    "notes": "notes"
+  },
+  "dataFolders": ["data"],
+  "artifactRoot": "artifacts",
+  "runDatabase": "runs/book-writing-aaps-runs.jsonl",
+  "variables": {
+    "manuscript_style": "clear, vivid, internally consistent",
+    "chapter_count": "12"
+  },
+  "tools": ["markdown", "codex"],
+  "models": ["gpt-5"],
+  "notes": ["Human review gates are required before final export."],
+  "files": {
+    "blocks": [
+      "blocks/outline_chapter.aaps",
+      "blocks/draft_chapter.aaps",
+      "blocks/check_consistency.aaps",
+      "blocks/revise_style.aaps"
+    ],
+    "skills": [],
+    "modules": [],
+    "subworkflows": [],
+    "workflows": ["workflows/main_book_pipeline.aaps"],
+    "drafts": [],
+    "archives": [],
+    "references": []
+  }
+}

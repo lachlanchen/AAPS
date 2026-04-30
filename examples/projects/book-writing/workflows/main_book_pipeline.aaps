@@ -1,0 +1,51 @@
+pipeline "Main Book Pipeline" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "writing"
+  tags "book, chapter, consistency, revision"
+  import block "blocks/outline_chapter.aaps" as outline_chapter
+  import block "blocks/draft_chapter.aaps" as draft_chapter
+  import block "blocks/check_consistency.aaps" as check_consistency
+  import block "blocks/revise_style.aaps" as revise_style
+  artifact_dir "artifacts"
+  database "runs/book-writing-aaps-runs.jsonl"
+  input chapter_briefs: folder required = "data/chapter-briefs"
+  output manuscript: markdown = "reports/manuscript.md"
+
+  agent editor {
+    role "Long-form writing agent that preserves canon and separates draft generation from review."
+    model "gpt-5"
+    tools "markdown, citation_check, consistency_check"
+  }
+
+  task write_book {
+    uses editor
+    for_each chapter in "chapter_briefs" {
+      action outline {
+        call outline_chapter
+      }
+      action draft {
+        call draft_chapter
+      }
+      action consistency {
+        call check_consistency
+      }
+      if "consistency_report.blocking_issues > 0" {
+        action human_canon_review {
+          review "Human resolves canon conflicts before style revision."
+        }
+      }
+      else {
+        action revise {
+          call revise_style
+        }
+      }
+    }
+    action export_manuscript {
+      prompt "Assemble revised chapters, front matter, notes, and export checklist."
+      output manuscript: markdown = "reports/manuscript.md"
+      validate "Manuscript includes all chapters and a revision summary."
+      review "Human approves the final manuscript export."
+    }
+  }
+}

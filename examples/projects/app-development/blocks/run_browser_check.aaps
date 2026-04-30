@@ -1,0 +1,17 @@
+pipeline "Run Browser Check Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "software"
+
+  block run_browser_check {
+    input app_url: url required
+    output screenshot: image
+    output browser_report: json
+    action capture {
+      tool "playwright"
+      prompt "Open the app, capture screenshots across desktop and mobile, and record console/runtime errors."
+      validate "Screenshots exist and browser report has no blocking errors."
+      recover "If Playwright is missing, prepare an installation/retry instruction and request human approval."
+    }
+  }
+}

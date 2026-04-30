@@ -57,6 +57,9 @@ my-aaps-project/
     main.aaps
     batch_analysis.aaps
     compare_methods.aaps
+  scripts/
+    qc_image.py
+    threshold_segment.py
   drafts/
   archive/
   data/
@@ -68,17 +71,17 @@ my-aaps-project/
 
 ## Multi-File Workflows
 
-Use `include` statements in `.aaps` files to declare project-root relative dependencies:
+Use `include` or `import` statements in `.aaps` files to declare project-root relative dependencies:
 
 ```aaps
 pipeline "Main Organoid Analysis" {
-  include "blocks/qc_image.aaps"
-  include "blocks/segment_organoid.aaps"
-  include "blocks/quantify_growth.aaps"
+  import block "blocks/qc_image.aaps" as qc_image
+  import block "blocks/segment_organoid.aaps" as segment_organoid
+  include "skills/report_generation.aaps"
 }
 ```
 
-`include` is declarative. The parser records dependencies in IR; the runtime can later resolve, cache, execute, and version them.
+The project-aware parser resolves imports, records each imported block source file, and reports missing or circular imports. Imported blocks are available to `call` statements and to the visual graph.
 
 ## Commands
 
@@ -86,6 +89,8 @@ pipeline "Main Organoid Analysis" {
 npm run project:validate
 node scripts/aaps-project.js validate examples/projects/organoid-analysis
 node scripts/aaps-project.js init my-aaps-project "My AAPS Project" biology
+node scripts/aaps.js validate --project examples/projects/organoid-analysis --json
+node scripts/aaps.js run workflows/executable_organoid_demo.aaps --project examples/projects/organoid-analysis --json
 ```
 
 Validation checks manifest shape, relative paths, declared `.aaps` files, and parser diagnostics for project files.
@@ -97,7 +102,11 @@ AAPS Studio has a Project tab for:
 - editing `aaps.project.json`
 - validating manifest fields
 - viewing blocks, skills, modules, workflows, drafts, archives, and references
+- viewing script files used by executable blocks
 - loading a project file into the script editor
 - saving the active file through the local server
+- creating, duplicating, and archiving `.aaps` files
+- running or dry-running the active workflow
+- running or dry-running the selected block from the block inspector
 
 Static deployment can edit and export manifests in the browser. Local Studio adds filesystem-backed load/save APIs.

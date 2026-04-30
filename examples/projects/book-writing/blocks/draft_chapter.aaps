@@ -1,0 +1,15 @@
+pipeline "Draft Chapter Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "writing"
+
+  block draft_chapter {
+    input outline: markdown required
+    output draft: markdown
+    action draft {
+      prompt "Draft from the outline while preserving named entities, plot facts, constraints, and voice."
+      validate "Draft covers every outline beat and marks uncertain facts instead of inventing them."
+      recover "If continuity is uncertain, ask for review instead of silently changing canon."
+    }
+  }
+}

@@ -1,0 +1,15 @@
+pipeline "Outline Chapter Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "writing"
+
+  block outline_chapter {
+    input brief: markdown required
+    input prior_context: markdown optional
+    output outline: markdown
+    action outline {
+      prompt "Create a chapter outline with promise, beats, evidence, scenes, constraints, and handoff notes."
+      validate "Outline includes goal, scene beats, continuity notes, and unresolved questions."
+    }
+  }
+}

@@ -82,12 +82,116 @@ const projectMain = parseFile(path.join(__dirname, "..", "examples", "projects",
 assert.strictEqual(projectMain.pipeline.includes.includes("blocks/qc_image.aaps"), true);
 assert.strictEqual(projectMain.diagnostics.length, 0, JSON.stringify(projectMain.diagnostics));
 
+const projectFileMap = {
+  "workflows/main.aaps": `pipeline "Import Test" {
+  import block "blocks/write_json.aaps" as write_json
+  task main {
+    call write_json
+  }
+}
+`,
+  "blocks/write_json.aaps": `pipeline "Write JSON Block" {
+  block write_json {
+    output report: json = "runtime/artifacts/import-test.json"
+    exec python_inline
+    code """
+from pathlib import Path
+Path("runtime/artifacts").mkdir(parents=True, exist_ok=True)
+Path("runtime/artifacts/import-test.json").write_text('{"ok": true}\\n', encoding="utf-8")
+"""
+    validate json "runtime/artifacts/import-test.json"
+  }
+}
+`,
+};
+const parsedProject = AAPS.parseAAPSProject(projectFileMap, "workflows/main.aaps", AAPS.createProjectManifest());
+assert.strictEqual(parsedProject.diagnostics.length, 0, JSON.stringify(parsedProject.diagnostics));
+assert.strictEqual(parsedProject.pipeline.imports[0].kind, "block");
+assert.strictEqual(parsedProject.pipeline.blocks[0].id, "write_json");
+assert.strictEqual(parsedProject.pipeline.blocks[0].imported, true);
+const importedPlan = AAPS.buildExecutionPlan(parsedProject);
+assert(importedPlan.steps.some((step) => step.id === "write_json" && step.actions[0].type === "python_inline"));
+
+const missingImport = AAPS.parseAAPSProject(
+  {
+    "workflows/main.aaps": `pipeline "Missing Import" {
+  import block "blocks/missing.aaps" as missing
+}
+`,
+  },
+  "workflows/main.aaps",
+  AAPS.createProjectManifest()
+);
+assert(missingImport.unresolvedImports.some((item) => item.path === "blocks/missing.aaps"));
+assert(missingImport.diagnostics.some((diagnostic) => diagnostic.message.includes("Unresolved import")));
+
+const circularImport = AAPS.parseAAPSProject(
+  {
+    "workflows/a.aaps": `pipeline "A" {
+  import block "workflows/b.aaps" as b
+}
+`,
+    "workflows/b.aaps": `pipeline "B" {
+  import block "workflows/a.aaps" as a
+}
+`,
+  },
+  "workflows/a.aaps",
+  AAPS.createProjectManifest()
+);
+assert(circularImport.circularImports.length >= 1);
+assert(circularImport.diagnostics.some((diagnostic) => diagnostic.message.includes("Circular import")));
+
 const executable = parseFile(path.join(__dirname, "..", "examples", "executable_runtime.aaps"));
 assert.strictEqual(executable.pipeline.tasks[0].exec.length, 1);
 const executionPlan = AAPS.buildExecutionPlan(executable);
 assert.strictEqual(executionPlan.version, "aaps_plan/0.1");
 assert.strictEqual(executionPlan.executableSteps, 1);
 assert(executionPlan.steps.some((step) => step.repair === true));
+
+const inlineFile = path.join(__dirname, "..", ".aaps-work", "tests", "inline.aaps");
+fs.mkdirSync(path.dirname(inlineFile), { recursive: true });
+fs.writeFileSync(
+  inlineFile,
+  `pipeline "Inline Runtime Test" {
+  task inline_writer {
+    output report: json = "runtime/artifacts/executable/inline.json"
+    exec python_inline
+    code """
+from pathlib import Path
+Path("runtime/artifacts/executable").mkdir(parents=True, exist_ok=True)
+Path("runtime/artifacts/executable/inline.json").write_text('{"inline": true}\\n', encoding="utf-8")
+"""
+    validate json "${"${output.report}"}"
+  }
+}
+`,
+  "utf8"
+);
+const inlineParsed = parseFile(inlineFile);
+assert.strictEqual(inlineParsed.pipeline.tasks[0].exec[0].type, "python_inline");
+assert(inlineParsed.pipeline.tasks[0].code.includes("inline"));
+const inlinePlan = AAPS.buildExecutionPlan(inlineParsed);
+assert.strictEqual(inlinePlan.executableSteps, 1);
+const inlineRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    inlineFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "test-runtime-inline",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(inlineRun.status, 0, inlineRun.stderr || inlineRun.stdout);
+assert.strictEqual(JSON.parse(inlineRun.stdout).status, "succeeded");
 
 const runtimeResult = childProcess.spawnSync(
   "node",
@@ -150,6 +254,47 @@ assert.strictEqual(fallbackResult.status, 0, fallbackResult.stderr || fallbackRe
 const fallbackSummary = JSON.parse(fallbackResult.stdout);
 assert.strictEqual(fallbackSummary.results[0].status, "recovered");
 assert(fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "executable", "fallback.txt")));
+
+const cliParse = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "parse", "workflows/executable_organoid_demo.aaps", "--project", "examples/projects/organoid-analysis"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(cliParse.status, 0, cliParse.stderr || cliParse.stdout);
+assert.strictEqual(JSON.parse(cliParse.stdout).pipeline.name, "Executable Organoid Demo");
+
+const cliValidate = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "validate", "--project", "examples/projects/book-writing", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(cliValidate.status, 0, cliValidate.stderr || cliValidate.stdout);
+assert.strictEqual(JSON.parse(cliValidate.stdout).ok, true);
+
+const blockRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run-block",
+    "workflows/executable_organoid_demo.aaps",
+    "--project",
+    "examples/projects/organoid-analysis",
+    "--block",
+    "generate_image",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(blockRun.status, 0, blockRun.stderr || blockRun.stdout);
+assert.strictEqual(JSON.parse(blockRun.stdout).plan.executableSteps, 1);
+
+const appDemoRun = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "run", "workflows/executable_static_check.aaps", "--project", "examples/projects/app-development", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(appDemoRun.status, 0, appDemoRun.stderr || appDemoRun.stdout);
+assert.strictEqual(JSON.parse(appDemoRun.stdout).status, "succeeded");
 
 const badProject = AAPS.validateProjectManifest({
   ...AAPS.sampleProject,

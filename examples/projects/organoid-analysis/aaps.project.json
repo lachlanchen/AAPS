@@ -20,6 +20,7 @@
     "modules": "modules",
     "subworkflows": "workflows",
     "workflows": "workflows",
+    "scripts": "scripts",
     "drafts": "drafts",
     "archives": "archive",
     "data": "data",
@@ -40,6 +41,7 @@
     "review_mode": "required_when_low_confidence"
   },
   "tools": [
+    "python3",
     "python",
     "cellpose",
     "scikit-image",
@@ -72,7 +74,8 @@
     ],
     "workflows": [
       "workflows/main.aaps",
-      "workflows/batch_analysis.aaps"
+      "workflows/batch_analysis.aaps",
+      "workflows/executable_organoid_demo.aaps"
     ],
     "drafts": [],
     "archives": [],

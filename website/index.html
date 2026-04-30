@@ -25,6 +25,7 @@
         <a href="#project">Project</a>
         <a href="#runtime">Runtime</a>
         <a href="#studio">Studio</a>
+        <a href="#examples">Examples</a>
         <a href="#deploy">Deploy</a>
         <a href="https://github.com/lachlanchen/AAPS">GitHub</a>
       </nav>
@@ -90,16 +91,16 @@
             <p class="eyebrow">The Language</p>
             <h2>Readable scripts for agent pipelines</h2>
             <p>
-              AAPS abstracts the common loop from AutoAppDev, AutoNovelWriter, LazyBlog,
-              OrganoidQuant, OrganoidCompactnessAnalysis, and OrganoidAgent:
-              inspect, route, act, verify, summarize, and publish.
+              AAPS abstracts the common loop from agentic app builders, writing systems,
+              biomedical analysis tools, and report generators: inspect, route, act,
+              verify, summarize, and publish.
             </p>
             <ul class="check-list">
               <li>Define agents, reusable skills, tasks, methods, guards, and actions.</li>
-              <li>Use `include` to connect project-root relative block and skill files.</li>
+              <li>Use `import` and `include` to connect project-root relative block and skill files.</li>
               <li>Connect tasks with `after`, branch with `if`, and iterate with `for_each`.</li>
-              <li>Mix natural-language prompts, typed artifacts, deterministic commands, and QC gates.</li>
-              <li>Compile to JSON IR or Markdown runbooks.</li>
+              <li>Mix natural-language prompts, typed artifacts, executable actions, and QC gates.</li>
+              <li>Compile to JSON IR, execution plans, run logs, or Markdown runbooks.</li>
             </ul>
           </div>
           <pre class="code-card"><code>pipeline "Ship AAPS Studio" {
@@ -116,6 +117,7 @@
   skill segment_image {
     input image: image
     output mask: image
+    exec python_script "scripts/threshold_segment.py"
     choose method_router {
       prompt "Choose cellpose, thresholding, or vision_mask."
     }
@@ -168,23 +170,24 @@
             <h2>Readable workflows that can actually run</h2>
             <p>
               AAPS now compiles scripts into an execution plan and runs supported local actions.
-              The first runtime executes shell and Python steps, writes stdout/stderr logs,
+              The first runtime executes shell, Python, inline Python, Node, npm, noop, and manual steps, writes stdout/stderr logs,
               checks artifacts, validates JSON and non-empty files, retries failures, runs fallback
               commands or fallback blocks, and creates repair request files when recovery is needed.
             </p>
             <ul class="check-list">
               <li>Generate `aaps_plan/0.1` from the same parser used by Studio.</li>
-              <li>Execute `run`, `exec shell`, and `exec python` blocks.</li>
-              <li>Record `run.json`, `events.jsonl`, logs, repair notes, and Markdown reports.</li>
-              <li>Start dry-runs or real runs from the Studio Project tab.</li>
+              <li>Resolve project imports and expose missing or circular dependency diagnostics.</li>
+              <li>Record `resolved_workflow.json`, `execution_plan.json`, `run.json`, events, logs, artifacts, repair notes, and reports.</li>
+              <li>Run workflows, dry-runs, or selected blocks from CLI or Studio.</li>
             </ul>
           </div>
           <pre class="code-card"><code>task qc_image {
   retry 1
   repair true
-  exec shell "python3 scripts/qc.py --out artifacts/qc.json"
-  validate exists "artifacts/qc.json"
-  validate json "artifacts/qc.json"
+  exec python_script "scripts/qc.py"
+  arg output_json = "${run.artifacts}/qc.json"
+  validate exists "${run.artifacts}/qc.json"
+  validate json "${run.artifacts}/qc.json"
   fallback "run: python3 scripts/basic_qc.py"
 }</code></pre>
         </div>
@@ -199,7 +202,8 @@
               The Studio webapp is separate from this landing page. It has a Block Lab for
               chat-driven skill preparation, a Program tab for source editing, and a Project tab
               for manifest validation, multi-file workflow management, dry-runs, and real runtime runs.
-              It supports block inspection,
+              It supports project file actions, script browsing, block inspection, block-level chat,
+              inline/external code editing,
               typed ports, artifacts, validations, recovery policies, human review markers,
               tree visualization, loops, conditions, functional blocks, and JSON IR preview.
             </p>
@@ -223,6 +227,27 @@
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="section examples-band" id="examples">
+        <div class="section-inner summary-grid">
+          <article>
+            <h2>Organoid Demo</h2>
+            <p>Generate a synthetic image, run QC, threshold a mask, quantify objects, and export a Markdown report with standard-library Python.</p>
+          </article>
+          <article>
+            <h2>App Check</h2>
+            <p>Scan a project folder, produce JSON structure metrics, and route findings into review notes.</p>
+          </article>
+          <article>
+            <h2>Book Pipeline</h2>
+            <p>Organize outline, draft, consistency, revision, and human approval blocks across a multi-file project.</p>
+          </article>
+          <article>
+            <h2>CLI</h2>
+            <p>Use `aaps parse`, `aaps plan`, `aaps run`, `aaps run-block`, and `aaps validate` outside the browser.</p>
+          </article>
         </div>
       </section>
 

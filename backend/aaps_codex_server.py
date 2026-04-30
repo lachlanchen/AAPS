@@ -23,6 +23,8 @@ RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
 RUN_DIR = ROOT / "runtime" / "aaps-runs"
 PROJECT_MANIFEST = "aaps.project.json"
 SKIP_SCAN_DIRS = {".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"}
+TEXT_FILE_EXTENSIONS = {".aaps", ".py", ".sh", ".js", ".mjs", ".cjs", ".json", ".md", ".txt", ".yaml", ".yml", ".toml"}
+SCRIPT_FILE_EXTENSIONS = {".py", ".sh", ".js", ".mjs", ".cjs"}
 SCHEMAS = {
     "response": ROOT / "schemas" / "aaps_response.schema.json",
     "aaps_edit": ROOT / "schemas" / "aaps_edit.schema.json",
@@ -73,6 +75,60 @@ def scan_aaps_files(project_dir: Path) -> list[str]:
                 full = Path(current) / filename
                 files.append(full.relative_to(project_dir).as_posix())
     return sorted(files)
+
+
+def scan_project_files(project_dir: Path, extensions: set[str]) -> list[str]:
+    files: list[str] = []
+    if not project_dir.exists():
+        return files
+    for current, dirnames, filenames in os.walk(project_dir):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_SCAN_DIRS]
+        for filename in filenames:
+            full = Path(current) / filename
+            if full.suffix.lower() in extensions:
+                files.append(full.relative_to(project_dir).as_posix())
+    return sorted(files)
+
+
+def ensure_text_file(file_path: Path) -> None:
+    if file_path.suffix.lower() not in TEXT_FILE_EXTENSIONS:
+        raise ValueError(f"unsupported text file extension: {file_path.suffix}")
+
+
+def slug(value: str, fallback: str = "block") -> str:
+    text = "".join(char.lower() if char.isalnum() else "_" for char in str(value or fallback))
+    text = "_".join(part for part in text.split("_") if part)
+    return text[:48] or fallback
+
+
+def default_aaps_source(kind: str, name: str) -> str:
+    block_id = slug(name or kind)
+    title = block_id.replace("_", " ").title()
+    if kind == "block":
+        return f'''pipeline "{title} Block" {{
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "general"
+  goal "Reusable AAPS block."
+
+  block {block_id} {{
+    input item: artifact optional
+    output result: json
+    prompt "Describe the block behavior, executable actions, validation, and recovery."
+  }}
+}}
+'''
+    return f'''pipeline "{title}" {{
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "general"
+  goal "AAPS workflow."
+
+  task {block_id} {{
+    prompt "Describe the workflow goal and add typed blocks."
+  }}
+}}
+'''
 
 
 def read_project(project_dir: Path) -> dict:
@@ -128,6 +184,8 @@ def read_project(project_dir: Path) -> dict:
         "manifest_exists": manifest_path.exists(),
         "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
         "files": scan_aaps_files(project_dir),
+        "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
+        "text_files": scan_project_files(project_dir, TEXT_FILE_EXTENSIONS),
     }
 
 
@@ -263,6 +321,268 @@ User message:
 """
 
 
+def generated_python_code(kind: str) -> str:
+    if kind == "threshold":
+        return '''#!/usr/bin/env python3
+"""AAPS generated threshold segmentation helper.
+
+Reads a portable graymap (P2) image, writes a binary P2 mask, and emits JSON metrics.
+It intentionally uses only the Python standard library for local demos.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+def read_pgm(path: Path):
+    tokens = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            tokens.extend(line.split())
+    if not tokens or tokens[0] != "P2":
+        raise ValueError("expected an ASCII PGM/P2 image")
+    width, height, max_value = map(int, tokens[1:4])
+    pixels = [int(value) for value in tokens[4:]]
+    if len(pixels) != width * height:
+        raise ValueError("pixel count does not match PGM dimensions")
+    return width, height, max_value, pixels
+
+
+def write_pgm(path: Path, width: int, height: int, max_value: int, pixels):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [" ".join(str(pixels[row * width + col]) for col in range(width)) for row in range(height)]
+    path.write_text(f"P2\\n{width} {height}\\n{max_value}\\n" + "\\n".join(rows) + "\\n", encoding="utf-8")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--image-path", "--image", dest="image_path", required=True)
+    parser.add_argument("--mask-path", "--output-mask", "--output", dest="mask_path", required=True)
+    parser.add_argument("--report-json", "--output-json", dest="report_json", default="")
+    parser.add_argument("--threshold", type=int, default=0)
+    args, _ = parser.parse_known_args()
+
+    width, height, max_value, pixels = read_pgm(Path(args.image_path))
+    threshold = args.threshold or max(1, sum(pixels) // len(pixels))
+    mask = [max_value if value >= threshold else 0 for value in pixels]
+    write_pgm(Path(args.mask_path), width, height, max_value, mask)
+
+    if args.report_json:
+        selected = sum(1 for value in mask if value)
+        report = {
+            "threshold": threshold,
+            "width": width,
+            "height": height,
+            "selected_pixels": selected,
+            "selected_fraction": selected / float(width * height),
+            "mask_path": args.mask_path,
+        }
+        Path(args.report_json).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.report_json).write_text(json.dumps(report, indent=2) + "\\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()
+'''
+    if kind == "qc":
+        return '''#!/usr/bin/env python3
+"""AAPS generated lightweight image QC helper."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+def read_numbers(path: Path):
+    values = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or line == "P2":
+            continue
+        values.extend(int(part) for part in line.split() if part.isdigit())
+    return values[3:] if len(values) > 3 else values
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--image-path", "--image", dest="image_path", required=True)
+    parser.add_argument("--output-json", "--qc-report", dest="output_json", required=True)
+    parser.add_argument("--preview-path", dest="preview_path", default="")
+    args, _ = parser.parse_known_args()
+
+    image = Path(args.image_path)
+    if not image.exists():
+        raise FileNotFoundError(args.image_path)
+    values = read_numbers(image)
+    mean = sum(values) / len(values) if values else 0
+    report = {
+        "image_path": args.image_path,
+        "exists": True,
+        "pixel_count": len(values),
+        "mean_intensity": mean,
+        "blur_score": "not_computed",
+        "contrast_score": "simple",
+        "route_hint": "threshold" if mean > 0 else "manual_review",
+    }
+    out = Path(args.output_json)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2) + "\\n", encoding="utf-8")
+    if args.preview_path:
+        preview = Path(args.preview_path)
+        preview.parent.mkdir(parents=True, exist_ok=True)
+        preview.write_text(image.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()
+'''
+    return '''#!/usr/bin/env python3
+"""AAPS generated block helper."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-json", "--output", dest="output_json", default="artifacts/generated_result.json")
+    parser.add_argument("--message", default="generated by AAPS block chat")
+    args, unknown = parser.parse_known_args()
+    payload = {
+        "ok": True,
+        "message": args.message,
+        "unknown_args": unknown,
+    }
+    out = Path(args.output_json)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2) + "\\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def append_provenance(project_dir: Path, payload: dict) -> None:
+    record = {"time": now_iso(), **payload}
+    target = project_dir / "runs" / "code-provenance.jsonl"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def build_block_chat_response(body: dict) -> dict:
+    project_dir = safe_repo_path(str(body.get("path") or "."))
+    block_id = slug(str(body.get("blockId") or body.get("block_id") or "block"))
+    message = str(body.get("message") or "").strip()
+    if not message:
+        raise ValueError("message is required")
+
+    lower = message.lower()
+    if "shell" in lower or "command" in lower:
+        command = "echo AAPS block action"
+        if ":" in message:
+            command = message.split(":", 1)[1].strip() or command
+        return {
+            "ok": True,
+            "mode": "shell_action",
+            "summary": f"Prepared shell action for {block_id}.",
+            "action": {
+                "type": "shell",
+                "command": command,
+                "entry": "",
+                "args": {},
+                "source": "block_chat",
+            },
+            "validations": [],
+            "script": "",
+        }
+
+    inline = "inline" in lower
+    kind = "threshold" if any(word in lower for word in ["segment", "segmentation", "threshold", "mask"]) else "qc" if "qc" in lower else "generic"
+    script_rel = str(body.get("targetFile") or body.get("target_file") or f"scripts/{block_id}_{kind}.py")
+    code = generated_python_code(kind)
+
+    action: dict
+    script_written = ""
+    if inline:
+        action = {
+            "type": "python_inline",
+            "command": "",
+            "entry": "",
+            "code": code,
+            "args": {},
+            "source": "block_chat",
+        }
+    else:
+        script_path = relative_to_project(project_dir, script_rel)
+        ensure_text_file(script_path)
+        if script_path.suffix.lower() != ".py":
+            raise ValueError("generated Python code must be saved to a .py file")
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+        if script_path.exists():
+            backup = script_path.with_suffix(script_path.suffix + f".bak-{int(time.time())}")
+            script_path.rename(backup)
+        script_path.write_text(code, encoding="utf-8")
+        script_path.chmod(0o755)
+        script_written = script_path.relative_to(project_dir).as_posix()
+        action = {
+            "type": "python_script",
+            "command": "",
+            "entry": script_written,
+            "args": {},
+            "source": "block_chat",
+        }
+
+    validations = []
+    if kind == "threshold":
+        action["args"] = {
+            "image_path": "${input.image_path}",
+            "mask_path": "${output.mask_path}",
+            "report_json": "${run.artifacts}/segmentation_report.json",
+        }
+        validations = ["exists ${output.mask_path}", "json ${run.artifacts}/segmentation_report.json"]
+    elif kind == "qc":
+        action["args"] = {
+            "image_path": "${input.image_path}",
+            "output_json": "${output.qc_report}",
+            "preview_path": "${run.artifacts}/qc_preview.pgm",
+        }
+        validations = ["json ${output.qc_report}", "exists ${run.artifacts}/qc_preview.pgm"]
+    else:
+        action["args"] = {"output_json": "${run.artifacts}/generated_result.json"}
+        validations = ["json ${run.artifacts}/generated_result.json"]
+
+    append_provenance(
+        project_dir,
+        {
+            "block": block_id,
+            "message": message,
+            "target_file": script_written,
+            "mode": "inline" if inline else "script",
+            "action_type": action["type"],
+        },
+    )
+    return {
+        "ok": True,
+        "mode": "python_inline" if inline else "python_script",
+        "summary": f"Prepared {action['type']} action for {block_id}.",
+        "action": action,
+        "validations": validations,
+        "script": script_written,
+        "code": code,
+    }
+
+
 def build_generic_prompt(body: dict) -> str:
     prompt = str(body.get("prompt") or "").strip()
     input_payload = body.get("input", {})
@@ -376,6 +696,7 @@ def start_aaps_run(body: dict) -> dict:
     project_dir = safe_repo_path(str(body.get("path") or "."))
     project_arg = project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else "."
     dry_run = bool(body.get("dryRun") or body.get("dry_run"))
+    block = str(body.get("block") or body.get("blockId") or "").strip()
     source = str(body.get("source") or "")
     file_name = str(body.get("file") or "").strip()
     source_path = ""
@@ -398,6 +719,7 @@ def start_aaps_run(body: dict) -> dict:
         "project": project_arg,
         "file": file_name,
         "dryRun": dry_run,
+        "block": block,
         "result": None,
         "error": "",
     }
@@ -423,6 +745,8 @@ def start_aaps_run(body: dict) -> dict:
             command.extend(["--file", file_name])
         if dry_run:
             command.append("--dry-run")
+        if block:
+            command.extend(["--block", block])
         try:
             process = subprocess.run(
                 command,
@@ -499,6 +823,26 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 if not file_path.name.endswith(".aaps"):
                     write_json(self, {"error": "only .aaps files can be loaded"}, 400)
                     return
+                if not file_path.exists():
+                    write_json(self, {"error": "file not found"}, 404)
+                    return
+                write_json(
+                    self,
+                    {
+                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "file": file_path.relative_to(project_dir).as_posix(),
+                        "source": file_path.read_text(encoding="utf-8"),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+        if parsed.path == "/api/aaps/project/text-file":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                file_path = relative_to_project(project_dir, query.get("file", [""])[0])
+                ensure_text_file(file_path)
                 if not file_path.exists():
                     write_json(self, {"error": "file not found"}, 404)
                     return
@@ -639,9 +983,96 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(self, {"error": str(exc)}, 400)
             return
 
+        if parsed.path == "/api/aaps/project/text-file":
+            try:
+                project_dir = safe_repo_path(str(body.get("path") or "."))
+                file_name = str(body.get("file") or "").strip()
+                source = str(body.get("source") or "")
+                file_path = relative_to_project(project_dir, file_name)
+                ensure_text_file(file_path)
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(source, encoding="utf-8")
+                write_json(
+                    self,
+                    {
+                        "ok": True,
+                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "file": file_path.relative_to(project_dir).as_posix(),
+                        "files": scan_aaps_files(project_dir),
+                        "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
+                        "text_files": scan_project_files(project_dir, TEXT_FILE_EXTENSIONS),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
+        if parsed.path == "/api/aaps/project/file-action":
+            try:
+                project_dir = safe_repo_path(str(body.get("path") or "."))
+                action = str(body.get("action") or "").strip().lower()
+                file_name = str(body.get("file") or "").strip()
+                target_name = str(body.get("target") or "").strip()
+                kind = str(body.get("kind") or "workflow").strip().lower()
+                if not action:
+                    write_json(self, {"error": "action is required"}, 400)
+                    return
+                if action == "create":
+                    file_path = relative_to_project(project_dir, file_name)
+                    if not file_path.name.endswith(".aaps"):
+                        write_json(self, {"error": "created workflow files must end with .aaps"}, 400)
+                        return
+                    if file_path.exists():
+                        write_json(self, {"error": "file already exists"}, 409)
+                        return
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_text(default_aaps_source(kind, file_path.stem), encoding="utf-8")
+                elif action == "duplicate":
+                    file_path = relative_to_project(project_dir, file_name)
+                    target_path = relative_to_project(project_dir, target_name)
+                    if not file_path.exists():
+                        write_json(self, {"error": "source file not found"}, 404)
+                        return
+                    if target_path.exists():
+                        write_json(self, {"error": "target file already exists"}, 409)
+                        return
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(file_path, target_path)
+                elif action == "rename":
+                    file_path = relative_to_project(project_dir, file_name)
+                    target_path = relative_to_project(project_dir, target_name)
+                    if not file_path.exists():
+                        write_json(self, {"error": "source file not found"}, 404)
+                        return
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.rename(target_path)
+                elif action in {"archive", "delete"}:
+                    file_path = relative_to_project(project_dir, file_name)
+                    if not file_path.exists():
+                        write_json(self, {"error": "source file not found"}, 404)
+                        return
+                    archive_root = project_dir / "archive"
+                    archive_root.mkdir(parents=True, exist_ok=True)
+                    archived = archive_root / f"{int(time.time())}-{file_path.name}"
+                    file_path.rename(archived)
+                else:
+                    write_json(self, {"error": f"unknown file action: {action}"}, 400)
+                    return
+                write_json(self, read_project(project_dir))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
         if parsed.path == "/api/aaps/run":
             try:
                 write_json(self, start_aaps_run(body), 202)
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
+        if parsed.path == "/api/aaps/block/chat":
+            try:
+                write_json(self, build_block_chat_response(body))
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
@@ -670,7 +1101,7 @@ def main() -> None:
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/project, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/project, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/block/chat, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 

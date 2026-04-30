@@ -1,0 +1,15 @@
+pipeline "Scan Pages Block" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "software"
+  goal "Identify app pages, routes, tabs, subpages, and likely test targets."
+
+  block scan_pages {
+    input app_root: folder required = "."
+    output page_inventory: json
+    action scan {
+      prompt "Scan the app structure, routing files, tab components, manifests, and entrypoints."
+      validate "Page inventory includes file, route, purpose, and test priority."
+    }
+  }
+}

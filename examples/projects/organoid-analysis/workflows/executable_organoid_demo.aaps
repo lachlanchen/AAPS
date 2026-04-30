@@ -1,0 +1,85 @@
+pipeline "Executable Organoid Demo" {
+  subtitle "Prompt Is All You Need"
+  version "0.2"
+  domain "biology"
+  tags "executable, demo, organoid, qc, segmentation"
+  execution_mode "local_deterministic"
+  requires_commands "python3"
+  requires_files "scripts/generate_synthetic_image.py, scripts/qc_image.py, scripts/threshold_segment.py, scripts/quantify_mask.py, scripts/write_report.py"
+  artifact_dir "artifacts"
+  database "runs/executable-organoid-demo.jsonl"
+  log_path "runs/executable-organoid-demo.log"
+  safety allow_destructive_shell = "false"
+  goal "Run a complete local QC, segmentation, quantification, and report workflow without external APIs."
+  input image_path: image required = "data/synthetic_organoid.pgm"
+  output report: markdown = "reports/executable-organoid-demo.md"
+
+  task generate_image {
+    output image_path: image = "data/synthetic_organoid.pgm"
+    exec python_script "scripts/generate_synthetic_image.py"
+    arg output_image = "${output.image_path}"
+    validate exists "${output.image_path}"
+    repair true
+  }
+
+  task qc_image after generate_image {
+    input image_path: image required = "data/synthetic_organoid.pgm"
+    output qc_report: json = "${run.artifacts}/qc_report.json"
+    output qc_preview: image = "${run.artifacts}/qc_preview.pgm"
+    exec python_script "scripts/qc_image.py"
+    arg image_path = "${input.image_path}"
+    arg output_json = "${output.qc_report}"
+    arg preview_path = "${output.qc_preview}"
+    validate json "${output.qc_report}"
+    validate exists "${output.qc_preview}"
+    retry 1
+    repair true
+  }
+
+  task segment_image after qc_image {
+    input image_path: image required = "data/synthetic_organoid.pgm"
+    output mask_path: image = "${run.artifacts}/mask.pgm"
+    output overlay_path: image = "${run.artifacts}/overlay.pgm"
+    output segmentation_report: json = "${run.artifacts}/segmentation_report.json"
+    choose method_router {
+      prompt "Route to standard-library thresholding for the local demo; real projects may use Cellpose, SAM2, or a vision mask model."
+    }
+    exec python_script "scripts/threshold_segment.py"
+    arg image_path = "${input.image_path}"
+    arg mask_path = "${output.mask_path}"
+    arg overlay_path = "${output.overlay_path}"
+    arg report_json = "${output.segmentation_report}"
+    validate exists "${output.mask_path}"
+    validate exists "${output.overlay_path}"
+    validate json "${output.segmentation_report}"
+    fallback "run: python3 scripts/threshold_segment.py --image-path data/synthetic_organoid.pgm --mask-path ${run.artifacts}/mask.pgm --overlay-path ${run.artifacts}/overlay.pgm --report-json ${run.artifacts}/segmentation_report.json --threshold 80"
+    repair true
+  }
+
+  task quantify_mask after segment_image {
+    input mask_path: image required = "${run.artifacts}/mask.pgm"
+    output object_table: table = "${run.artifacts}/objects.csv"
+    output metrics_report: json = "${run.artifacts}/metrics_report.json"
+    exec python_script "scripts/quantify_mask.py"
+    arg mask_path = "${input.mask_path}"
+    arg object_table = "${output.object_table}"
+    arg metrics_report = "${output.metrics_report}"
+    validate nonempty "${output.object_table}"
+    validate json "${output.metrics_report}"
+    repair true
+  }
+
+  task write_report after quantify_mask {
+    input qc_report: json required = "${run.artifacts}/qc_report.json"
+    input segmentation_report: json required = "${run.artifacts}/segmentation_report.json"
+    input metrics_report: json required = "${run.artifacts}/metrics_report.json"
+    output report: markdown = "reports/executable-organoid-demo.md"
+    exec python_script "scripts/write_report.py"
+    arg qc_report = "${input.qc_report}"
+    arg segmentation_report = "${input.segmentation_report}"
+    arg metrics_report = "${input.metrics_report}"
+    arg output_report = "${output.report}"
+    validate nonempty "${output.report}"
+    review "Human approves the overlay and Markdown report before adapting the demo to real microscopy data."
+  }
+}
