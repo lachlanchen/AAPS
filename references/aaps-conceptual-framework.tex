@@ -1,12 +1,11 @@
-\documentclass[tikz,border=8pt]{standalone}
+\documentclass[tikz,border=10pt]{standalone}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \usepackage{xcolor}
-\usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds,shadows,decorations.pathreplacing}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds,shadows}
 
 \definecolor{ink}{HTML}{172033}
 \definecolor{muted}{HTML}{536071}
-\definecolor{paper}{HTML}{FBFDFF}
 \definecolor{blue}{HTML}{2F7DF6}
 \definecolor{cyan}{HTML}{00A6D6}
 \definecolor{green}{HTML}{18A957}
@@ -19,7 +18,7 @@
 \tikzset{
   font=\sffamily,
   title/.style={
-    font=\sffamily\bfseries\Large,
+    font=\sffamily\bfseries\LARGE,
     text=ink,
     align=center
   },
@@ -28,211 +27,221 @@
     text=muted,
     align=center
   },
+  lane/.style={
+    draw=#1!55!black,
+    fill=#1!4,
+    very thick,
+    rounded corners=8pt,
+    inner sep=10pt
+  },
+  laneLabel/.style={
+    font=\sffamily\bfseries\small,
+    text=#1!55!black,
+    align=left
+  },
   phase/.style={
     draw=#1!70!black,
     fill=#1!10,
     very thick,
     rounded corners=5pt,
-    minimum width=3.35cm,
-    minimum height=1.36cm,
+    minimum width=3.45cm,
+    minimum height=1.35cm,
     align=center,
     text=ink,
-    drop shadow={shadow xshift=.8pt,shadow yshift=-.8pt,opacity=.16}
+    drop shadow={shadow xshift=.8pt,shadow yshift=-.8pt,opacity=.12}
   },
-  detail/.style={
-    draw=#1!55!black,
+  facet/.style={
+    draw=#1!58!black,
     fill=#1!7,
     thick,
-    rounded corners=4pt,
+    rounded corners=5pt,
     text width=4.35cm,
+    minimum height=2.05cm,
     align=left,
-    inner sep=7pt,
+    inner sep=8pt,
     text=ink
   },
-  smallbox/.style={
-    draw=#1!55!black,
+  contract/.style={
+    draw=#1!58!black,
     fill=#1!8,
     thick,
-    rounded corners=4pt,
-    text width=3.35cm,
+    rounded corners=5pt,
+    text width=3.65cm,
+    minimum height=1.55cm,
     align=left,
-    inner sep=6pt,
+    inner sep=7pt,
     text=ink
   },
   agent/.style={
-    draw=#1!70!black,
-    fill=#1!13,
+    draw=#1!68!black,
+    fill=#1!12,
     thick,
     rounded corners=12pt,
-    text width=3.35cm,
+    text width=4.35cm,
+    minimum height=1.75cm,
     align=center,
-    inner sep=7pt,
+    inner sep=8pt,
     text=ink
   },
-  harness/.style={
-    draw=#1!60!black,
-    fill=#1!4,
-    very thick,
-    rounded corners=7pt,
-    inner sep=8pt
+  note/.style={
+    draw=blue!55!black,
+    fill=blue!4,
+    thick,
+    rounded corners=6pt,
+    text width=24.4cm,
+    align=left,
+    inner sep=9pt,
+    text=ink,
+    font=\sffamily\scriptsize
   },
   arrow/.style={
-    -{Latex[length=3.2mm,width=2.1mm]},
+    -{Latex[length=3.1mm,width=2mm]},
     very thick,
     draw=line
   },
-  feedback/.style={
-    -{Latex[length=3mm,width=2mm]},
+  downarrow/.style={
+    -{Latex[length=2.7mm,width=1.8mm]},
     thick,
-    draw=#1!75!black,
-    dashed
+    draw=line
   },
-  labeltext/.style={
-    font=\sffamily\scriptsize,
-    text=muted,
-    align=center
-  },
-  note/.style={
-    font=\sffamily\scriptsize,
-    text=ink,
-    align=left
-  }
+  small/.style={font=\sffamily\scriptsize, text=muted, align=center}
 }
 
 \begin{document}
 \begin{tikzpicture}[x=1cm,y=1cm]
-  \node[title] at (12,9.35) {AAPS Conceptual Framework};
-  \node[subtitle, text width=22cm] at (12,8.82)
+  \node[title] at (13.2,15.7) {AAPS Conceptual Framework};
+  \node[subtitle, text width=25cm] at (13.2,15.15)
     {Autonomous Agentic Pipeline Script as a natural-language-first, typed, compilable, executable harness around AI agents.};
 
-  % Main top-down flow.
-  \node[phase=blue]   (intent)   at (0,7.55) {\textbf{Scientific intent}\\[-1pt]\scriptsize goals, priors, experiment design};
-  \node[phase=cyan]   (studio)   at (4,7.55) {\textbf{AAPS Studio}\\[-1pt]\scriptsize GUI + chat writing interface};
-  \node[phase=green]  (script)   at (8,7.55) {\textbf{\texttt{.aaps} program}\\[-1pt]\scriptsize readable workflow language};
-  \node[phase=yellow] (parser)   at (12,7.55) {\textbf{Parser}\\[-1pt]\scriptsize deterministic structured IR};
-  \node[phase=orange] (compiler) at (16,7.55) {\textbf{Agent compiler}\\[-1pt]\scriptsize resolve blocks, code, tools};
-  \node[phase=pink]   (runtime)  at (20,7.55) {\textbf{Runtime}\\[-1pt]\scriptsize execute, validate, recover};
-  \node[phase=violet] (outputs)  at (24,7.55) {\textbf{Outputs}\\[-1pt]\scriptsize masks, overlays, tables, reports};
+  % Lane 1: lifecycle.
+  \node[phase=blue]   (intent)   at (0,13.1) {\textbf{Scientific intent}\\[-1pt]\scriptsize goals, priors, experiment design};
+  \node[phase=cyan]   (studio)   at (4.4,13.1) {\textbf{AAPS Studio}\\[-1pt]\scriptsize GUI + chat writing interface};
+  \node[phase=green]  (script)   at (8.8,13.1) {\textbf{\texttt{.aaps} program}\\[-1pt]\scriptsize readable workflow language};
+  \node[phase=yellow] (parser)   at (13.2,13.1) {\textbf{Parser}\\[-1pt]\scriptsize deterministic structured IR};
+  \node[phase=orange] (compiler) at (17.6,13.1) {\textbf{Agent compiler}\\[-1pt]\scriptsize resolves blocks, code, tools};
+  \node[phase=pink]   (runtime)  at (22,13.1) {\textbf{Runtime}\\[-1pt]\scriptsize execute, validate, recover};
+  \node[phase=violet] (outputs)  at (26.4,13.1) {\textbf{Outputs}\\[-1pt]\scriptsize masks, tables, reports};
 
   \foreach \a/\b in {intent/studio,studio/script,script/parser,parser/compiler,compiler/runtime,runtime/outputs}
     \draw[arrow] (\a) -- (\b);
 
-  \node[labeltext] at (2,8.03) {top-down design};
-  \node[labeltext] at (6,8.03) {natural-language authoring};
-  \node[labeltext] at (10,8.03) {syntax to structure};
-  \node[labeltext] at (14,8.03) {unresolved to runnable};
-  \node[labeltext] at (18,8.03) {plan to execution};
-  \node[labeltext] at (22,8.03) {artifact trail};
+  \begin{scope}[on background layer]
+    \node[lane=blue, fit=(intent)(studio)(script)(parser)(compiler)(runtime)(outputs)] (lifecycleLane) {};
+  \end{scope}
+  \node[laneLabel=blue, anchor=west] at ($(lifecycleLane.north west)+(0.2,-0.18)$) {1. Lifecycle harness};
 
-  % Harness bands.
-  \node[detail=blue] (design) at (1.9,5.55) {
-    \textbf{Top-down experimental design}\\
+  % Lane 2: harness facets.
+  \node[facet=blue] (design) at (1.65,10.1) {
+    \textbf{Top-down design}\\[2pt]
     \scriptsize
-    Expert-friendly overview first: biological goal, samples, imaging protocol,
-    expected measurements, priors, constraints, and acceptable failure modes.
+    Start from the biological or project-level overview: goal, samples,
+    priors, expected measurements, constraints, and acceptable failure modes.
+  };
+  \node[facet=green] (contracts) at (7.25,10.1) {
+    \textbf{Block contracts}\\[2pt]
+    \scriptsize
+    Each task block declares typed inputs and outputs, parameters, environment,
+    tools, agents, actions, artifacts, validation, recovery, and tests.
+  };
+  \node[facet=yellow] (ir) at (12.85,10.1) {
+    \textbf{Parser and IR}\\[2pt]
+    \scriptsize
+    The parser converts readable `.aaps` source into structured objects:
+    metadata, blocks, loops, conditions, routes, requirements, and warnings.
+  };
+  \node[facet=orange] (compile) at (18.45,10.1) {
+    \textbf{Agent-based compilation}\\[2pt]
+    \scriptsize
+    The compiler resolves missing scripts, binaries, tools, dependencies, and
+    agents. It can generate code or prepare setup and repair prompts.
+  };
+  \node[facet=pink] (execution) at (24.05,10.1) {
+    \textbf{Auditable execution}\\[2pt]
+    \scriptsize
+    Runtime creates run folders, logs commands, tracks artifacts, validates
+    outputs, retries, falls back, and records repair provenance.
   };
 
-  \node[detail=green] (contracts) at (7.45,5.55) {
-    \textbf{Functional block contracts}\\
-    \scriptsize
-    Each block declares typed inputs and outputs, parameters, environment,
-    tools, agents, actions, artifacts, validation rules, recovery, and tests.
-  };
+  \foreach \a/\b in {design/contracts,contracts/ir,ir/compile,compile/execution}
+    \draw[arrow] (\a) -- (\b);
 
-  \node[detail=orange] (compile) at (13,5.55) {
-    \textbf{Agent-based compilation}\\
-    \scriptsize
-    Missing blocks, scripts, binaries, dependencies, tool registry entries,
-    and agent prompts are resolved, generated, or reported before execution.
-  };
+  \draw[downarrow] (intent.south) -- (design.north);
+  \draw[downarrow] (script.south) -- (contracts.north);
+  \draw[downarrow] (parser.south) -- (ir.north);
+  \draw[downarrow] (compiler.south) -- (compile.north);
+  \draw[downarrow] (runtime.south) -- (execution.north);
 
-  \node[detail=pink] (execution) at (18.55,5.55) {
-    \textbf{Auditable execution}\\
-    \scriptsize
-    The runtime creates run folders, logs commands, tracks artifacts, checks
-    validations, retries or falls back, and records repair provenance.
-  };
+  \begin{scope}[on background layer]
+    \node[lane=green, fit=(design)(contracts)(ir)(compile)(execution)] (facetLane) {};
+  \end{scope}
+  \node[laneLabel=green, anchor=west] at ($(facetLane.north west)+(0.2,-0.18)$) {2. Program-level harness facets};
 
-  \node[detail=violet] (recordsdetail) at (24.1,5.55) {
-    \textbf{Research record}\\
-    \scriptsize
-    The final outputs preserve the path from scientific question to code,
-    execution logs, artifact versions, human approvals, and conclusions.
-  };
-
-  \draw[arrow] (script.south) to[out=-90,in=90] (contracts.north);
-  \draw[arrow] (parser.south) to[out=-90,in=90] (compile.north);
-  \draw[arrow] (runtime.south) to[out=-90,in=90] (execution.north);
-  \draw[arrow] (outputs.south) to[out=-90,in=90] (recordsdetail.north);
-
-  % Block contract decomposition.
-  \node[smallbox=green] (inout) at (2.65,2.95) {
-    \textbf{Data contract}\\
+  % Lane 3: block contract decomposition.
+  \node[contract=green] (data) at (2.2,6.85) {
+    \textbf{Data contract}\\[1pt]
     \scriptsize inputs, outputs, optionality, defaults, paths, schemas
   };
-  \node[smallbox=cyan] (actions) at (7.5,2.95) {
-    \textbf{Action contract}\\
+  \node[contract=cyan] (actions) at (8.05,6.85) {
+    \textbf{Action contract}\\[1pt]
     \scriptsize Python, shell, internal tools, model calls, manual review
   };
-  \node[smallbox=yellow] (tools) at (12.35,2.95) {
-    \textbf{Capability contract}\\
+  \node[contract=yellow] (capability) at (13.9,6.85) {
+    \textbf{Capability contract}\\[1pt]
     \scriptsize environment, packages, binaries, tools, models, agents
   };
-  \node[smallbox=orange] (guards) at (17.2,2.95) {
-    \textbf{Guardrail contract}\\
+  \node[contract=orange] (guardrails) at (19.75,6.85) {
+    \textbf{Guardrail contract}\\[1pt]
     \scriptsize validation, QC thresholds, safety settings, retry, fallback
   };
-  \node[smallbox=pink] (records) at (22.05,2.95) {
-    \textbf{Record contract}\\
+  \node[contract=pink] (records) at (25.6,6.85) {
+    \textbf{Record contract}\\[1pt]
     \scriptsize artifacts, logs, reports, repair prompts, provenance
   };
 
-  \begin{scope}[on background layer]
-    \node[harness=green, fit=(inout)(actions)(tools)(guards)(records)] (blockfit) {};
-  \end{scope}
-  \node[labeltext] at (12.35,4.05) {Block-level harness: divide-and-conquer unit of scientific automation};
-
-  \foreach \a/\b in {inout/actions,actions/tools,tools/guards,guards/records}
+  \foreach \a/\b in {data/actions,actions/capability,capability/guardrails,guardrails/records}
     \draw[arrow] (\a) -- (\b);
 
-  % Agent roles.
-  \node[agent=violet] (writer) at (4,0.72) {
-    \textbf{Writer agent}\\[-1pt]
-    \scriptsize turns natural-language goals into structured workflows and reusable blocks
-  };
-  \node[agent=orange] (compileragent) at (12,0.72) {
-    \textbf{Compiler agent}\\[-1pt]
-    \scriptsize writes or repairs code, scripts, setup prompts, and tool bindings
-  };
-  \node[agent=pink] (runtimeagent) at (20,0.72) {
-    \textbf{Runtime agents}\\[-1pt]
-    \scriptsize handle irregular metadata, QC interpretation, method routing, and repair
-  };
-
-  \draw[feedback=violet] (writer.north) to[out=90,in=-90] (studio.south);
-  \draw[feedback=orange] (compileragent.north) to[out=90,in=-90] (compiler.south);
-  \draw[feedback=pink] (runtimeagent.north) to[out=90,in=-90] (runtime.south);
-
-  % Outer harness boundary.
   \begin{scope}[on background layer]
-    \node[harness=blue, fit=(intent)(outputs)(design)(recordsdetail)(blockfit)(writer)(compileragent)(runtimeagent)] {};
+    \node[lane=yellow, fit=(data)(actions)(capability)(guardrails)(records)] (blockLane) {};
   \end{scope}
-  \node[labeltext, text width=16cm] at (12,-0.28)
-    {AAPS harness: make agent behavior inspectable, editable, reproducible, executable, and recoverable.};
+  \node[laneLabel=yellow, anchor=west] at ($(blockLane.north west)+(0.2,-0.18)$) {3. Block-level divide-and-conquer harness};
 
-  % Feedback loops.
-  \draw[feedback=orange] (execution.south) to[out=-92,in=35] (compileragent.east);
-  \node[labeltext, text width=3.8cm] at (15.7,0.86) {failure logs become repair prompts};
+  % Lane 4: agent roles.
+  \node[agent=violet] (writer) at (4.4,3.55) {
+    \textbf{Writer agent}\\[-1pt]
+    \scriptsize converts natural-language goals into workflows, block drafts,
+    and reusable skills.
+  };
+  \node[agent=orange] (compileragent) at (13.2,3.55) {
+    \textbf{Compiler agent}\\[-1pt]
+    \scriptsize writes or repairs code, scripts, tool bindings, requirements,
+    setup prompts, and tests.
+  };
+  \node[agent=pink] (runtimeagent) at (22,3.55) {
+    \textbf{Runtime agents}\\[-1pt]
+    \scriptsize handle irregular metadata, dynamic QC interpretation, method
+    routing, and repair decisions.
+  };
 
-  % Example use case strip.
-  \node[note, text width=23.5cm] at (12,-1.33) {
+  \begin{scope}[on background layer]
+    \node[lane=violet, fit=(writer)(compileragent)(runtimeagent)] (agentLane) {};
+  \end{scope}
+  \node[laneLabel=violet, anchor=west] at ($(agentLane.north west)+(0.2,-0.18)$) {4. Agent roles inside the harness};
+
+  % Example strip.
+  \node[note] (example) at (13.2,0.65) {
     \textbf{Example: organoid image analysis.}
     A scientist specifies the experiment and desired measurements first. AAPS
     expresses QC, segmentation, quantification, visualization, and reporting as
     typed blocks. The compiler resolves scripts and tools such as thresholding,
-    Cellpose, or manual review. Runtime agents route low-quality or irregular
-    data, while validation and human checkpoints keep masks, tables, and
-    conclusions auditable.
+    Cellpose, SAM, or manual review. Runtime agents route low-quality or
+    irregular data, while validation and human checkpoints keep masks, tables,
+    and conclusions auditable.
   };
+
+  \begin{scope}[on background layer]
+    \node[lane=blue, fit=(lifecycleLane)(facetLane)(blockLane)(agentLane)(example),
+      inner sep=16pt] {};
+  \end{scope}
 \end{tikzpicture}
 \end{document}
