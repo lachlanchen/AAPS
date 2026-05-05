@@ -498,6 +498,54 @@ const appDemoRun = childProcess.spawnSync(
 assert.strictEqual(appDemoRun.status, 0, appDemoRun.stderr || appDemoRun.stdout);
 assert.strictEqual(JSON.parse(appDemoRun.stdout).status, "succeeded");
 
+const promptProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-project");
+fs.rmSync(promptProject, { recursive: true, force: true });
+fs.mkdirSync(promptProject, { recursive: true });
+const promptDryRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "prompt",
+    "Create an AAPS workflow that writes a durable report.",
+    "--project",
+    ".aaps-work/tests/prompt-project",
+    "--backend",
+    "print",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(promptDryRun.status, 0, promptDryRun.stderr || promptDryRun.stdout);
+const promptPayload = JSON.parse(promptDryRun.stdout);
+assert.strictEqual(promptPayload.ok, true);
+assert.strictEqual(promptPayload.backend, "print");
+assert.strictEqual(promptPayload.executed, false);
+assert(fs.existsSync(path.join(promptProject, promptPayload.promptFile)));
+const promptText = fs.readFileSync(path.join(promptProject, promptPayload.promptFile), "utf8");
+assert(promptText.includes("AAPS Backend Agent Task"));
+assert(promptText.includes("Docker-safe AAPS CLI fallback"));
+assert(promptText.includes("npx -y @lazyingart/aaps@"));
+assert(promptText.includes("host path exists inside the active sandbox"));
+
+const directPrompt = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "Create a tiny project-local workflow from this direct prompt.",
+    "--project",
+    ".aaps-work/tests/prompt-project",
+    "--backend",
+    "print",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(directPrompt.status, 0, directPrompt.stderr || directPrompt.stdout);
+const directPromptPayload = JSON.parse(directPrompt.stdout);
+assert.strictEqual(directPromptPayload.ok, true);
+assert.strictEqual(directPromptPayload.backend, "print");
+assert(fs.existsSync(path.join(promptProject, directPromptPayload.promptFile)));
+
 const badProject = AAPS.validateProjectManifest({
   ...AAPS.sampleProject,
   path: "/tmp/bad",

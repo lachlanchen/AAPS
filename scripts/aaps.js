@@ -23,6 +23,8 @@ function usage() {
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
+    "  aaps prompt \"goal\" [--project .] [--backend aginti|print] [--json]",
+    "  aaps \"goal\" [--project .] [--backend aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
     "  aaps studio [--host 127.0.0.1] [--port 8796] [--mock-codex]",
     "",
@@ -35,6 +37,9 @@ function usage() {
     "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
     "  --run-id <id>     Stable run identifier for reproducible test runs.",
     "  --dry-run         Build plan/readiness and skip action side effects.",
+    "  --backend <name>  Prompt backend for direct goals. Defaults to aginti.",
+    "  --provider <name> Provider passed to AgInTi backend.",
+    "  --print-prompt    Save and print the generated backend prompt without running it.",
     "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
     "  --json            Print machine-readable JSON where supported.",
   ].join("\n");
@@ -127,6 +132,148 @@ function parseProjectAware(projectDir, fileArg) {
 function print(value, asJson) {
   if (asJson) console.log(JSON.stringify(value, null, 2));
   else console.log(value);
+}
+
+function timestampSlug(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+function packageVersion() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+    return String(manifest.version || "latest");
+  } catch (_error) {
+    return "latest";
+  }
+}
+
+function shellCommandExists(command, cwd) {
+  const result = childProcess.spawnSync("sh", ["-lc", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], {
+    cwd,
+    stdio: "ignore",
+  });
+  return result.status === 0;
+}
+
+function buildPromptHandoff(projectDir, goal, options) {
+  const promptDir = path.join(projectDir, ".aaps-work", "prompts");
+  fs.mkdirSync(promptDir, { recursive: true });
+  const promptPath = path.join(promptDir, `${timestampSlug()}-aginti-backend.md`);
+  const aapsCli = path.join(__dirname, "aaps.js");
+  const dockerSafeAapsCli = `npx -y @lazyingart/aaps@${packageVersion()}`;
+  const projectRelativePromptPath = toProjectPath(path.relative(projectDir, promptPath));
+  const text = [
+    "# AAPS Backend Agent Task",
+    "",
+    "You are the backend implementation agent for an AAPS project.",
+    "",
+    "## User Goal",
+    "",
+    goal,
+    "",
+    "## Project",
+    "",
+    `- Project root: ${projectDir}`,
+    "- Preferred AAPS CLI: `aaps` when it is installed in the active shell or sandbox.",
+    `- Docker-safe AAPS CLI fallback: \`${dockerSafeAapsCli}\` when package installs/network are approved.`,
+    `- Host/source AAPS CLI fallback: \`node ${aapsCli}\` only if that host path exists inside the active sandbox.`,
+    "- In AgInTi docker-workspace, host-global binaries and host source paths may not be visible. Verify the CLI before relying on it.",
+    "",
+    "## Operating Contract",
+    "",
+    "1. Inspect the current AAPS project before editing.",
+    "2. If no AAPS project exists, create a small project-local AAPS structure instead of writing unrelated files.",
+    "3. Prefer editing `.aaps` workflows, blocks, scripts, tool registries, and agent registries before ad hoc prose.",
+    "4. Run `aaps validate`, `aaps compile ... --mode check`, and `aaps run ...` when the workflow is executable.",
+    "5. If a step is prompt-only, record it as a handoff unless you actually execute it and verify declared outputs.",
+    "6. Save durable reports under `reports/` and durable generated artifacts under project-local folders.",
+    "7. Do not use sudo or destructive host commands. Ask for a stronger mode when the task requires broader permission.",
+    "8. Finish with exact paths to the workflow, compile/run logs, and outputs.",
+    "",
+    "## Expected Output",
+    "",
+    "- A short AAPS-oriented implementation report.",
+    "- Any generated `.aaps` files or executable artifacts needed for the goal.",
+    "- Evidence from parse/validate/compile/run, or a precise blocker if a backend/tool is unavailable.",
+    "",
+  ].join("\n");
+  fs.writeFileSync(promptPath, text, "utf8");
+  return { promptPath, projectRelativePromptPath, prompt: text, aapsCli, dockerSafeAapsCli };
+}
+
+function commandPrompt(goal, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const text = String(goal || "").trim();
+  if (!text) throw new Error("aaps prompt requires a goal string.");
+  const backend = String(options.backend || process.env.AAPS_BACKEND || "aginti").toLowerCase();
+  const handoff = buildPromptHandoff(projectDir, text, options);
+  const payload = {
+    ok: true,
+    backend,
+    project: projectDir,
+    promptFile: handoff.projectRelativePromptPath,
+    promptPath: handoff.promptPath,
+    executed: false,
+    command: [],
+    status: "prompt_prepared",
+  };
+  const printOnly = options.printPrompt || options.dryRun || backend === "print";
+  if (printOnly) {
+    if (options.json) print(payload, true);
+    else print(handoff.prompt, false);
+    return;
+  }
+  if (backend !== "aginti") {
+    throw new Error(`Unsupported AAPS prompt backend: ${backend}. Supported backends: aginti, print.`);
+  }
+  if (!shellCommandExists("aginti", projectDir)) {
+    payload.ok = false;
+    payload.status = "missing_backend";
+    payload.error = "AgInTiFlow CLI (`aginti`) was not found on PATH. Install @lazyingart/agintiflow or rerun with --backend print.";
+    if (options.json) print(payload, true);
+    else {
+      console.error(payload.error);
+      console.error(`Prepared prompt: ${handoff.projectRelativePromptPath}`);
+    }
+    process.exit(1);
+  }
+  const args = [
+    "--profile",
+    options.profile || "aaps",
+    "--cwd",
+    projectDir,
+    "--sandbox-mode",
+    options.sandboxMode || "docker-workspace",
+    "--package-install-policy",
+    options.packageInstallPolicy || "prompt",
+    "--allow-shell",
+    "--allow-file-tools",
+  ];
+  if (options.packageInstallPolicy === "allow" || options.approvePackageInstalls) {
+    args.push("--approve-package-installs");
+  }
+  if (options.provider) args.push("--provider", options.provider);
+  if (options.model) args.push("--model", options.model);
+  if (options.scoutCount) args.push("--scout-count", String(options.scoutCount));
+  args.push(handoff.prompt);
+  payload.command = ["aginti", ...args];
+  const result = childProcess.spawnSync("aginti", args, {
+    cwd: projectDir,
+    encoding: "utf8",
+    stdio: options.json ? ["ignore", "pipe", "pipe"] : "inherit",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  payload.executed = true;
+  payload.exitCode = result.status ?? 1;
+  payload.signal = result.signal || "";
+  payload.status = payload.exitCode === 0 ? "succeeded" : "failed";
+  if (options.json) {
+    payload.stdout = result.stdout || "";
+    payload.stderr = result.stderr || result.error?.message || "";
+    payload.ok = payload.exitCode === 0;
+    print(payload, true);
+  }
+  process.exit(result.status || 0);
 }
 
 function runRunner(command, file, options) {
@@ -250,8 +397,32 @@ function commandStudio(options) {
 function main() {
   const { command, positional, options } = parseArgs(process.argv);
   const file = positional[0];
+  const knownCommands = new Set([
+    "help",
+    "--help",
+    "-h",
+    "parse",
+    "validate",
+    "studio",
+    "compile",
+    "compile-project",
+    "missing",
+    "generate-block",
+    "generate-script",
+    "prepare-setup",
+    "plan",
+    "check",
+    "run",
+    "check-block",
+    "run-block",
+    "prompt",
+  ]);
   if (command === "help" || command === "--help" || command === "-h") {
     console.log(usage());
+    return;
+  }
+  if (command === "prompt") {
+    commandPrompt(positional.join(" "), options);
     return;
   }
   if (command === "parse") {
@@ -285,6 +456,10 @@ function main() {
     if (!file) throw new Error("aaps run-block requires a .aaps file.");
     if (!options.block) throw new Error("aaps run-block requires --block <id>.");
     runRunner("run", file, options);
+    return;
+  }
+  if (!knownCommands.has(command)) {
+    commandPrompt([command, ...positional].join(" "), options);
     return;
   }
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);

@@ -185,6 +185,9 @@ The pipeline `database` path also receives one JSONL summary per run.
 ## Commands
 
 ```bash
+aaps prompt "Create an executable workflow that writes a durable report." --project .
+aaps "Create an executable workflow that writes a durable report." --project .
+aaps prompt "Prepare the backend prompt only." --backend print --project .
 node scripts/aaps.js parse examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
 node scripts/aaps.js plan examples/executable_runtime.aaps --project . --json
@@ -197,6 +200,10 @@ node scripts/aaps-runner.js plan --source examples/executable_runtime.aaps --pro
 node scripts/aaps-runner.js run --source examples/executable_runtime.aaps --project . --json
 npm run aaps:run -- --file examples/executable_runtime.aaps
 ```
+
+Direct prompt mode writes a durable backend-agent handoff under `.aaps-work/prompts/`. With the default `aginti` backend, AAPS invokes AgInTiFlow as the implementation agent. With `--backend print` or `--print-prompt`, AAPS only prepares and prints the prompt. This is the current bridge for prompt-level tasks; deterministic `.aaps` actions still run through the local runtime adapters above.
+
+The generated handoff is sandbox-aware. It tells the backend to prefer `aaps` when available, use `npx -y @lazyingart/aaps@<version>` as the Docker-safe fallback when package installs/network are approved, and use the source checkout `node scripts/aaps.js` path only when that host path is actually mounted into the active sandbox.
 
 Executable demos:
 

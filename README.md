@@ -151,6 +151,18 @@ aaps studio --host 127.0.0.1 --port 8796
 aaps parse examples/hello.aaps --project .
 ```
 
+Direct prompt handoff:
+
+```bash
+aaps prompt "Create an executable AAPS workflow that writes a durable report." --project .
+aaps "Create an executable AAPS workflow that writes a durable report." --project .
+aaps prompt "Draft the workflow only" --backend print --project .
+```
+
+By default, direct prompts prepare an AAPS backend-agent handoff and invoke `aginti` when it is available. Use `--backend print` or `--print-prompt` to save and inspect the generated prompt without running an agent. This keeps AAPS usable as a declarative workflow layer while letting AgInTiFlow act as the implementation backend for prompt-level tasks.
+
+The handoff prompt includes three explicit CLI routes: installed `aaps`, Docker-safe `npx -y @lazyingart/aaps@<version>` when package installs/network are approved, and a host/source `node scripts/aaps.js` fallback only when that path is visible inside the active sandbox.
+
 The package is published as `@lazyingart/aaps`. Future releases use GitHub Actions Trusted Publishing in `.github/workflows/npm-publish.yml`, with npm trust configured for GitHub owner `lachlanchen`, repository `AAPS`, workflow filename `npm-publish.yml`.
 
 Studio tabs:
