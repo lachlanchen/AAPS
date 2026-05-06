@@ -161,6 +161,122 @@ function shellCommandExists(command, cwd) {
   return result.status === 0;
 }
 
+function collectWorkflowCandidates(projectDir) {
+  const manifest = readManifest(projectDir);
+  const files = Object.keys(scanAapsFiles(projectDir)).sort();
+  const preferred = [];
+  if (manifest?.activeFile && files.includes(manifest.activeFile)) preferred.push(manifest.activeFile);
+  if (manifest?.defaultMain && files.includes(manifest.defaultMain)) preferred.push(manifest.defaultMain);
+  const workflowFiles = files.filter((file) => file.startsWith("workflows/"));
+  const candidates = [...new Set([...preferred, ...workflowFiles, ...files])];
+  return candidates.slice(0, 20);
+}
+
+function collectOutputPorts(node, ports = []) {
+  if (!node || typeof node !== "object") return ports;
+  if (Array.isArray(node.outputPorts)) ports.push(...node.outputPorts);
+  for (const key of ["tasks", "blocks", "stages", "skills", "children"]) {
+    if (Array.isArray(node[key])) {
+      for (const child of node[key]) collectOutputPorts(child, ports);
+    }
+  }
+  return ports;
+}
+
+function checkDeclaredOutputs(projectDir, ir) {
+  const seen = new Set();
+  const outputs = [];
+  for (const port of collectOutputPorts(ir.pipeline || {})) {
+    const value = String(port.value || "").trim();
+    if (!value || value.includes("${") || path.isAbsolute(value) || seen.has(value)) continue;
+    seen.add(value);
+    const full = path.resolve(projectDir, value);
+    const rel = path.relative(projectDir, full);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      outputs.push({ name: port.name || "", path: value, exists: false, size: 0, error: "escapes_project" });
+      continue;
+    }
+    let stat = null;
+    try {
+      stat = fs.statSync(full);
+    } catch (_error) {
+      stat = null;
+    }
+    outputs.push({
+      name: port.name || "",
+      type: port.type || "",
+      path: toProjectPath(rel),
+      exists: Boolean(stat),
+      size: stat?.size || 0,
+      nonempty: Boolean(stat && stat.size > 0),
+    });
+  }
+  return outputs;
+}
+
+function runAapsSelf(projectDir, args) {
+  const result = childProcess.spawnSync(process.execPath, [path.join(__dirname, "aaps.js"), ...args], {
+    cwd: projectDir,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  return {
+    command: ["node", path.join(__dirname, "aaps.js"), ...args],
+    exitCode: result.status ?? 1,
+    stdout: result.stdout || "",
+    stderr: result.stderr || result.error?.message || "",
+  };
+}
+
+function auditAapsBackendResult(projectDir) {
+  const workflows = collectWorkflowCandidates(projectDir);
+  const audit = {
+    ok: false,
+    status: workflows.length ? "checked" : "no_workflows",
+    workflowCount: workflows.length,
+    workflows: [],
+  };
+  for (const workflow of workflows) {
+    const item = {
+      file: workflow,
+      parseOk: false,
+      compileOk: false,
+      declaredOutputs: [],
+      missingOutputs: [],
+      diagnostics: [],
+      compileStatus: "",
+      compileDir: "",
+    };
+    try {
+      const parsed = parseProjectAware(projectDir, workflow);
+      item.parseOk = parsed.ir.diagnostics.length === 0;
+      item.diagnostics = parsed.ir.diagnostics || [];
+      item.declaredOutputs = checkDeclaredOutputs(projectDir, parsed.ir);
+      item.missingOutputs = item.declaredOutputs.filter((output) => !output.exists || output.size === 0);
+    } catch (error) {
+      item.diagnostics = [{ severity: "error", message: error.message }];
+    }
+    const compile = runAapsSelf(projectDir, ["compile", workflow, "--project", ".", "--mode", "check", "--json"]);
+    item.compileExitCode = compile.exitCode;
+    if (compile.stdout.trim()) {
+      try {
+        const report = JSON.parse(compile.stdout);
+        item.compileOk = Boolean(report.ok);
+        item.compileStatus = report.status || "";
+        item.compileDir = report.compileDir || "";
+        item.missingComponents = report.missingComponents || [];
+      } catch (_error) {
+        item.compileOk = false;
+      }
+    }
+    if (compile.stderr.trim()) item.compileStderr = compile.stderr.trim().slice(0, 4000);
+    audit.workflows.push(item);
+  }
+  audit.ok = audit.workflows.length > 0 && audit.workflows.every((item) => item.parseOk && item.compileOk && item.declaredOutputs.length > 0 && item.missingOutputs.length === 0);
+  audit.status = audit.ok ? "verified" : "unverified";
+  return audit;
+}
+
 function buildPromptHandoff(projectDir, goal, options) {
   const promptDir = path.join(projectDir, ".aaps-work", "prompts");
   fs.mkdirSync(promptDir, { recursive: true });
@@ -212,7 +328,8 @@ function buildPromptHandoff(projectDir, goal, options) {
     "- Pin or constrain binary scientific dependencies when practical, especially `numpy`, `matplotlib`, `scipy`, `scikit-image`, `opencv-python-headless`, `pillow`, `pandas`, and `tifffile`.",
     "- Record environment setup in project-local files such as `requirements.txt`, `tools/*.yaml`, or `environments/*.yaml` so the workflow is reproducible.",
     "- Do not treat shell pipeline exit code as reliable when piping through `tee`. Use `set -o pipefail` where available, or separately verify the declared output files after the command.",
-    "- Long-running jobs may use tmux, but the final verdict must still be based on declared outputs, logs, reports, and host-side file checks.",
+    "- Long-running jobs may use tmux, but do not finish while they are still running. Wait for completion, then verify declared outputs, logs, reports, and host-side file checks.",
+    "- If the first `.aaps` or script attempt is incomplete, repair the correct `.aaps`, script, tool, or environment file and rerun parse/compile/run. Do not stop at partial progress.",
     "",
     "## Expected Output",
     "",
@@ -292,14 +409,17 @@ function commandPrompt(goal, options) {
   payload.executed = true;
   payload.exitCode = result.status ?? 1;
   payload.signal = result.signal || "";
-  payload.status = payload.exitCode === 0 ? "succeeded" : "failed";
+  payload.postRunAudit = auditAapsBackendResult(projectDir);
+  if (payload.exitCode === 0 && payload.postRunAudit.ok) payload.status = "succeeded_verified";
+  else if (payload.exitCode === 0) payload.status = "backend_returned_unverified";
+  else payload.status = "failed";
   if (options.json) {
     payload.stdout = result.stdout || "";
     payload.stderr = result.stderr || result.error?.message || "";
-    payload.ok = payload.exitCode === 0;
+    payload.ok = payload.exitCode === 0 && payload.postRunAudit.ok;
     print(payload, true);
   }
-  process.exit(result.status || 0);
+  process.exit(payload.ok ? 0 : payload.exitCode || 1);
 }
 
 function runRunner(command, file, options) {

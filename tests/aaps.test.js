@@ -629,6 +629,31 @@ fs.writeFileSync(
   path.join(fakeBin, "aginti"),
   `#!/bin/sh
 printf '%s\\n' "$@" > "$AAPS_FAKE_AGINTI_ARGS"
+mkdir -p workflows runtime/artifacts
+cat > aaps.project.json <<'EOF'
+{
+  "schema": "aaps_project/0.1",
+  "name": "Prompt Backend Project",
+  "activeFile": "workflows/backend_verified.aaps"
+}
+EOF
+cat > workflows/backend_verified.aaps <<'EOF'
+pipeline "Backend Verified" {
+  output ok_file: text = "runtime/artifacts/backend-ok.txt"
+  agent runner {
+    role "Local shell runner."
+    model "local"
+    tools "shell"
+  }
+  task done {
+    uses runner
+    output ok_file: text = "runtime/artifacts/backend-ok.txt"
+    exec shell "mkdir -p runtime/artifacts && printf ok > runtime/artifacts/backend-ok.txt"
+    validate exists "runtime/artifacts/backend-ok.txt"
+  }
+}
+EOF
+printf ok > runtime/artifacts/backend-ok.txt
 exit 0
 `,
   { encoding: "utf8", mode: 0o755 }
@@ -667,6 +692,8 @@ assert.strictEqual(promptTrustedHost.status, 0, promptTrustedHost.stderr || prom
 const trustedPayload = JSON.parse(promptTrustedHost.stdout);
 assert.strictEqual(trustedPayload.ok, true);
 assert.strictEqual(trustedPayload.executed, true);
+assert.strictEqual(trustedPayload.status, "succeeded_verified");
+assert.strictEqual(trustedPayload.postRunAudit.ok, true);
 assert(trustedPayload.command.includes("--allow-destructive"));
 assert(trustedPayload.command.includes("-s"));
 assert(trustedPayload.command.includes("danger"));
