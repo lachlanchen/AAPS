@@ -4,8 +4,8 @@ const languageSelect = document.getElementById("language-select");
 const WEB_I18N = {
   en: {
     install: "Install", studio: "Studio", language: "Language", project: "Project", runtime: "Runtime", examples: "Examples", deploy: "Deploy",
-    eyebrow: "Prompt-native workflow programming", subtitle: "Project-oriented programming for agents.",
-    heroText: "A prompt-native language and visual studio for turning ideas into structured, executable, and verifiable pipelines with declared outputs, validation gates, recovery steps, and durable artifacts.",
+    eyebrow: "Prompt-native workflow programming", subtitle: "Prompt is all you need.",
+    heroText: "A prompt-native and project-oriented programming language and visual studio for agents, turning ideas into structured, executable, and verifiable pipelines with declared outputs, validation gates, recovery steps, and durable artifacts.",
     openStudio: "Open Studio", agentPortal: "Agent Portal", readSpec: "Read Spec", copy: "Copy", copied: "Copied", selected: "Selected",
     installTitle: "Install AAPS from npm", installText: "AAPS is published as a scoped npm package so one install can provide the parser, agent-based compiler, CLI runner, and local Studio server.",
     studioTitle: "Visual editing plus chat-directed changes", studioText: "Studio opens on Projects, then Blocks, then Programs. Create a topic workspace from a starter template, configure Codex or DeepSeek v4 pro locally, compile missing blocks/scripts/tools, and use block-level chat for code.", launchStudio: "Launch Studio",
