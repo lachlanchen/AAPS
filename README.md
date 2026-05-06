@@ -6,8 +6,8 @@
 
 <div align="center">
   <h1>AAPS</h1>
-  <p><strong>Prompt Is All You Need</strong></p>
-  <p>Autonomous Agentic Pipeline Script: a prompt-native programming language and Studio for autonomous task pipelines.</p>
+  <p><strong>Project-oriented programming for agentic workflows.</strong></p>
+  <p>A prompt-native programming language and visual studio for turning prompts into structured, verifiable pipelines.</p>
   <p>
     <img alt="Language" src="https://img.shields.io/badge/language-AAPS-ff4f8b" />
     <img alt="Studio" src="https://img.shields.io/badge/studio-static%20PWA-00bcd4" />
@@ -18,7 +18,9 @@
 
 ## Overview
 
-AAPS turns prompts into explicit, resumable, verifiable agent workflows. It abstracts the practical loop used across public project patterns such as AutoAppDev, AutoNovelWriter, LazyBlog, OrganoidQuant, OrganoidCompactnessAnalysis, OrganoidAgent, and future AgInTiFlow-backed agents: inspect, route, act, verify, summarize, and publish.
+AAPS is a prompt-native programming language and visual studio for turning prompts into structured, verifiable pipelines. It connects wet and dry experiments, hardware and software, and human intent with executable agent work through tasks, typed inputs, declared outputs, validation gates, recovery steps, and durable artifacts.
+
+It abstracts the practical loop used across public project patterns such as AutoAppDev, AutoNovelWriter, LazyBlog, OrganoidQuant, OrganoidCompactnessAnalysis, OrganoidAgent, and future AgInTiFlow-backed agents: inspect, route, act, verify, summarize, and publish.
 
 The public product site is `https://aaps.lazying.art`. The broader agent portal is `https://agent.lazying.art`.
 
