@@ -94,6 +94,30 @@ function loadRegistries(projectDir, manifest) {
   };
 }
 
+function mergeWorkflowRegistries(registries, ir) {
+  const merged = {
+    tools: { ...((registries && registries.tools) || {}) },
+    agents: { ...((registries && registries.agents) || {}) },
+    environment: { ...((registries && registries.environment) || {}) },
+    files: { ...((registries && registries.files) || {}) },
+  };
+  const pipeline = (ir && ir.pipeline) || {};
+  for (const agent of pipeline.agents || []) {
+    const name = agent && (agent.name || agent.id);
+    if (!name) continue;
+    merged.agents[name] = {
+      name,
+      invocation: agent.model === "local" ? "local" : "prompt",
+      source: "workflow",
+      role: agent.role || "",
+      model: agent.model || "",
+      tools: agent.tools || [],
+      ...(merged.agents[name] || {}),
+    };
+  }
+  return merged;
+}
+
 function commandExists(command, cwd) {
   if (!command) return false;
   const result = spawnSync("sh", ["-lc", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], { cwd });
@@ -766,9 +790,10 @@ function timeoutMs(step) {
 function run(options) {
   const projectDir = path.resolve(options.project || ".");
   const manifest = readManifest(projectDir);
-  const registries = loadRegistries(projectDir, manifest);
+  let registries = loadRegistries(projectDir, manifest);
   const loaded = loadSource(options, projectDir, manifest);
   const ir = parseLoaded(options, projectDir, manifest, loaded);
+  registries = mergeWorkflowRegistries(registries, ir);
   let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
   if (options.block) {
     plan = filterPlanByBlock(plan, options.block, true);
@@ -1206,9 +1231,10 @@ function main() {
   }
   const projectDir = path.resolve(options.project || ".");
   const manifest = readManifest(projectDir);
-  const registries = loadRegistries(projectDir, manifest);
+  let registries = loadRegistries(projectDir, manifest);
   const loaded = loadSource(options, projectDir, manifest);
   const ir = parseLoaded(options, projectDir, manifest, loaded);
+  registries = mergeWorkflowRegistries(registries, ir);
   if (options.command === "plan" || options.command === "check") {
     let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
     if (options.block) {
@@ -1246,6 +1272,7 @@ module.exports = {
   listFiles,
   loadRegistries,
   loadSource,
+  mergeWorkflowRegistries,
   parseArgs,
   parseLoaded,
   projectPython,

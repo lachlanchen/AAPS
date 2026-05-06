@@ -805,7 +805,7 @@ function validateGeneratedFiles(projectDir, records) {
 function loadContext(options) {
   const projectDir = path.resolve(options.project || ".");
   const manifest = Runner.readManifest(projectDir);
-  const registries = Runner.loadRegistries(projectDir, manifest);
+  const baseRegistries = Runner.loadRegistries(projectDir, manifest);
   const sourceOptions = {
     file: options.file,
     source: options.source,
@@ -822,6 +822,7 @@ function loadContext(options) {
     loaded = Runner.loadSource(sourceOptions, projectDir, manifest);
     ir = Runner.parseLoaded(sourceOptions, projectDir, manifest, loaded);
   }
+  const registries = Runner.mergeWorkflowRegistries(baseRegistries, ir);
   const plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
   const compileId = options.compileId || `${nowStamp()}_compile`;
   const compileDir = compileDirFor(projectDir, manifest, compileId);

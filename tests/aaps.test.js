@@ -516,6 +516,42 @@ const appDemoRun = childProcess.spawnSync(
 assert.strictEqual(appDemoRun.status, 0, appDemoRun.stderr || appDemoRun.stdout);
 assert.strictEqual(JSON.parse(appDemoRun.stdout).status, "succeeded");
 
+const inlineAgentProject = path.join(__dirname, "..", ".aaps-work", "tests", "inline-agent-project");
+fs.rmSync(inlineAgentProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(inlineAgentProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(inlineAgentProject, "aaps.project.json"),
+  JSON.stringify({ name: "inline-agent-project", activeFile: "workflows/main.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(inlineAgentProject, "workflows", "main.aaps"),
+  `pipeline "Inline Agent Compile" {
+  agent runner {
+    role "Local test runner."
+    model "local"
+    tools "shell"
+  }
+  task write_file {
+    uses runner
+    exec shell "mkdir -p runtime/artifacts && printf ok > runtime/artifacts/ok.txt"
+    output ok_file: text = "runtime/artifacts/ok.txt"
+    validate exists "runtime/artifacts/ok.txt"
+  }
+}
+`,
+  "utf8"
+);
+const inlineAgentCompile = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "compile", "workflows/main.aaps", "--project", ".aaps-work/tests/inline-agent-project", "--mode", "check", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(inlineAgentCompile.status, 0, inlineAgentCompile.stderr || inlineAgentCompile.stdout);
+const inlineAgentCompileJson = JSON.parse(inlineAgentCompile.stdout);
+assert.strictEqual(inlineAgentCompileJson.status, "compiled");
+assert(!JSON.stringify(inlineAgentCompileJson.missingComponents || []).includes("missing_agent"));
+
 const promptProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-project");
 fs.rmSync(promptProject, { recursive: true, force: true });
 fs.mkdirSync(promptProject, { recursive: true });
