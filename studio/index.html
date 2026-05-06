@@ -69,6 +69,11 @@
             <button class="block block-if" type="button" data-template="if">If / Else</button>
             <button class="block block-action" type="button" data-template="action">Action</button>
           </div>
+          <div class="block-browser-head">
+            <h3>Current Blocks</h3>
+            <span>select to edit</span>
+          </div>
+          <div id="block-browser" class="block-browser" aria-label="Current reusable blocks"></div>
         </section>
 
         <section class="panel inspector-panel">
@@ -103,6 +108,7 @@
             <label>Human Review <textarea id="field-reviews" rows="3" placeholder="approve overlay if confidence is low"></textarea></label>
             <div class="form-actions">
               <button type="submit">Save Block</button>
+              <button id="save-block-file-btn" type="button">Save Block File</button>
               <button id="delete-block" type="button">Delete</button>
             </div>
             <section class="block-chat-box" aria-label="Block chat and code authoring">
@@ -263,6 +269,30 @@
           </div>
           <div id="project-summary" class="project-summary"></div>
           <div id="project-files" class="project-files"></div>
+        </section>
+
+        <section class="panel project-artifacts-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Artifacts / Runs</h2>
+              <p>Recent outputs, block-chat artifacts, histories, version snapshots, compile records, and run records for this project.</p>
+            </div>
+            <button id="refresh-artifacts-btn" type="button">Refresh</button>
+          </div>
+          <div id="artifact-summary" class="project-summary"></div>
+          <div id="artifact-list" class="artifact-list"></div>
+        </section>
+
+        <section class="panel project-versions-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Versions / Restore</h2>
+              <p>Snapshots are created before Studio edits. Preview the target file and restore a previous snapshot when a block or workflow edit goes wrong.</p>
+            </div>
+            <button id="refresh-versions-btn" type="button">Refresh</button>
+          </div>
+          <div id="versions-summary" class="project-summary"></div>
+          <div id="versions-list" class="versions-list"></div>
         </section>
 
         <section class="panel project-structure-panel">

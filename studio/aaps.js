@@ -1526,10 +1526,17 @@
       if (!relativeProjectPath(value)) issue("error", `paths.${key}`, `Path must be project-relative: ${value}`);
     });
 
-    projectFileIndex(project).forEach((file) => {
-      if (!relativeProjectPath(file)) issue("error", "files", `AAPS file path must be project-relative: ${file}`);
-      if (!file.endsWith(".aaps")) issue("error", "files", `Project source file must end with .aaps: ${file}`);
-      if (known.size && !known.has(file)) issue("warning", "files", `Manifest lists a file that was not found: ${file}`);
+    PROJECT_FILE_CATEGORIES.forEach((category) => {
+      const files = project.files[category] || [];
+      files.forEach((file) => {
+        if (!relativeProjectPath(file)) issue("error", `files.${category}`, `Project file path must be project-relative: ${file}`);
+        if (category !== "references" && !file.endsWith(".aaps")) {
+          issue("error", `files.${category}`, `Project source file must end with .aaps: ${file}`);
+        }
+        if (known.size && category !== "references" && !known.has(file)) {
+          issue("warning", `files.${category}`, `Manifest lists a file that was not found: ${file}`);
+        }
+      });
     });
 
     [project.defaultMain, project.activeFile].forEach((file) => {

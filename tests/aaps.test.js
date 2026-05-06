@@ -77,6 +77,17 @@ const projectCheck = AAPS.validateProjectManifest(AAPS.sampleProject, AAPS.proje
 assert.strictEqual(projectCheck.ok, true, JSON.stringify(projectCheck.diagnostics));
 assert(projectCheck.files.includes("blocks/qc_image.aaps"));
 assert(AAPS.projectStructureText(AAPS.sampleProject).includes("aaps.project.json"));
+const projectWithMarkdownReference = AAPS.validateProjectManifest(
+  {
+    ...AAPS.sampleProject,
+    files: {
+      ...AAPS.sampleProject.files,
+      references: ["references/biology-method.md"],
+    },
+  },
+  AAPS.projectFileIndex(AAPS.sampleProject)
+);
+assert.strictEqual(projectWithMarkdownReference.ok, true, JSON.stringify(projectWithMarkdownReference.diagnostics));
 
 const projectMain = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "main.aaps"));
 assert.strictEqual(projectMain.pipeline.includes.includes("blocks/qc_image.aaps"), true);
@@ -828,6 +839,67 @@ try {
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("data/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("outputs/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith(".aginti")));
+  const originalMainSource = fs.readFileSync(path.join(studioProject, "workflows", "main.aaps"), "utf8");
+  const editedMainSource = originalMainSource.replace("Studio Project Compile", "Studio Project Compile Edited");
+  const savedMain = httpJson(`${base}/api/aaps/project/file`, {
+    path: ".",
+    file: "workflows/main.aaps",
+    source: editedMainSource,
+  });
+  assert.strictEqual(savedMain.ok, true);
+  assert.strictEqual(fs.readFileSync(path.join(studioProject, "workflows", "main.aaps"), "utf8"), editedMainSource);
+  const versions = httpJson(`${base}/api/aaps/versions?path=.&limit=20`);
+  const mainSnapshot = versions.items.find((item) => item.file === "workflows/main.aaps");
+  assert(mainSnapshot, JSON.stringify(versions));
+  const restoredMain = httpJson(`${base}/api/aaps/versions/restore`, {
+    path: ".",
+    snapshot: mainSnapshot.snapshot,
+  });
+  assert.strictEqual(restoredMain.restored.file, "workflows/main.aaps");
+  assert.strictEqual(fs.readFileSync(path.join(studioProject, "workflows", "main.aaps"), "utf8"), originalMainSource);
+  const createdWorkflow = httpJson(`${base}/api/aaps/project/file-action`, {
+    path: ".",
+    action: "create",
+    kind: "workflow",
+    file: "workflows/studio_created.aaps",
+  });
+  assert(createdWorkflow.manifest.files.workflows.includes("workflows/studio_created.aaps"));
+  assert.strictEqual(createdWorkflow.manifest.activeFile, "workflows/studio_created.aaps");
+  assert(fs.existsSync(path.join(studioProject, "workflows", "studio_created.aaps")));
+  const createdBlock = httpJson(`${base}/api/aaps/project/file-action`, {
+    path: ".",
+    action: "create",
+    kind: "block",
+    file: "blocks/studio_created_block.aaps",
+  });
+  assert(createdBlock.manifest.files.blocks.includes("blocks/studio_created_block.aaps"));
+  assert(fs.existsSync(path.join(studioProject, "blocks", "studio_created_block.aaps")));
+  const duplicatedWorkflow = httpJson(`${base}/api/aaps/project/file-action`, {
+    path: ".",
+    action: "duplicate",
+    kind: "workflow",
+    file: "workflows/studio_created.aaps",
+    target: "workflows/studio_created_copy.aaps",
+  });
+  assert(duplicatedWorkflow.manifest.files.workflows.includes("workflows/studio_created_copy.aaps"));
+  assert.strictEqual(duplicatedWorkflow.manifest.activeFile, "workflows/studio_created_copy.aaps");
+  const renamedWorkflow = httpJson(`${base}/api/aaps/project/file-action`, {
+    path: ".",
+    action: "rename",
+    kind: "workflow",
+    file: "workflows/studio_created_copy.aaps",
+    target: "workflows/studio_created_renamed.aaps",
+  });
+  assert(renamedWorkflow.manifest.files.workflows.includes("workflows/studio_created_renamed.aaps"));
+  assert(!renamedWorkflow.manifest.files.workflows.includes("workflows/studio_created_copy.aaps"));
+  const archivedWorkflow = httpJson(`${base}/api/aaps/project/file-action`, {
+    path: ".",
+    action: "archive",
+    kind: "workflow",
+    file: "workflows/studio_created_renamed.aaps",
+  });
+  assert(!archivedWorkflow.manifest.files.workflows.includes("workflows/studio_created_renamed.aaps"));
+  assert(archivedWorkflow.manifest.files.archives.some((file) => file.endsWith("-studio_created_renamed.aaps")));
   const studioCompileStart = httpJson(`${base}/api/aaps/compile`, {
     path: ".",
     file: "workflows/main.aaps",
@@ -842,6 +914,24 @@ try {
   assert.strictEqual(studioCompile.status, "succeeded", JSON.stringify(studioCompile));
   assert.strictEqual(studioCompile.result.status, "compiled");
   assert.strictEqual(studioCompile.result.project.projectRoot, studioProject);
+  const studioBlockChat = httpJson(`${base}/api/aaps/block/chat`, {
+    path: ".",
+    blockId: "studio_segment",
+    message: "As a biology user, create a reusable segmentation block with a script, durable mask output, and JSON QC artifact.",
+    materialize: true,
+    blockFile: "blocks/studio_segment.aaps",
+  });
+  assert.strictEqual(studioBlockChat.ok, true, JSON.stringify(studioBlockChat));
+  assert.strictEqual(studioBlockChat.blockFile, "blocks/studio_segment.aaps");
+  assert(studioBlockChat.historyPath.includes(".aaps-work/studio-history/block/studio_segment.jsonl"));
+  assert(studioBlockChat.artifactPath.includes(".aaps-work/studio-artifacts/block/studio_segment/"));
+  assert(fs.existsSync(path.join(studioProject, "blocks", "studio_segment.aaps")));
+  assert(fs.existsSync(path.join(studioProject, "scripts", "studio_segment_threshold.py")));
+  assert(fs.existsSync(path.join(studioProject, studioBlockChat.historyPath)));
+  assert(fs.existsSync(path.join(studioProject, studioBlockChat.artifactPath)));
+  const studioHistory = httpJson(`${base}/api/aaps/history?scope=block&id=studio_segment`);
+  assert.strictEqual(studioHistory.ok, true);
+  assert(studioHistory.events.some((event) => event.message.includes("segmentation block")));
 } finally {
   studio.kill("SIGTERM");
   childProcess.spawnSync("pkill", ["-f", `aaps_codex_server.py --host 127.0.0.1 --port ${studioPort}`]);

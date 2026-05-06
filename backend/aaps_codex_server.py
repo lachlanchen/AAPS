@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -31,6 +32,9 @@ else:
     RUN_DIR = PROJECT_ROOT / ".aaps-work" / "studio-aaps-runs"
     COMPILE_DIR = PROJECT_ROOT / ".aaps-work" / "studio-aaps-compiles"
 SETTINGS_PATH = PROJECT_ROOT / ".aaps-work" / "aaps-settings.json"
+STUDIO_HISTORY_DIR = PROJECT_ROOT / ".aaps-work" / "studio-history"
+STUDIO_ARTIFACT_DIR = PROJECT_ROOT / ".aaps-work" / "studio-artifacts"
+STUDIO_VERSION_DIR = PROJECT_ROOT / ".aaps-work" / "versions"
 PROJECT_MANIFEST = "aaps.project.json"
 SKIP_SCAN_DIRS = {
     ".git",
@@ -51,6 +55,16 @@ SKIP_SCAN_DIRS = {
 TEXT_FILE_EXTENSIONS = {".aaps", ".py", ".sh", ".js", ".mjs", ".cjs", ".json", ".md", ".txt", ".yaml", ".yml", ".toml"}
 SCRIPT_FILE_EXTENSIONS = {".py", ".sh", ".js", ".mjs", ".cjs"}
 ENVIRONMENT_FILE_EXTENSIONS = {".txt", ".json", ".yaml", ".yml"}
+PROJECT_FILE_CATEGORIES = [
+    "blocks",
+    "skills",
+    "modules",
+    "subworkflows",
+    "workflows",
+    "drafts",
+    "archives",
+    "references",
+]
 SCHEMAS = {
     "response": ROOT / "schemas" / "aaps_response.schema.json",
     "aaps_edit": ROOT / "schemas" / "aaps_edit.schema.json",
@@ -88,6 +102,10 @@ load_dotenv()
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def stamp() -> str:
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
 
 def read_settings() -> dict:
@@ -226,6 +244,172 @@ def slug(value: str, fallback: str = "block") -> str:
     text = "".join(char.lower() if char.isalnum() else "_" for char in str(value or fallback))
     text = "_".join(part for part in text.split("_") if part)
     return text[:48] or fallback
+
+
+def json_safe(value):
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
+
+
+def studio_scope_path(root: Path, scope: str, scope_id: str, suffix: str = ".jsonl") -> Path:
+    safe_scope = slug(scope, "scope")
+    safe_id = slug(scope_id, "item")
+    return root / safe_scope / f"{safe_id}{suffix}"
+
+
+def append_jsonl(path: Path, payload: dict) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    return path
+
+
+def write_studio_chat_event(project_dir: Path, scope: str, scope_id: str, message: str, response: dict, metadata: dict | None = None) -> tuple[str, str]:
+    event = {
+        "time": now_iso(),
+        "project": project_label(project_dir),
+        "scope": scope,
+        "scope_id": scope_id,
+        "message": message,
+        "response": json_safe(response),
+        "metadata": metadata or {},
+    }
+    history_path = append_jsonl(studio_scope_path(STUDIO_HISTORY_DIR, scope, scope_id), event)
+    artifact_path = STUDIO_ARTIFACT_DIR / slug(scope, "scope") / slug(scope_id, "item") / f"{stamp()}-{uuid.uuid4().hex[:8]}.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(json.dumps(event, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return history_path.relative_to(project_dir).as_posix(), artifact_path.relative_to(project_dir).as_posix()
+
+
+def snapshot_file(project_dir: Path, file_path: Path, action: str) -> str:
+    if not file_path.exists() or not file_path.is_file():
+        return ""
+    rel = file_path.relative_to(project_dir).as_posix()
+    snapshot = STUDIO_VERSION_DIR / rel / f"{stamp()}-{uuid.uuid4().hex[:8]}.bak"
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(file_path, snapshot)
+    append_jsonl(
+        STUDIO_VERSION_DIR / "index.jsonl",
+        {
+            "time": now_iso(),
+            "action": action,
+            "file": rel,
+            "snapshot": snapshot.relative_to(project_dir).as_posix(),
+        },
+    )
+    return snapshot.relative_to(project_dir).as_posix()
+
+
+def write_project_text(project_dir: Path, file_path: Path, source: str, action: str) -> str:
+    snapshot = snapshot_file(project_dir, file_path, action)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(source, encoding="utf-8")
+    return snapshot
+
+
+def ensure_manifest_files(manifest: dict) -> dict:
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        files = {}
+    for category in PROJECT_FILE_CATEGORIES:
+        value = files.get(category)
+        files[category] = [str(item) for item in value] if isinstance(value, list) else []
+    manifest["files"] = files
+    return files
+
+
+def manifest_category_for_file(file_name: str, kind: str = "workflow") -> str:
+    text = str(file_name or "")
+    if text.startswith("blocks/") or kind == "block":
+        return "blocks"
+    if text.startswith("skills/") or kind == "skill":
+        return "skills"
+    if text.startswith("modules/") or kind == "module":
+        return "modules"
+    if text.startswith("subworkflows/") or kind == "subworkflow":
+        return "subworkflows"
+    if text.startswith("archive/") or text.startswith("archives/"):
+        return "archives"
+    if text.startswith("drafts/") or kind == "draft":
+        return "drafts"
+    return "workflows"
+
+
+def update_manifest_file_listing(project_dir: Path, action: str, file_name: str, target_name: str = "", kind: str = "workflow") -> str:
+    manifest_path = project_dir / PROJECT_MANIFEST
+    if not manifest_path.exists():
+        return ""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    files = ensure_manifest_files(manifest)
+    changed = False
+
+    def remove_from_all(name: str) -> None:
+        nonlocal changed
+        if not name:
+            return
+        for category in PROJECT_FILE_CATEGORIES:
+            before = list(files.get(category) or [])
+            after = [item for item in before if item != name]
+            if after != before:
+                files[category] = after
+                changed = True
+
+    def add_to_category(name: str, category: str) -> None:
+        nonlocal changed
+        if not name:
+            return
+        values = list(files.get(category) or [])
+        if name not in values:
+            values.append(name)
+            files[category] = sorted(values)
+            changed = True
+
+    category = manifest_category_for_file(target_name or file_name, kind)
+    if action == "create":
+        add_to_category(file_name, category)
+        if category == "workflows":
+            manifest["activeFile"] = file_name
+            if not manifest.get("defaultMain"):
+                manifest["defaultMain"] = file_name
+            changed = True
+    elif action == "duplicate":
+        target_category = manifest_category_for_file(target_name, kind)
+        add_to_category(target_name, target_category)
+        if target_category == "workflows":
+            manifest["activeFile"] = target_name
+            changed = True
+    elif action == "rename":
+        remove_from_all(file_name)
+        target_category = manifest_category_for_file(target_name, kind)
+        add_to_category(target_name, target_category)
+        if manifest.get("activeFile") == file_name:
+            manifest["activeFile"] = target_name if target_category == "workflows" else ""
+            changed = True
+        if manifest.get("defaultMain") == file_name:
+            manifest["defaultMain"] = target_name if target_category == "workflows" else ""
+            changed = True
+    elif action in {"archive", "delete"}:
+        remove_from_all(file_name)
+        if action == "archive" and target_name:
+            add_to_category(target_name, "archives")
+        if manifest.get("activeFile") == file_name:
+            manifest["activeFile"] = (files.get("workflows") or [manifest.get("defaultMain", "")])[0] if (files.get("workflows") or [manifest.get("defaultMain", "")]) else ""
+            changed = True
+        if manifest.get("defaultMain") == file_name:
+            manifest["defaultMain"] = (files.get("workflows") or [manifest.get("activeFile", "")])[0] if (files.get("workflows") or [manifest.get("activeFile", "")]) else ""
+            changed = True
+    if not changed:
+        return ""
+    manifest["updated"] = now_iso()
+    return write_project_text(
+        project_dir,
+        manifest_path,
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        f"project_manifest_{action}_file_listing",
+    )
 
 
 def aaps_literal(value: str) -> str:
@@ -656,6 +840,161 @@ def read_project(project_dir: Path) -> dict:
     }
 
 
+def artifact_kind(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}:
+        return "image"
+    if suffix in {".csv", ".tsv"}:
+        return "table"
+    if suffix == ".json":
+        return "json"
+    if suffix == ".jsonl":
+        return "jsonl"
+    if suffix in {".md", ".txt", ".log"}:
+        return "text"
+    if suffix in {".aaps", ".py", ".js", ".sh"}:
+        return "source"
+    return "file"
+
+
+def list_files_under(project_dir: Path, root: Path, source: str, limit: int) -> list[dict]:
+    items: list[dict] = []
+    if not root.exists():
+        return items
+    for current, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in {".git", "__pycache__", "node_modules"}]
+        for filename in filenames:
+            path = Path(current) / filename
+            try:
+                stat = path.stat()
+                rel = path.relative_to(project_dir).as_posix()
+            except (OSError, ValueError):
+                continue
+            items.append(
+                {
+                    "source": source,
+                    "path": rel,
+                    "kind": artifact_kind(path),
+                    "size": stat.st_size,
+                    "mtime": int(stat.st_mtime),
+                }
+            )
+    return sorted(items, key=lambda item: (item["mtime"], item["path"]), reverse=True)[:limit]
+
+
+def list_studio_artifacts(project_dir: Path, limit: int = 240) -> dict:
+    manifest = read_project(project_dir)["manifest"]
+    roots = []
+    artifact_root = str(manifest.get("artifactRoot") or "outputs")
+    for source, rel in [
+        ("outputs", artifact_root),
+        ("studio_artifacts", ".aaps-work/studio-artifacts"),
+        ("studio_history", ".aaps-work/studio-history"),
+        ("studio_runs", ".aaps-work/studio-aaps-runs"),
+        ("studio_compiles", ".aaps-work/studio-aaps-compiles"),
+        ("versions", ".aaps-work/versions"),
+    ]:
+        try:
+            roots.append((source, relative_to_project(project_dir, rel)))
+        except ValueError:
+            continue
+    seen: set[str] = set()
+    items: list[dict] = []
+    for source, root in roots:
+        for item in list_files_under(project_dir, root, source, limit):
+            if item["path"] in seen:
+                continue
+            seen.add(item["path"])
+            items.append(item)
+    items = sorted(items, key=lambda item: (item["mtime"], item["path"]), reverse=True)[:limit]
+    counts: dict[str, int] = {}
+    kind_counts: dict[str, int] = {}
+    for item in items:
+        counts[item["source"]] = counts.get(item["source"], 0) + 1
+        kind_counts[item["kind"]] = kind_counts.get(item["kind"], 0) + 1
+    return {
+        "ok": True,
+        "project_path": project_label(project_dir),
+        "limit": limit,
+        "counts": counts,
+        "kindCounts": kind_counts,
+        "items": items,
+    }
+
+
+def list_version_snapshots(project_dir: Path, limit: int = 120) -> dict:
+    index_path = STUDIO_VERSION_DIR / "index.jsonl"
+    records: list[dict] = []
+    if index_path.exists():
+        for raw in index_path.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            snapshot = str(record.get("snapshot") or "")
+            if not snapshot:
+                continue
+            try:
+                snapshot_path = relative_to_project(project_dir, snapshot)
+                snapshot_path.resolve().relative_to(STUDIO_VERSION_DIR.resolve())
+                stat = snapshot_path.stat()
+            except (OSError, ValueError):
+                continue
+            records.append(
+                {
+                    "time": str(record.get("time") or ""),
+                    "action": str(record.get("action") or ""),
+                    "file": str(record.get("file") or ""),
+                    "snapshot": snapshot,
+                    "kind": artifact_kind(snapshot_path),
+                    "size": stat.st_size,
+                    "mtime": int(stat.st_mtime),
+                }
+            )
+    records = sorted(records, key=lambda item: (item.get("time") or "", item.get("snapshot") or ""), reverse=True)[:limit]
+    return {
+        "ok": True,
+        "project_path": project_label(project_dir),
+        "limit": limit,
+        "count": len(records),
+        "items": records,
+    }
+
+
+def restore_version_snapshot(project_dir: Path, snapshot: str) -> dict:
+    snapshot_path = relative_to_project(project_dir, snapshot)
+    snapshot_path.resolve().relative_to(STUDIO_VERSION_DIR.resolve())
+    if not snapshot_path.exists() or not snapshot_path.is_file():
+        raise FileNotFoundError(f"snapshot not found: {snapshot}")
+    rel_to_versions = snapshot_path.relative_to(STUDIO_VERSION_DIR)
+    if len(rel_to_versions.parts) < 2:
+        raise ValueError(f"invalid snapshot path: {snapshot}")
+    original_rel = Path(*rel_to_versions.parts[:-1])
+    original_path = relative_to_project(project_dir, original_rel.as_posix())
+    snapshot_before_restore = snapshot_file(project_dir, original_path, "project_version_restore_current")
+    original_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(snapshot_path, original_path)
+    append_jsonl(
+        STUDIO_VERSION_DIR / "index.jsonl",
+        {
+            "time": now_iso(),
+            "action": "project_version_restore",
+            "file": original_rel.as_posix(),
+            "snapshot": snapshot,
+            "previousSnapshot": snapshot_before_restore,
+        },
+    )
+    payload = read_project(project_dir)
+    payload["restored"] = {
+        "file": original_rel.as_posix(),
+        "snapshot": snapshot,
+        "previousSnapshot": snapshot_before_restore,
+    }
+    return payload
+
+
 def write_json(handler: SimpleHTTPRequestHandler, payload: dict, status: int = 200) -> None:
     body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
     handler.send_response(status)
@@ -812,7 +1151,510 @@ User message:
 """
 
 
+def infer_deo_study(block_id: str, message: str) -> str:
+    text = f"{block_id} {message}".lower()
+    if "app65" in text or "alginate" in text:
+        return "app65"
+    if "app81" in text or "density" in text:
+        return "app81"
+    if "app80" in text or "y-27632" in text or "y27632" in text or "fusion" in text:
+        return "app80"
+    return ""
+
+
+def deo_data_root(study: str) -> str:
+    roots = {
+        "app80": "data/App80 DEO",
+        "app65": "data/App65 DEO+Alginate",
+        "app81": "data/DEO App81 P8",
+    }
+    return roots.get(study, "data")
+
+
+def generated_deo_python_code(study: str, purpose: str) -> str:
+    default_study = study or "app80"
+    default_purpose = purpose or "all"
+    return f'''#!/usr/bin/env python3
+"""AAPS Studio generated DEO microscopy analysis block.
+
+This script is intentionally project-local and deterministic. It handles TIFF
+discovery, fallback segmentation, per-image metrics, grouped summaries, plots,
+and a Markdown report for APP80/APP65/APP81 DEO microscopy datasets.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import re
+import warnings
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+
+try:
+    import tifffile
+except Exception as exc:  # pragma: no cover - runtime dependency check
+    raise SystemExit("Missing dependency: tifffile. Install project-local imaging dependencies first.") from exc
+
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover - plots become optional at runtime
+    plt = None
+
+try:
+    from scipy import ndimage as ndi
+except Exception:  # pragma: no cover
+    ndi = None
+
+try:
+    from skimage import exposure, filters, measure, morphology, segmentation, transform
+except Exception as exc:  # pragma: no cover
+    raise SystemExit("Missing dependency: scikit-image. Install project-local imaging dependencies first.") from exc
+
+
+DEFAULT_STUDY = {json.dumps(default_study)}
+DEFAULT_PURPOSE = {json.dumps(default_purpose)}
+DEFAULT_DATA_ROOTS = {{
+    "app80": "data/App80 DEO",
+    "app65": "data/App65 DEO+Alginate",
+    "app81": "data/DEO App81 P8",
+}}
+
+
+def safe_name(value: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value or "item")).strip("_")
+    return text[:120] or "item"
+
+
+def normalize_image(image: np.ndarray) -> np.ndarray:
+    arr = np.asarray(image)
+    if arr.ndim >= 3 and arr.shape[-1] in (3, 4):
+        rgb = arr[..., :3].astype("float32")
+        gray = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
+    elif arr.ndim >= 3:
+        gray = np.max(arr.astype("float32"), axis=0)
+    else:
+        gray = arr.astype("float32")
+    if gray.size == 0:
+        raise ValueError("empty image")
+    lo, hi = np.percentile(gray, [1, 99.5])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo, hi = float(np.min(gray)), float(np.max(gray))
+    if hi <= lo:
+        return np.zeros_like(gray, dtype="float32")
+    return np.clip((gray - lo) / (hi - lo), 0, 1).astype("float32")
+
+
+def resize_for_analysis(gray: np.ndarray, max_dimension: int) -> tuple[np.ndarray, float]:
+    if max_dimension <= 0:
+        return gray, 1.0
+    current = max(gray.shape)
+    if current <= max_dimension:
+        return gray, 1.0
+    scale = max_dimension / float(current)
+    resized = transform.resize(gray, (max(1, int(gray.shape[0] * scale)), max(1, int(gray.shape[1] * scale))), anti_aliasing=True)
+    return resized.astype("float32"), scale
+
+
+def discover_images(data_root: Path, study: str, include_4x: bool) -> list[Path]:
+    paths = sorted([p for p in data_root.rglob("*") if p.suffix.lower() in {{".tif", ".tiff"}}])
+    selected = []
+    for path in paths:
+        text = path.as_posix().lower()
+        name = path.name.lower()
+        if study in {{"app80", "app81"}} and "10x" not in name:
+            continue
+        if study == "app65" and not include_4x and "10x" not in name:
+            continue
+        if study == "app81" and "transfer" in text:
+            continue
+        selected.append(path)
+    return selected
+
+
+def infer_metadata(path: Path, root: Path, study: str) -> dict:
+    rel = path.relative_to(root)
+    parts = list(rel.parts)
+    name = path.stem
+    lower = name.lower()
+    magnification = "10x" if "10x" in lower else "4x" if "4x" in lower else "unknown"
+    meta = {{
+        "study": study,
+        "relative_path": rel.as_posix(),
+        "filename": path.name,
+        "date": parts[-2] if len(parts) >= 2 else "unknown",
+        "condition": "unknown",
+        "magnification": magnification,
+    }}
+    if study == "app80":
+        meta["condition"] = parts[0] if len(parts) >= 3 else "unknown"
+        meta["concentration"] = meta["condition"]
+    elif study == "app65":
+        prefix = re.split(r"\\s+(?:4x|10x)", name, flags=re.IGNORECASE)[0].strip()
+        meta["condition"] = prefix or "unknown"
+        meta["alginate"] = meta["condition"]
+    elif study == "app81":
+        if "middle" in lower:
+            condition = "middle"
+        elif "high" in lower:
+            condition = "high"
+        elif "low" in lower:
+            condition = "low"
+        else:
+            condition = "unknown"
+        meta["condition"] = condition
+        meta["density"] = condition
+    return meta
+
+
+def choose_foreground(gray: np.ndarray) -> tuple[np.ndarray, float, str]:
+    smooth = filters.gaussian(gray, sigma=1.2, preserve_range=True)
+    try:
+        threshold = float(filters.threshold_otsu(smooth))
+    except Exception:
+        threshold = float(np.median(smooth))
+    candidates = [("dark", smooth < threshold), ("bright", smooth > threshold)]
+    best_name, best_mask, best_score = "dark", candidates[0][1], -1e9
+    for name, mask in candidates:
+        frac = float(np.mean(mask))
+        if frac <= 0 or frac >= 0.85:
+            score = -abs(frac - 0.12) - 1
+        else:
+            score = -abs(frac - 0.12)
+        if score > best_score:
+            best_name, best_mask, best_score = name, mask, score
+    return best_mask.astype(bool), threshold, best_name
+
+
+def segment(gray: np.ndarray, min_area: int) -> tuple[np.ndarray, np.ndarray, dict]:
+    raw, threshold, polarity = choose_foreground(gray)
+    min_area = max(16, int(min_area))
+    mask = morphology.remove_small_objects(raw, min_size=min_area)
+    mask = morphology.binary_closing(mask, morphology.disk(3))
+    if ndi is not None:
+        mask = ndi.binary_fill_holes(mask)
+    mask = morphology.remove_small_holes(mask, area_threshold=min_area * 2)
+    distance = ndi.distance_transform_edt(mask) if ndi is not None else mask.astype("float32")
+    try:
+        local_max = morphology.local_maxima(distance)
+        markers = measure.label(local_max)
+        labels = segmentation.watershed(-distance, markers, mask=mask) if int(markers.max()) > 0 else measure.label(mask)
+    except Exception:
+        labels = measure.label(mask)
+    labels = morphology.remove_small_objects(labels, min_size=min_area)
+    labels = measure.label(labels > 0)
+    stats = {{
+        "threshold": threshold,
+        "polarity": polarity,
+        "foreground_fraction": float(np.mean(labels > 0)),
+        "instance_count": int(labels.max()),
+    }}
+    return labels.astype("int32"), mask.astype(bool), stats
+
+
+def region_metrics(gray: np.ndarray, labels: np.ndarray, meta: dict, scale: float) -> dict:
+    mask = labels > 0
+    props = measure.regionprops(labels, intensity_image=gray)
+    areas = np.array([p.area for p in props], dtype="float64")
+    perimeters = np.array([max(p.perimeter, 1.0) for p in props], dtype="float64")
+    roundness = 4.0 * math.pi * areas / np.maximum(perimeters ** 2, 1.0) if len(props) else np.array([])
+    edge = filters.sobel(gray)
+    boundary = segmentation.find_boundaries(labels, mode="outer") if labels.size else mask
+    edge_intensity = float(np.mean(edge[boundary])) if np.any(boundary) else 0.0
+    dark_fraction = float(np.mean(gray[mask] < 0.35)) if np.any(mask) else 0.0
+    total_area = float(np.sum(areas))
+    largest_fraction = float(np.max(areas) / total_area) if total_area > 0 and len(areas) else 0.0
+    count = int(len(props))
+    fill_fraction = float(np.mean(mask))
+    count_factor = min(1.0, count / 24.0)
+    fusion_visual = 5.0 * min(1.0, 0.45 * fill_fraction + 0.35 * largest_fraction + 0.20 * count_factor)
+    fusion_objective = 5.0 * min(1.0, 0.40 * dark_fraction + 0.35 * largest_fraction + 0.25 * count_factor)
+    center_y, center_x = (np.array(gray.shape) - 1) / 2.0
+    yy, xx = np.nonzero(boundary)
+    if len(xx):
+        dist = np.sqrt((yy - center_y) ** 2 + (xx - center_x) ** 2)
+        center_weight = 1.0 - np.clip(dist / max(gray.shape), 0, 1)
+        center_weighted_edge_sum = float(np.sum(edge[yy, xx] * center_weight))
+    else:
+        center_weighted_edge_sum = 0.0
+    area_norm_edge = center_weighted_edge_sum / max(total_area, 1.0)
+    mean_roundness = float(np.mean(roundness)) if len(roundness) else 0.0
+    perimeter_mean = float(np.mean(perimeters)) if len(perimeters) else 0.0
+    curvature = float(np.mean(1.0 / np.maximum(perimeters / (2.0 * math.pi), 1.0))) if len(perimeters) else 0.0
+    row = {{
+        **meta,
+        "analysis_scale": scale,
+        "count": count,
+        "total_area_px": total_area,
+        "average_area_px": float(np.mean(areas)) if len(areas) else 0.0,
+        "largest_area_fraction": largest_fraction,
+        "foreground_fraction": fill_fraction,
+        "average_perimeter_px": perimeter_mean,
+        "roundness": mean_roundness,
+        "roundness_deviation_norm": float(np.mean(np.abs(roundness - 1.0))) if len(roundness) else 0.0,
+        "roundness_deviation_px_total": float(np.sum(np.abs(roundness - 1.0) * areas)) if len(roundness) else 0.0,
+        "curvature": curvature,
+        "edge_intensity": edge_intensity,
+        "center_weighted_edge_sum": center_weighted_edge_sum,
+        "area_normalized_center_weighted_edge_instance_mean": area_norm_edge,
+        "wall_darkness_mean": dark_fraction,
+        "very_dark_area_ratio_gt035": dark_fraction,
+        "fusion_score_visual_0_to_5": fusion_visual,
+        "fusion_score_objective_0_to_5": fusion_objective,
+        "fusion_score_combined_0_to_5": (fusion_visual + fusion_objective) / 2.0,
+        "normalized_edge_over_count_curvature": edge_intensity / max(count * max(curvature, 1e-6), 1e-6),
+    }}
+    return row
+
+
+def write_png(path: Path, array: np.ndarray, cmap: str = "gray") -> None:
+    if plt is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plt.imsave(path, array, cmap=cmap)
+
+
+def write_overlay(path: Path, gray: np.ndarray, labels: np.ndarray) -> None:
+    if plt is None:
+        return
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
+    ax.imshow(gray, cmap="gray")
+    ax.contour(labels > 0, levels=[0.5], colors=["#ffcc33"], linewidths=0.5)
+    ax.set_axis_off()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+
+
+def write_rows_csv(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        path.write_text("", encoding="utf-8")
+        return
+    keys = sorted({{key for row in rows for key in row.keys()}})
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\\n", encoding="utf-8")
+
+
+def aggregate(rows: list[dict]) -> list[dict]:
+    groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for row in rows:
+        groups[(str(row.get("condition", "unknown")), str(row.get("date", "unknown")), str(row.get("magnification", "unknown")))].append(row)
+    numeric = [
+        "count",
+        "total_area_px",
+        "average_area_px",
+        "foreground_fraction",
+        "roundness",
+        "curvature",
+        "edge_intensity",
+        "center_weighted_edge_sum",
+        "area_normalized_center_weighted_edge_instance_mean",
+        "wall_darkness_mean",
+        "very_dark_area_ratio_gt035",
+        "fusion_score_combined_0_to_5",
+        "normalized_edge_over_count_curvature",
+    ]
+    out = []
+    for (condition, date, mag), items in sorted(groups.items()):
+        row = {{"condition": condition, "date": date, "magnification": mag, "n_images": len(items)}}
+        for key in numeric:
+            values = [float(item.get(key, 0) or 0) for item in items]
+            row[f"{{key}}_mean"] = float(np.mean(values)) if values else 0.0
+            row[f"{{key}}_std"] = float(np.std(values)) if len(values) > 1 else 0.0
+        out.append(row)
+    return out
+
+
+def plot_summary(path: Path, summary: list[dict], study: str) -> None:
+    if plt is None or not summary:
+        return
+    metrics = [
+        "total_area_px_mean",
+        "count_mean",
+        "roundness_mean",
+        "edge_intensity_mean",
+        "fusion_score_combined_0_to_5_mean" if study == "app80" else "normalized_edge_over_count_curvature_mean",
+        "area_normalized_center_weighted_edge_instance_mean",
+    ]
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8), dpi=160)
+    labels = [f"{{row['condition']}}\\n{{row['date']}}" for row in summary]
+    x = np.arange(len(summary))
+    for ax, metric in zip(axes.flat, metrics):
+        values = [float(row.get(metric, 0) or 0) for row in summary]
+        ax.bar(x, values, color="#2f7f9f")
+        ax.set_title(metric.replace("_", " "))
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=70, ha="right", fontsize=7)
+        ax.grid(axis="y", alpha=0.25)
+    fig.suptitle(f"{{study.upper()}} DEO AAPS generated analysis summary")
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def load_existing_metrics(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def run(args: argparse.Namespace) -> dict:
+    study = args.study.lower()
+    data_root = Path(args.data_root or DEFAULT_DATA_ROOTS.get(study, "data"))
+    output_root = Path(args.output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_root / "manifest.json"
+    manifest_csv = output_root / "manifest.csv"
+    metrics_csv = output_root / "databases" / "per_image_metrics.csv"
+    metrics_json = output_root / "databases" / "per_image_metrics.json"
+    summary_csv = output_root / "databases" / "summary.csv"
+    summary_json = output_root / "databases" / "summary.json"
+    figure_path = output_root / "figures" / f"{{study}}_aaps_summary.png"
+    report_path = output_root / "report.md"
+    masks_dir = output_root / "masks"
+    overlays_dir = output_root / "overlays"
+    stats_dir = output_root / "stats"
+
+    images = discover_images(data_root, study, args.include_4x)
+    if args.max_images and args.max_images > 0:
+        images = images[: args.max_images]
+    manifest_rows = [infer_metadata(path, data_root, study) for path in images]
+    write_json(manifest_path, {{"study": study, "data_root": str(data_root), "total_images": len(images), "images": manifest_rows}})
+    write_rows_csv(manifest_csv, manifest_rows)
+
+    rows = [] if args.mode in {{"all", "segment", "metrics"}} else load_existing_metrics(metrics_csv)
+    if args.mode in {{"all", "segment", "metrics"}}:
+        for index, path in enumerate(images, start=1):
+            meta = infer_metadata(path, data_root, study)
+            stem = safe_name(Path(meta["relative_path"]).with_suffix("").as_posix())
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    image = tifffile.imread(path)
+                gray_full = normalize_image(image)
+                gray, scale = resize_for_analysis(gray_full, args.max_dimension)
+                labels, mask, seg_stats = segment(gray, args.min_area)
+                row = region_metrics(gray, labels, meta, scale)
+                row.update({{"segmentation_polarity": seg_stats["polarity"], "segmentation_threshold": seg_stats["threshold"]}})
+                mask_path = masks_dir / f"{{stem}}_mask.png"
+                stats_path = stats_dir / f"{{stem}}_metrics.json"
+                write_png(mask_path, labels > 0)
+                if args.preview_limit <= 0 or index <= args.preview_limit:
+                    write_overlay(overlays_dir / f"{{stem}}_overlay.png", gray, labels)
+                row["mask_path"] = mask_path.as_posix()
+                row["stats_path"] = stats_path.as_posix()
+                write_json(stats_path, row)
+                rows.append(row)
+            except Exception as exc:
+                error_row = {{**meta, "error": str(exc), "count": 0, "total_area_px": 0.0}}
+                rows.append(error_row)
+    write_rows_csv(metrics_csv, rows)
+    write_json(metrics_json, rows)
+
+    summary = aggregate(rows)
+    write_rows_csv(summary_csv, summary)
+    write_json(summary_json, summary)
+    plot_summary(figure_path, summary, study)
+
+    report_lines = [
+        f"# {{study.upper()}} DEO AAPS Analysis Report",
+        "",
+        f"- Created: {{datetime.now(timezone.utc).isoformat()}}",
+        f"- Data root: `{{data_root}}`",
+        f"- Output root: `{{output_root}}`",
+        f"- Images discovered: {{len(images)}}",
+        f"- Metrics rows: {{len(rows)}}",
+        f"- Summary rows: {{len(summary)}}",
+        "",
+        "## Declared Outputs",
+        f"- Manifest JSON: `{{manifest_path}}`",
+        f"- Manifest CSV: `{{manifest_csv}}`",
+        f"- Per-image metrics CSV: `{{metrics_csv}}`",
+        f"- Summary CSV: `{{summary_csv}}`",
+        f"- Summary figure: `{{figure_path}}`",
+        f"- Report: `{{report_path}}`",
+        "",
+        "## Method",
+        "The block uses TIFF discovery, robust grayscale normalization, Otsu polarity selection, morphological cleanup, watershed-style connected component labeling, and deterministic project-local metrics. It is a fallback block suitable when Cellpose or external vision APIs are unavailable.",
+        "",
+        "## Caveats",
+        "Metrics are scaled-analysis pixel metrics when max-dimension downsampling is active. Use the recorded `analysis_scale` column for interpretation and rerun with `--max-dimension 0` for full-resolution analysis.",
+    ]
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\\n".join(report_lines) + "\\n", encoding="utf-8")
+
+    result = {{
+        "ok": True,
+        "study": study,
+        "data_root": str(data_root),
+        "output_root": str(output_root),
+        "total_images": len(images),
+        "metrics_rows": len(rows),
+        "summary_rows": len(summary),
+        "outputs": {{
+            "manifest_json": str(manifest_path),
+            "manifest_csv": str(manifest_csv),
+            "metrics_csv": str(metrics_csv),
+            "metrics_json": str(metrics_json),
+            "summary_csv": str(summary_csv),
+            "summary_json": str(summary_json),
+            "figure": str(figure_path),
+            "report": str(report_path),
+        }},
+    }}
+    write_json(output_root / "run_manifest.json", result)
+    return result
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--study", default=DEFAULT_STUDY, choices=["app80", "app65", "app81"])
+    parser.add_argument("--data-root", "--data_root", default="")
+    parser.add_argument("--output-root", "--output_root", default=f"outputs/{{DEFAULT_STUDY}}")
+    parser.add_argument("--mode", default=DEFAULT_PURPOSE, choices=["all", "discover", "segment", "metrics", "aggregate", "plot", "report"])
+    parser.add_argument("--max-images", "--max_images", type=int, default=0)
+    parser.add_argument("--max-dimension", "--max_dimension", type=int, default=1400)
+    parser.add_argument("--min-area", "--min_area", type=int, default=80)
+    parser.add_argument("--preview-limit", "--preview_limit", type=int, default=60)
+    parser.add_argument("--include-4x", "--include_4x", action="store_true")
+    parser.add_argument("--result-json", "--result_json", default="")
+    args, _ = parser.parse_known_args()
+    if not args.data_root:
+        args.data_root = DEFAULT_DATA_ROOTS.get(args.study, "data")
+    result = run(args)
+    if args.result_json:
+        write_json(Path(args.result_json), result)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
 def generated_python_code(kind: str) -> str:
+    if kind.startswith("deo_"):
+        parts = kind.split("_", 2)
+        study = parts[1] if len(parts) > 1 else "app80"
+        purpose = parts[2] if len(parts) > 2 else "all"
+        return generated_deo_python_code(study, purpose)
     if kind == "threshold":
         return '''#!/usr/bin/env python3
 """AAPS generated threshold segmentation helper.
@@ -963,6 +1805,70 @@ if __name__ == "__main__":
 '''
 
 
+def block_source_from_chat_payload(block_id: str, message: str, action: dict, validations: list[str]) -> str:
+    title = block_id.replace("_", " ").title()
+    action_type = str(action.get("type") or "noop")
+    command = str(action.get("command") or action.get("entry") or "noop")
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    prompt = message.strip() or f"Reusable block {block_id}."
+    lines = [
+        f'pipeline "{title} Block" {{',
+        '  subtitle "Prompt Is All You Need"',
+        '  version "0.3"',
+        '  domain "biology"',
+        f'  goal "Reusable project-local block generated by AAPS Studio chat for {block_id}."',
+        "",
+        f"  block {block_id} {{",
+        '    compile_agent "codex_repair_agent"',
+        '    prompt """',
+        prompt,
+        '"""',
+    ]
+    if "image_path" in args:
+        lines.append('    input image_path: image optional')
+    if "data_root" in args:
+        lines.append(f'    input data_root: directory optional = "{args["data_root"]}"')
+    if "mask_path" in args:
+        lines.append(f'    output mask_path: image = "{args["mask_path"]}"')
+    if "output_root" in args:
+        lines.append(f'    output output_root: directory = "{args["output_root"]}"')
+    if "output_json" in args:
+        lines.append(f'    output output_json: json = "{args["output_json"]}"')
+    if "report_json" in args:
+        lines.append(f'    output report_json: json = "{args["report_json"]}"')
+    if "result_json" in args:
+        lines.append(f'    output result_json: json = "{args["result_json"]}"')
+    lines.append(f'    exec {action_type} "{command}"')
+    for key, value in args.items():
+        lines.append(f'    arg {key} = "{value}"')
+    for check in validations:
+        lines.append(f'    validate "{check}"')
+    lines.extend(
+        [
+            '    repair true',
+            '    review "Inspect generated artifacts and refine this block through Studio block chat before publication use."',
+            "  }",
+            "}",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def materialize_block_chat(project_dir: Path, block_id: str, message: str, payload: dict, body: dict) -> dict:
+    block_file = str(body.get("blockFile") or body.get("block_file") or f"blocks/{block_id}.aaps")
+    block_path = relative_to_project(project_dir, block_file)
+    if not block_path.name.endswith(".aaps"):
+        raise ValueError("materialized block files must end with .aaps")
+    source = block_source_from_chat_payload(block_id, message, payload.get("action") or {}, payload.get("validations") or [])
+    snapshot = write_project_text(project_dir, block_path, source, f"block_chat:{block_id}")
+    payload["blockFile"] = block_path.relative_to(project_dir).as_posix()
+    payload["blockSource"] = source
+    if snapshot:
+        payload["previousSnapshot"] = snapshot
+    return payload
+
+
 def append_provenance(project_dir: Path, payload: dict) -> None:
     record = {"time": now_iso(), **payload}
     target = project_dir / "runs" / "code-provenance.jsonl"
@@ -999,7 +1905,7 @@ def build_block_chat_response(body: dict) -> dict:
                 "action_type": "environment_update",
             },
         )
-        return {
+        payload = {
             "ok": True,
             "mode": "requirements",
             "summary": f"Prepared project-local Python readiness metadata for {block_id}.",
@@ -1014,12 +1920,18 @@ def build_block_chat_response(body: dict) -> dict:
             "validations": [],
             "script": "",
         }
+        if body.get("materialize"):
+            payload = materialize_block_chat(project_dir, block_id, message, payload, body)
+        history_path, artifact_path = write_studio_chat_event(project_dir, "block", block_id, message, payload)
+        payload["historyPath"] = history_path
+        payload["artifactPath"] = artifact_path
+        return payload
 
     if "shell" in lower or "command" in lower:
         command = "echo AAPS block action"
         if ":" in message:
             command = message.split(":", 1)[1].strip() or command
-        return {
+        payload = {
             "ok": True,
             "mode": "shell_action",
             "summary": f"Prepared shell action for {block_id}.",
@@ -1033,10 +1945,26 @@ def build_block_chat_response(body: dict) -> dict:
             "validations": [],
             "script": "",
         }
+        if body.get("materialize"):
+            payload = materialize_block_chat(project_dir, block_id, message, payload, body)
+        history_path, artifact_path = write_studio_chat_event(project_dir, "block", block_id, message, payload)
+        payload["historyPath"] = history_path
+        payload["artifactPath"] = artifact_path
+        return payload
 
     inline = "inline" in lower
-    kind = "threshold" if any(word in lower for word in ["segment", "segmentation", "threshold", "mask"]) else "qc" if "qc" in lower else "generic"
-    script_rel = str(body.get("targetFile") or body.get("target_file") or f"scripts/{block_id}_{kind}.py")
+    deo_study = infer_deo_study(block_id, message)
+    deo_prompt = bool(deo_study) or any(word in lower for word in ["deo", "microscopy", "organoid"]) or bool(re.search(r"\b(?:tif|tiff|tifs|tiffs)\b|\.tiff?\b", lower))
+    if deo_prompt:
+        study = deo_study or "app80"
+        purpose = "segment" if any(word in lower for word in ["segment", "segmentation", "mask", "overlay"]) else "metrics"
+        kind = f"deo_{study}_all"
+    else:
+        study = ""
+        purpose = ""
+        kind = "threshold" if any(word in lower for word in ["segment", "segmentation", "threshold", "mask"]) else "qc" if "qc" in lower else "generic"
+    default_script = f"scripts/{block_id}.py" if deo_prompt else f"scripts/{block_id}_{kind}.py"
+    script_rel = str(body.get("targetFile") or body.get("target_file") or default_script)
     code = generated_python_code(kind)
 
     action: dict
@@ -1055,11 +1983,7 @@ def build_block_chat_response(body: dict) -> dict:
         ensure_text_file(script_path)
         if script_path.suffix.lower() != ".py":
             raise ValueError("generated Python code must be saved to a .py file")
-        script_path.parent.mkdir(parents=True, exist_ok=True)
-        if script_path.exists():
-            backup = script_path.with_suffix(script_path.suffix + f".bak-{int(time.time())}")
-            script_path.rename(backup)
-        script_path.write_text(code, encoding="utf-8")
+        write_project_text(project_dir, script_path, code, f"block_chat_script:{block_id}")
         script_path.chmod(0o755)
         script_written = script_path.relative_to(project_dir).as_posix()
         action = {
@@ -1071,7 +1995,24 @@ def build_block_chat_response(body: dict) -> dict:
         }
 
     validations = []
-    if kind == "threshold":
+    if deo_prompt:
+        output_root = f"outputs/blocks/{block_id}"
+        result_json = f"{output_root}/run_manifest.json"
+        data_root = deo_data_root(study)
+        action["args"] = {
+            "study": study,
+            "data_root": data_root,
+            "output_root": output_root,
+            "mode": "all",
+            "result_json": result_json,
+        }
+        validations = [
+            f"exists {result_json}",
+            f"exists {output_root}/databases/summary.csv",
+            f"exists {output_root}/figures/{study}_aaps_summary.png",
+            f"exists {output_root}/report.md",
+        ]
+    elif kind == "threshold":
         action["args"] = {
             "image_path": "${input.image_path}",
             "mask_path": "${output.mask_path}",
@@ -1095,11 +2036,13 @@ def build_block_chat_response(body: dict) -> dict:
             "block": block_id,
             "message": message,
             "target_file": script_written,
+            "study": study,
+            "purpose": purpose,
             "mode": "inline" if inline else "script",
             "action_type": action["type"],
         },
     )
-    return {
+    payload = {
         "ok": True,
         "mode": "python_inline" if inline else "python_script",
         "summary": f"Prepared {action['type']} action for {block_id}.",
@@ -1108,6 +2051,12 @@ def build_block_chat_response(body: dict) -> dict:
         "script": script_written,
         "code": code,
     }
+    if body.get("materialize"):
+        payload = materialize_block_chat(project_dir, block_id, message, payload, body)
+    history_path, artifact_path = write_studio_chat_event(project_dir, "block", block_id, message, payload)
+    payload["historyPath"] = history_path
+    payload["artifactPath"] = artifact_path
+    return payload
 
 
 def build_generic_prompt(body: dict) -> str:
@@ -1372,14 +2321,22 @@ def start_aaps_run(body: dict) -> dict:
             (folder / "api-stderr.log").write_text(process.stderr or "", encoding="utf-8")
             try:
                 result = json.loads(process.stdout)
-            except json.JSONDecodeError:
-                result = {"message": process.stdout.strip()}
+            except json.JSONDecodeError as exc:
+                durable_summary = folder / "run.json"
+                if durable_summary.exists():
+                    result = json.loads(durable_summary.read_text(encoding="utf-8"))
+                    result.setdefault("warnings", []).append(
+                        f"Runner stdout was not parseable JSON; loaded durable run.json instead: {exc}"
+                    )
+                else:
+                    result = {"ok": False, "message": process.stdout.strip(), "parseError": str(exc)}
+            succeeded = bool(result.get("ok")) or str(result.get("status") or "").lower() == "succeeded"
             current.update(
                 {
-                    "status": "succeeded" if result.get("ok") else "failed",
+                    "status": "succeeded" if succeeded else "failed",
                     "updated_at": now_iso(),
                     "result": result,
-                    "error": process.stderr.strip() if process.returncode and not result.get("ok") else "",
+                    "error": process.stderr.strip() if process.returncode and not succeeded else "",
                 }
             )
         except Exception as exc:  # noqa: BLE001
@@ -1510,10 +2467,58 @@ class AAPSHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/aaps/settings":
             write_json(self, public_settings())
             return
+        if parsed.path == "/api/aaps/history":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                scope = query.get("scope", ["program"])[0]
+                scope_id = query.get("id", ["active"])[0]
+                history_file = studio_scope_path(STUDIO_HISTORY_DIR, scope, scope_id)
+                rows = []
+                if history_file.exists():
+                    for raw in history_file.read_text(encoding="utf-8").splitlines():
+                        if not raw.strip():
+                            continue
+                        try:
+                            rows.append(json.loads(raw))
+                        except json.JSONDecodeError:
+                            rows.append({"raw": raw, "malformed": True})
+                write_json(
+                    self,
+                    {
+                        "ok": True,
+                        "project_path": project_label(project_dir),
+                        "scope": scope,
+                        "id": scope_id,
+                        "historyPath": history_file.relative_to(project_dir).as_posix(),
+                        "events": rows,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
         if parsed.path == "/api/aaps/project":
             try:
                 project_dir = safe_repo_path(parse_qs(parsed.query).get("path", ["."])[0])
                 write_json(self, read_project(project_dir))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+        if parsed.path == "/api/aaps/artifacts":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                limit = max(1, min(1000, int(query.get("limit", ["240"])[0] or "240")))
+                write_json(self, list_studio_artifacts(project_dir, limit))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+        if parsed.path == "/api/aaps/versions":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                limit = max(1, min(500, int(query.get("limit", ["120"])[0] or "120")))
+                write_json(self, list_version_snapshots(project_dir, limit))
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
@@ -1627,23 +2632,51 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(self, {"error": "message is required"}, 400)
                 return
             if os.environ.get("AAPS_MOCK_CODEX") == "1":
+                project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
+                result = {
+                    "mode": "reply",
+                    "route": "mock",
+                    "message": "Mock router accepted the message; source left unchanged.",
+                    "source": source,
+                    "diagnostics": [],
+                }
+                history_path, artifact_path = write_studio_chat_event(
+                    project_dir,
+                    str(context.get("tab") or "program"),
+                    str(context.get("activeFile") or body.get("file") or "active"),
+                    message,
+                    result,
+                    {"context": context},
+                )
+                result["historyPath"] = history_path
+                result["artifactPath"] = artifact_path
                 write_json(
                     self,
                     {
                         "id": uuid.uuid4().hex[:16],
                         "status": "succeeded",
-                        "result": {
-                            "mode": "reply",
-                            "route": "mock",
-                            "message": "Mock router accepted the message; source left unchanged.",
-                            "source": source,
-                            "diagnostics": [],
-                        },
+                        "result": result,
                     },
                 )
                 return
             job_id = uuid.uuid4().hex[:16]
             outcome = run_codex(job_id, build_chat_prompt(source, message, context), "aaps_chat")
+            try:
+                project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
+                result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
+                history_path, artifact_path = write_studio_chat_event(
+                    project_dir,
+                    str(context.get("tab") or "program"),
+                    str(context.get("activeFile") or body.get("file") or "active"),
+                    message,
+                    result,
+                    {"context": context, "job_id": job_id},
+                )
+                if isinstance(outcome.get("result"), dict):
+                    outcome["result"]["historyPath"] = history_path
+                    outcome["result"]["artifactPath"] = artifact_path
+            except Exception as exc:  # noqa: BLE001
+                outcome.setdefault("warnings", []).append(f"failed to persist chat history: {exc}")
             status = 200 if outcome["status"] == "succeeded" else 500
             write_json(self, {"id": job_id, **outcome}, status)
             return
@@ -1658,11 +2691,16 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     return
                 manifest["updated"] = manifest.get("updated") or now_iso()
                 manifest_path = project_dir / PROJECT_MANIFEST
-                manifest_path.write_text(
+                snapshot = write_project_text(
+                    project_dir,
+                    manifest_path,
                     json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
+                    "project_manifest_save",
                 )
-                write_json(self, read_project(project_dir))
+                payload = read_project(project_dir)
+                if snapshot:
+                    payload["previousSnapshot"] = snapshot
+                write_json(self, payload)
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
@@ -1690,8 +2728,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     write_json(self, {"error": "only .aaps files can be saved"}, 400)
                     return
                 file_path = relative_to_project(project_dir, file_name)
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(source, encoding="utf-8")
+                snapshot = write_project_text(project_dir, file_path, source, "project_file_save")
                 write_json(
                     self,
                     {
@@ -1699,6 +2736,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         "project_path": project_label(project_dir),
                         "file": file_path.relative_to(project_dir).as_posix(),
                         "files": scan_aaps_files(project_dir),
+                        "previousSnapshot": snapshot,
                     },
                 )
             except Exception as exc:  # noqa: BLE001
@@ -1712,14 +2750,14 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 source = str(body.get("source") or "")
                 file_path = relative_to_project(project_dir, file_name)
                 ensure_text_file(file_path)
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(source, encoding="utf-8")
+                snapshot = write_project_text(project_dir, file_path, source, "project_text_file_save")
                 write_json(
                     self,
                     {
                         "ok": True,
                         "project_path": project_label(project_dir),
                         "file": file_path.relative_to(project_dir).as_posix(),
+                        "previousSnapshot": snapshot,
                         "files": scan_aaps_files(project_dir),
                         "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
                         "environment_files": [
@@ -1751,6 +2789,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 file_name = str(body.get("file") or "").strip()
                 target_name = str(body.get("target") or "").strip()
                 kind = str(body.get("kind") or "workflow").strip().lower()
+                manifest_target = target_name
                 if not action:
                     write_json(self, {"error": "action is required"}, 400)
                     return
@@ -1762,8 +2801,8 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     if file_path.exists():
                         write_json(self, {"error": "file already exists"}, 409)
                         return
-                    file_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_path.write_text(default_aaps_source(kind, file_path.stem), encoding="utf-8")
+                    write_project_text(project_dir, file_path, default_aaps_source(kind, file_path.stem), "project_file_create")
+                    file_name = file_path.relative_to(project_dir).as_posix()
                 elif action == "duplicate":
                     file_path = relative_to_project(project_dir, file_name)
                     target_path = relative_to_project(project_dir, target_name)
@@ -1774,28 +2813,54 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         write_json(self, {"error": "target file already exists"}, 409)
                         return
                     target_path.parent.mkdir(parents=True, exist_ok=True)
+                    snapshot_file(project_dir, target_path, "project_file_duplicate_target")
                     shutil.copyfile(file_path, target_path)
+                    file_name = file_path.relative_to(project_dir).as_posix()
+                    manifest_target = target_path.relative_to(project_dir).as_posix()
                 elif action == "rename":
                     file_path = relative_to_project(project_dir, file_name)
                     target_path = relative_to_project(project_dir, target_name)
                     if not file_path.exists():
                         write_json(self, {"error": "source file not found"}, 404)
                         return
+                    snapshot_file(project_dir, file_path, "project_file_rename_source")
+                    snapshot_file(project_dir, target_path, "project_file_rename_target")
                     target_path.parent.mkdir(parents=True, exist_ok=True)
                     file_path.rename(target_path)
+                    file_name = file_path.relative_to(project_dir).as_posix()
+                    manifest_target = target_path.relative_to(project_dir).as_posix()
                 elif action in {"archive", "delete"}:
                     file_path = relative_to_project(project_dir, file_name)
                     if not file_path.exists():
                         write_json(self, {"error": "source file not found"}, 404)
                         return
+                    snapshot_file(project_dir, file_path, f"project_file_{action}")
                     archive_root = project_dir / "archive"
                     archive_root.mkdir(parents=True, exist_ok=True)
                     archived = archive_root / f"{int(time.time())}-{file_path.name}"
                     file_path.rename(archived)
+                    file_name = file_path.relative_to(project_dir).as_posix()
+                    manifest_target = archived.relative_to(project_dir).as_posix() if action == "archive" else ""
                 else:
                     write_json(self, {"error": f"unknown file action: {action}"}, 400)
                     return
-                write_json(self, read_project(project_dir))
+                manifest_snapshot = update_manifest_file_listing(project_dir, action, file_name, manifest_target, kind)
+                payload = read_project(project_dir)
+                if manifest_snapshot:
+                    payload["manifestSnapshot"] = manifest_snapshot
+                write_json(self, payload)
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
+        if parsed.path == "/api/aaps/versions/restore":
+            try:
+                project_dir = safe_repo_path(str(body.get("path") or "."))
+                snapshot = str(body.get("snapshot") or "").strip()
+                if not snapshot:
+                    write_json(self, {"error": "snapshot is required"}, 400)
+                    return
+                write_json(self, restore_version_snapshot(project_dir, snapshot))
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return

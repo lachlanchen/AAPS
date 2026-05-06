@@ -4,6 +4,7 @@ const irEl = document.getElementById("ir");
 const diagnosticsEl = document.getElementById("diagnostics");
 const irSummaryEl = document.getElementById("ir-summary");
 const blockCountEl = document.getElementById("block-count");
+const blockBrowserEl = document.getElementById("block-browser");
 const chatLogEl = document.getElementById("chat-log");
 const chatFormEl = document.getElementById("chat-form");
 const chatInputEl = document.getElementById("chat-input");
@@ -26,6 +27,12 @@ const projectPathEl = document.getElementById("project-path");
 const runStatusEl = document.getElementById("run-status");
 const runSummaryEl = document.getElementById("run-summary");
 const runLogEl = document.getElementById("run-log");
+const artifactSummaryEl = document.getElementById("artifact-summary");
+const artifactListEl = document.getElementById("artifact-list");
+const refreshArtifactsBtnEl = document.getElementById("refresh-artifacts-btn");
+const versionsSummaryEl = document.getElementById("versions-summary");
+const versionsListEl = document.getElementById("versions-list");
+const refreshVersionsBtnEl = document.getElementById("refresh-versions-btn");
 const blockChatInputEl = document.getElementById("block-chat-input");
 const blockLogEl = document.getElementById("block-log");
 const blockReadinessEl = document.getElementById("block-readiness");
@@ -88,6 +95,8 @@ let chatMessageCount = 0;
 let activeTab = localStorage.getItem("aaps.studio.activeTab") || "project";
 let lastRuntimeResult = null;
 let lastCompileResult = null;
+let currentArtifacts = { items: [], counts: {}, kindCounts: {} };
+let currentVersions = { items: [], count: 0 };
 let currentSettings = {
   agentProvider: "codex",
   codexModel: "gpt-5.3-codex",
@@ -365,6 +374,7 @@ function renderProject(payload = currentProjectPayload) {
     )
     .join("");
   projectFilesEl.innerHTML = aapsSections || scriptSection || textSection ? `${aapsSections}${scriptSection}${textSection}` : '<div class="message">No project files found.</div>';
+  renderBlockBrowser(getIr());
 }
 
 function renderRuntime(record) {
@@ -430,6 +440,114 @@ function renderCompile(record) {
     }
   `;
   compileLogEl.textContent = JSON.stringify(result, null, 2);
+}
+
+function formatBytes(size) {
+  const value = Number(size || 0);
+  if (value > 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  if (value > 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${value} B`;
+}
+
+function renderArtifacts(payload = currentArtifacts) {
+  currentArtifacts = payload || { items: [], counts: {}, kindCounts: {} };
+  const items = currentArtifacts.items || [];
+  const counts = currentArtifacts.counts || {};
+  const kindCounts = currentArtifacts.kindCounts || {};
+  if (!artifactSummaryEl || !artifactListEl) return;
+  const totalSize = items.reduce((sum, item) => sum + Number(item.size || 0), 0);
+  artifactSummaryEl.innerHTML = `
+    <div class="project-kpis">
+      <div class="project-kpi"><strong>${items.length}</strong>recent files</div>
+      <div class="project-kpi"><strong>${formatBytes(totalSize)}</strong>listed size</div>
+      <div class="project-kpi"><strong>${counts.outputs || 0}</strong>outputs</div>
+      <div class="project-kpi"><strong>${counts.studio_runs || 0}</strong>run files</div>
+      <div class="project-kpi"><strong>${counts.studio_artifacts || 0}</strong>chat artifacts</div>
+      <div class="project-kpi"><strong>${kindCounts.image || 0}</strong>images</div>
+    </div>
+  `;
+  artifactListEl.innerHTML = items.length
+    ? items
+        .map((item) => {
+          const isPreview = item.kind === "image" && item.path.startsWith("outputs/");
+          return `
+            <article class="artifact-item">
+              ${isPreview ? `<img src="${escapeHtml(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />` : ""}
+              <div>
+                <strong>${escapeHtml(item.path)}</strong>
+                <span>${escapeHtml(item.source)} · ${escapeHtml(item.kind)} · ${formatBytes(item.size)}</span>
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : '<div class="message">No artifacts found yet. Run or compile a workflow first.</div>';
+}
+
+async function loadArtifacts(path = projectPathEl.value || ".") {
+  const response = await fetch(`/api/aaps/artifacts?path=${encodeURIComponent(path)}&limit=240`);
+  if (!response.ok) throw new Error(`artifacts API returned ${response.status}`);
+  const payload = await response.json();
+  renderArtifacts(payload);
+  return payload;
+}
+
+function renderVersions(payload = currentVersions) {
+  currentVersions = payload || { items: [], count: 0 };
+  const items = currentVersions.items || [];
+  if (!versionsSummaryEl || !versionsListEl) return;
+  const fileCount = new Set(items.map((item) => item.file)).size;
+  versionsSummaryEl.innerHTML = `
+    <div class="project-kpis">
+      <div class="project-kpi"><strong>${items.length}</strong>snapshots</div>
+      <div class="project-kpi"><strong>${fileCount}</strong>files</div>
+      <div class="project-kpi"><strong>${formatBytes(items.reduce((sum, item) => sum + Number(item.size || 0), 0))}</strong>listed size</div>
+    </div>
+  `;
+  versionsListEl.innerHTML = items.length
+    ? items
+        .map(
+          (item) => `
+            <article class="version-item">
+              <div>
+                <strong>${escapeHtml(item.file)}</strong>
+                <span>${escapeHtml(item.action)} · ${escapeHtml(item.time || "unknown time")} · ${formatBytes(item.size)}</span>
+                <code>${escapeHtml(item.snapshot)}</code>
+              </div>
+              <button type="button" data-restore-version="${escapeHtml(item.snapshot)}">Restore</button>
+            </article>
+          `
+        )
+        .join("")
+    : '<div class="message">No snapshots yet. Save a block, workflow, script, or manifest first.</div>';
+}
+
+async function loadVersions(path = projectPathEl.value || ".") {
+  const response = await fetch(`/api/aaps/versions?path=${encodeURIComponent(path)}&limit=120`);
+  if (!response.ok) throw new Error(`versions API returned ${response.status}`);
+  const payload = await response.json();
+  renderVersions(payload);
+  return payload;
+}
+
+async function restoreVersion(snapshot) {
+  const response = await fetch("/api/aaps/versions/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: projectPathEl.value || ".", snapshot }),
+  });
+  if (!response.ok) throw new Error(`version restore returned ${response.status}`);
+  const payload = await response.json();
+  renderProject(payload);
+  if (payload.restored?.file?.endsWith(".aaps")) {
+    await loadProjectFile(payload.restored.file);
+  }
+  loadArtifacts(projectPathEl.value || ".").catch(() => {});
+  loadVersions(projectPathEl.value || ".").catch(() => {});
+  if (payload.restored?.file) {
+    addMessage("assistant", `Restored ${payload.restored.file} from ${snapshot}.`);
+  }
+  return payload;
 }
 
 function renderSettings(settings = currentSettings) {
@@ -764,6 +882,65 @@ function renderSection(title, nodes, prefix) {
   `;
 }
 
+function blockFileGroup(file) {
+  const lower = String(file || "").toLowerCase();
+  if (lower.includes("app80")) return "APP80";
+  if (lower.includes("app65")) return "APP65";
+  if (lower.includes("app81")) return "APP81";
+  if (lower.includes("segment")) return "Segmentation";
+  if (lower.includes("quant")) return "Quantification";
+  if (lower.includes("visual")) return "Visualization";
+  if (lower.includes("tdv_browser")) return "Browser TDV";
+  const parts = String(file || "").split("/");
+  return parts.length > 2 ? parts[1] : "General";
+}
+
+function renderProjectBlockFiles() {
+  const manifest = AAPS.normalizeProjectManifest(currentProjectPayload.manifest || AAPS.sampleProject);
+  const files = manifest.files?.blocks || [];
+  if (!files.length) return "";
+  const groups = new Map();
+  files.forEach((file) => {
+    const group = blockFileGroup(file);
+    groups.set(group, [...(groups.get(group) || []), file]);
+  });
+  return `
+    <section class="tree-section block-file-section">
+      <h3>Project Block Files</h3>
+      ${[...groups.entries()]
+        .map(
+          ([group, groupFiles]) => `
+            <div class="block-file-group">
+              <strong>${escapeHtml(group)}</strong>
+              ${groupFiles
+                .map(
+                  (file) => `
+                    <button class="project-file${file === manifest.activeFile ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
+                      <span>${escapeHtml(file)}</span>
+                      <span>${(currentProjectPayload.files || []).includes(file) ? "found" : "listed"}</span>
+                    </button>
+                  `
+                )
+                .join("")}
+            </div>
+          `
+        )
+        .join("")}
+    </section>
+  `;
+}
+
+function renderBlockBrowser(ir) {
+  if (!blockBrowserEl) return;
+  const sourceSections = [
+    renderSection("Blocks", ir.pipeline.blocks || [], "block"),
+    renderSection("Skills", ir.pipeline.skills || [], "skill"),
+    renderSection("Tasks", ir.pipeline.tasks || [], "task"),
+  ].join("");
+  const sections = [renderProjectBlockFiles(), sourceSections].join("");
+  blockBrowserEl.innerHTML = sections || '<div class="message">No current blocks. Add a reusable block or ask block chat to create one.</div>';
+}
+
 function renderSelectedReadiness(result = lastRuntimeResult) {
   const selected = nodeRefs.get(selectedRef);
   if (!blockReadinessEl) return;
@@ -839,6 +1016,7 @@ function render() {
   if (!totalNodes) {
     treeEl.innerHTML = '<div class="message">Add a block or ask chat to create one.</div>';
   }
+  renderBlockBrowser(ir);
   blockCountEl.textContent = `${totalNodes} block${totalNodes === 1 ? "" : "s"}`;
   irSummaryEl.textContent = `${totalNodes} node${totalNodes === 1 ? "" : "s"}`;
   diagnosticsEl.textContent = ir.diagnostics.length
@@ -1232,6 +1410,12 @@ async function loadProject(path = projectPathEl.value || ".") {
   if (!response.ok) throw new Error(`project API returned ${response.status}`);
   const payload = await response.json();
   renderProject(payload);
+  loadArtifacts(path).catch((error) => {
+    if (artifactListEl) artifactListEl.innerHTML = `<div class="message">${escapeHtml(error.message)}</div>`;
+  });
+  loadVersions(path).catch((error) => {
+    if (versionsListEl) versionsListEl.innerHTML = `<div class="message">${escapeHtml(error.message)}</div>`;
+  });
   return payload;
 }
 
@@ -1250,6 +1434,8 @@ async function saveProject() {
   if (!response.ok) throw new Error(`project save returned ${response.status}`);
   const payload = await response.json();
   renderProject(payload);
+  loadArtifacts(projectPathEl.value || ".").catch(() => {});
+  loadVersions(projectPathEl.value || ".").catch(() => {});
   addMessage("assistant", `Saved project manifest for ${payload.manifest.name}.`);
 }
 
@@ -1298,6 +1484,7 @@ async function saveActiveProjectFile() {
   if (!response.ok) throw new Error(`file save returned ${response.status}`);
   const payload = await response.json();
   renderProject({ ...currentProjectPayload, files: payload.files, manifest });
+  loadVersions(projectPathEl.value || ".").catch(() => {});
   addMessage("assistant", `Saved ${file}.`);
 }
 
@@ -1314,6 +1501,7 @@ async function saveOpenTextFile() {
   if (!response.ok) throw new Error(`text file save returned ${response.status}`);
   const payload = await response.json();
   renderProject({ ...currentProjectPayload, ...payload });
+  loadVersions(projectPathEl.value || ".").catch(() => {});
   addMessage("assistant", `Saved ${openTextFile}.`);
 }
 
@@ -1344,6 +1532,7 @@ async function projectFileAction(action) {
   if (!response.ok) throw new Error(`file action returned ${response.status}`);
   const payload = await response.json();
   renderProject(payload);
+  loadVersions(projectPathEl.value || ".").catch(() => {});
   addMessage("assistant", `${action} completed for ${file}.`);
 }
 
@@ -1360,6 +1549,7 @@ async function pollRun(id) {
       });
     }, 1200);
   } else {
+    loadArtifacts(projectPathEl.value || ".").catch(() => {});
     addMessage("assistant", `AAPS run ${id} ${record.status}.`);
   }
 }
@@ -1376,6 +1566,7 @@ async function pollCompile(id) {
       });
     }, 1200);
   } else {
+    loadArtifacts(projectPathEl.value || ".").catch(() => {});
     addMessage("assistant", `AAPS compile ${id} ${record.status}.`);
   }
 }
@@ -1498,6 +1689,8 @@ async function applyBlockChat() {
       blockId: node.id,
       message,
       source: sourceEl.value,
+      materialize: true,
+      blockFile: `blocks/${AAPS.slug(node.id)}.aaps`,
     }),
   });
   if (!response.ok) throw new Error(`block chat returned ${response.status}`);
@@ -1541,11 +1734,15 @@ async function applyBlockChat() {
   });
   blockChatInputEl.value = "";
   blockLogEl.textContent = JSON.stringify(payload, null, 2);
-  addMessage("assistant", payload.summary || "Applied block chat action.");
+  addMessage(
+    "assistant",
+    `${payload.summary || "Applied block chat action."}${payload.blockFile ? ` Block: ${payload.blockFile}.` : ""}${payload.historyPath ? ` History: ${payload.historyPath}.` : ""}${payload.artifactPath ? ` Artifact: ${payload.artifactPath}.` : ""}`
+  );
   if (payload.script) {
     const latest = await loadProject(projectPathEl.value || ".");
     renderProject(latest);
   }
+  loadVersions(projectPathEl.value || ".").catch(() => {});
 }
 
 async function saveBlockCode() {
@@ -1659,6 +1856,20 @@ treeEl.addEventListener("click", (event) => {
   render();
 });
 
+blockBrowserEl?.addEventListener("click", (event) => {
+  const fileButton = event.target.closest("[data-project-file]");
+  if (fileButton) {
+    loadProjectFile(fileButton.dataset.projectFile).catch((error) => {
+      addMessage("assistant", `Could not load block file: ${error.message}`);
+    });
+    return;
+  }
+  const card = event.target.closest("[data-ref]");
+  if (!card) return;
+  selectedRef = card.dataset.ref;
+  render();
+});
+
 sourceEl.addEventListener("input", render);
 
 chatFormEl.addEventListener("submit", (event) => {
@@ -1690,6 +1901,13 @@ inspectorFormEl.addEventListener("submit", (event) => {
 });
 
 document.getElementById("delete-block").addEventListener("click", deleteSelected);
+document.getElementById("save-block-file-btn").addEventListener("click", () => {
+  applyInspector();
+  saveActiveProjectFile().catch((error) => {
+    blockLogEl.textContent = error.message;
+    addMessage("assistant", `Could not save block file: ${error.message}`);
+  });
+});
 document.getElementById("sample-general").addEventListener("click", () => {
   sourceEl.value = AAPS.samples.general;
   selectedRef = "";
@@ -1741,6 +1959,27 @@ projectFilesEl.addEventListener("click", (event) => {
 document.getElementById("load-project-btn").addEventListener("click", () => {
   loadProject().catch((error) => {
     addMessage("assistant", `Could not load project: ${error.message}`);
+  });
+});
+
+refreshArtifactsBtnEl?.addEventListener("click", () => {
+  loadArtifacts(projectPathEl.value || ".").catch((error) => {
+    addMessage("assistant", `Could not refresh artifacts: ${error.message}`);
+  });
+});
+
+refreshVersionsBtnEl?.addEventListener("click", () => {
+  loadVersions(projectPathEl.value || ".").catch((error) => {
+    addMessage("assistant", `Could not refresh versions: ${error.message}`);
+  });
+});
+
+versionsListEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-restore-version]");
+  if (!button) return;
+  const snapshot = button.dataset.restoreVersion;
+  restoreVersion(snapshot).catch((error) => {
+    addMessage("assistant", `Could not restore snapshot: ${error.message}`);
   });
 });
 
@@ -1913,6 +2152,7 @@ render();
 renderProject(currentProjectPayload);
 renderRuntime(null);
 renderCompile(null);
+renderArtifacts(currentArtifacts);
 renderSettings(currentSettings);
 activateTab(activeTab, false);
 setHistoryOpen(false);
