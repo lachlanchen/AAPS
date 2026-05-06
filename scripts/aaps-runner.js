@@ -380,9 +380,11 @@ function shellAction(command, projectDir, timeoutMs, dryRun) {
     return { status: "failed", code: 126, stdout: "", stderr: "Unsafe shell command blocked by AAPS runtime policy.", command };
   }
   if (dryRun) return { status: "dry_run", code: 0, stdout: "", stderr: "", command };
-  const result = spawnSync(command, {
+  const shellArgs = commandExists("bash", projectDir)
+    ? ["bash", ["-o", "pipefail", "-lc", command]]
+    : ["sh", ["-lc", command]];
+  const result = spawnSync(shellArgs[0], shellArgs[1], {
     cwd: projectDir,
-    shell: true,
     encoding: "utf8",
     timeout: timeoutMs || undefined,
     maxBuffer: 10 * 1024 * 1024,

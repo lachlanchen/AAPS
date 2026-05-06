@@ -552,6 +552,43 @@ const inlineAgentCompileJson = JSON.parse(inlineAgentCompile.stdout);
 assert.strictEqual(inlineAgentCompileJson.status, "compiled");
 assert(!JSON.stringify(inlineAgentCompileJson.missingComponents || []).includes("missing_agent"));
 
+fs.writeFileSync(
+  path.join(inlineAgentProject, "workflows", "pipefail.aaps"),
+  `pipeline "Pipefail Runtime" {
+  agent runner {
+    role "Local test runner."
+    model "local"
+    tools "shell"
+  }
+  task pipe_must_fail {
+    uses runner
+    exec shell "false | tee runtime/artifacts/pipefail.txt"
+    output pipe_file: text = "runtime/artifacts/pipefail.txt"
+  }
+}
+`,
+  "utf8"
+);
+const pipefailRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run",
+    "workflows/pipefail.aaps",
+    "--project",
+    ".aaps-work/tests/inline-agent-project",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "pipefail-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.notStrictEqual(pipefailRun.status, 0, pipefailRun.stdout);
+const pipefailRunJson = JSON.parse(pipefailRun.stdout);
+assert.strictEqual(pipefailRunJson.status, "failed");
+
 const promptProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-project");
 fs.rmSync(promptProject, { recursive: true, force: true });
 fs.mkdirSync(promptProject, { recursive: true });
