@@ -6,8 +6,8 @@
 
 <div align="center">
   <h1>AAPS</h1>
-  <p><strong>Prompt is all you need.</strong></p>
-  <p>A prompt-native and project-oriented programming language and visual studio for agents, turning ideas into structured, executable, and verifiable pipelines.</p>
+  <p><strong>Prompt is All You Need.</strong></p>
+  <p>Prompt is all you need: AAPS is a project oriented and prompt-native programming language and visual studio for turning prompts into structured, verifiable pipelines. It connects wet and dry experiments, hardware and software, and human intent with executable agent work through tasks, typed inputs, declared outputs, validation gates, recovery steps, and durable artifacts.</p>
   <p>
     <img alt="Language" src="https://img.shields.io/badge/language-AAPS-ff4f8b" />
     <img alt="Studio" src="https://img.shields.io/badge/studio-static%20PWA-00bcd4" />
@@ -18,7 +18,7 @@
 
 ## Overview
 
-AAPS is a prompt-native and project-oriented programming language and visual studio for agents, turning ideas into structured, executable, and verifiable pipelines. It connects wet and dry experiments, hardware and software, and human intent with executable agent work through tasks, typed inputs, declared outputs, validation gates, recovery steps, and durable artifacts.
+Prompt is all you need: AAPS is a project oriented and prompt-native programming language and visual studio for turning prompts into structured, verifiable pipelines. It connects wet and dry experiments, hardware and software, and human intent with executable agent work through tasks, typed inputs, declared outputs, validation gates, recovery steps, and durable artifacts.
 
 It abstracts the practical loop used across public project patterns such as AutoAppDev, AutoNovelWriter, LazyBlog, OrganoidQuant, OrganoidCompactnessAnalysis, OrganoidAgent, and future AgInTiFlow-backed agents: inspect, route, act, verify, summarize, and publish.
 
