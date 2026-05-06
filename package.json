@@ -1,7 +1,7 @@
 {
   "name": "@lazyingart/aaps",
-  "version": "0.4.3",
-  "description": "Project-oriented programming for agentic workflows: a prompt-native language and visual studio for structured, verifiable pipelines.",
+  "version": "0.4.4",
+  "description": "Project-oriented programming for agents: a prompt-native language and visual studio for structured, executable, and verifiable pipelines.",
   "type": "commonjs",
   "private": false,
   "bin": {
