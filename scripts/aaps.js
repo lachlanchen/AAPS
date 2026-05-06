@@ -27,6 +27,7 @@ function usage() {
     "  aaps \"goal\" [--project .] [--backend aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
     "  aaps studio [--host 127.0.0.1] [--port 8796] [--mock-codex]",
+    "  aaps --version",
     "",
     "Options:",
     "  --project <dir>   AAPS project root. Defaults to current directory.",
@@ -401,6 +402,9 @@ function main() {
     "help",
     "--help",
     "-h",
+    "version",
+    "--version",
+    "-v",
     "parse",
     "validate",
     "studio",
@@ -419,6 +423,10 @@ function main() {
   ]);
   if (command === "help" || command === "--help" || command === "-h") {
     console.log(usage());
+    return;
+  }
+  if (command === "version" || command === "--version" || command === "-v") {
+    console.log(packageVersion());
     return;
   }
   if (command === "prompt") {

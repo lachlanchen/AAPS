@@ -302,6 +302,24 @@ const cliValidate = childProcess.spawnSync(
 assert.strictEqual(cliValidate.status, 0, cliValidate.stderr || cliValidate.stdout);
 assert.strictEqual(JSON.parse(cliValidate.stdout).ok, true);
 
+const cliVersion = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "--version"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(cliVersion.status, 0, cliVersion.stderr || cliVersion.stdout);
+assert.strictEqual(cliVersion.stdout.trim(), require("../package.json").version);
+assert.strictEqual(cliVersion.stderr, "");
+
+const cliShortVersion = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "-v"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(cliShortVersion.status, 0, cliShortVersion.stderr || cliShortVersion.stdout);
+assert.strictEqual(cliShortVersion.stdout.trim(), require("../package.json").version);
+assert.strictEqual(cliShortVersion.stderr, "");
+
 const blockRun = childProcess.spawnSync(
   "node",
   [
