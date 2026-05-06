@@ -40,6 +40,11 @@ function usage() {
     "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --backend <name>  Prompt backend for direct goals. Defaults to aginti.",
     "  --provider <name> Provider passed to AgInTi backend.",
+    "  --aginti-safety <safe|normal|danger> Safety shortcut passed to AgInTi backend.",
+    "  --sandbox-mode <mode> Sandbox mode passed to AgInTi backend.",
+    "  --package-install-policy <policy> Package policy passed to AgInTi backend.",
+    "  --approve-package-installs Approve package installs for the AgInTi backend run.",
+    "  --allow-destructive Pass trusted host/destructive approval to AgInTi backend.",
     "  --print-prompt    Save and print the generated backend prompt without running it.",
     "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
     "  --json            Print machine-readable JSON where supported.",
@@ -190,6 +195,9 @@ function buildPromptHandoff(projectDir, goal, options) {
     "6. Save durable reports under `reports/` and durable generated artifacts under project-local folders.",
     "7. Do not use sudo or destructive host commands. Ask for a stronger mode when the task requires broader permission.",
     "8. Finish with exact paths to the workflow, compile/run logs, and outputs.",
+    options.allowDestructive
+      ? "9. This run was launched with explicit trusted-host/destructive approval. Use it only for the requested project work, avoid unrelated host changes, and keep secrets out of reports."
+      : "9. If broad host commands are blocked, report the blocker and rerun command instead of looping on variants.",
     "",
     "## Expected Output",
     "",
@@ -250,9 +258,11 @@ function commandPrompt(goal, options) {
     "--allow-shell",
     "--allow-file-tools",
   ];
+  if (options.agintiSafety) args.push("-s", String(options.agintiSafety));
   if (options.packageInstallPolicy === "allow" || options.approvePackageInstalls) {
     args.push("--approve-package-installs");
   }
+  if (options.allowDestructive) args.push("--allow-destructive");
   if (options.provider) args.push("--provider", options.provider);
   if (options.model) args.push("--model", options.model);
   if (options.scoutCount) args.push("--scout-count", String(options.scoutCount));

@@ -544,6 +544,57 @@ assert(promptText.includes("AAPS Backend Agent Task"));
 assert(promptText.includes("Docker-safe AAPS CLI fallback"));
 assert(promptText.includes("npx -y @lazyingart/aaps@"));
 assert(promptText.includes("host path exists inside the active sandbox"));
+assert(promptText.includes("If broad host commands are blocked"));
+
+const fakeBin = path.join(promptProject, "fake-bin");
+const fakeArgsFile = path.join(promptProject, "fake-aginti-args.txt");
+fs.mkdirSync(fakeBin, { recursive: true });
+fs.writeFileSync(
+  path.join(fakeBin, "aginti"),
+  `#!/bin/sh
+printf '%s\\n' "$@" > "$AAPS_FAKE_AGINTI_ARGS"
+exit 0
+`,
+  { encoding: "utf8", mode: 0o755 }
+);
+const promptTrustedHost = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "prompt",
+    "Use trusted host mode for a project-local AAPS repair.",
+    "--project",
+    ".aaps-work/tests/prompt-project",
+    "--backend",
+    "aginti",
+    "--sandbox-mode",
+    "host",
+    "--package-install-policy",
+    "allow",
+    "--approve-package-installs",
+    "--allow-destructive",
+    "--aginti-safety",
+    "danger",
+    "--json",
+  ],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+      AAPS_FAKE_AGINTI_ARGS: fakeArgsFile,
+    },
+  }
+);
+assert.strictEqual(promptTrustedHost.status, 0, promptTrustedHost.stderr || promptTrustedHost.stdout);
+const trustedPayload = JSON.parse(promptTrustedHost.stdout);
+assert.strictEqual(trustedPayload.ok, true);
+assert.strictEqual(trustedPayload.executed, true);
+assert(trustedPayload.command.includes("--allow-destructive"));
+assert(trustedPayload.command.includes("-s"));
+assert(trustedPayload.command.includes("danger"));
+assert(fs.readFileSync(fakeArgsFile, "utf8").includes("--allow-destructive"));
 
 const directPrompt = childProcess.spawnSync(
   "node",
