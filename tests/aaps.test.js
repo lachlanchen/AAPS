@@ -545,6 +545,9 @@ assert(promptText.includes("Docker-safe AAPS CLI fallback"));
 assert(promptText.includes("npx -y @lazyingart/aaps@"));
 assert(promptText.includes("host path exists inside the active sandbox"));
 assert(promptText.includes("If broad host commands are blocked"));
+assert(promptText.includes("`.aaps` files are not YAML"));
+assert(promptText.includes("project-local `.venv`"));
+assert(promptText.includes("set -o pipefail"));
 
 const fakeBin = path.join(promptProject, "fake-bin");
 const fakeArgsFile = path.join(promptProject, "fake-aginti-args.txt");
