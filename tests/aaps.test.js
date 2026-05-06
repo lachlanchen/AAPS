@@ -552,6 +552,29 @@ const inlineAgentCompileJson = JSON.parse(inlineAgentCompile.stdout);
 assert.strictEqual(inlineAgentCompileJson.status, "compiled");
 assert(!JSON.stringify(inlineAgentCompileJson.missingComponents || []).includes("missing_agent"));
 
+const missingBlockRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run-block",
+    "workflows/main.aaps",
+    "--project",
+    ".aaps-work/tests/inline-agent-project",
+    "--block",
+    "does_not_exist",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "missing-block-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.notStrictEqual(missingBlockRun.status, 0, missingBlockRun.stdout);
+const missingBlockRunJson = JSON.parse(missingBlockRun.stdout);
+assert.strictEqual(missingBlockRunJson.status, "failed_missing_block");
+assert.strictEqual(missingBlockRunJson.plan.blockFilter.matched, 0);
+
 fs.writeFileSync(
   path.join(inlineAgentProject, "workflows", "pipefail.aaps"),
   `pipeline "Pipefail Runtime" {

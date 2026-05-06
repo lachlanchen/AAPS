@@ -774,6 +774,11 @@ function filterPlanByBlock(plan, block, includeAncestors = false) {
     steps,
     executableSteps: steps.filter((step) => step.executable).length,
     promptOnlySteps: steps.filter((step) => step.promptOnly).length,
+    blockFilter: {
+      block,
+      matched: matched.length,
+      includeAncestors,
+    },
   };
 }
 
@@ -834,6 +839,57 @@ function run(options) {
     );
   });
   const dryRun = Boolean(options.dryRun);
+  if (options.block && plan.blockFilter && plan.blockFilter.matched === 0) {
+    const failed = {
+      ok: false,
+      runId,
+      status: "failed_missing_block",
+      file: loaded.file,
+      project: projectDir,
+      runDir,
+      dryRun,
+      diagnostics: ir.diagnostics,
+      requirements: checkRequirements(ir, projectDir),
+      readiness,
+      compilePlan,
+      plan: {
+        steps: plan.steps.length,
+        executableSteps: plan.executableSteps,
+        promptOnlySteps: plan.promptOnlySteps,
+        warnings: plan.warnings,
+        blockFilter: plan.blockFilter,
+      },
+      results: [],
+      startedAt: nowIso(),
+      finishedAt: nowIso(),
+      message: `No executable plan step matched requested block: ${options.block}`,
+    };
+    writeJson(path.join(runDir, "run.json"), failed);
+    fs.writeFileSync(
+      path.join(runDir, "report.md"),
+      [
+        `# AAPS Run ${runId}`,
+        "",
+        `Status: ${failed.status}`,
+        `File: ${failed.file}`,
+        `Requested block: ${options.block}`,
+        "",
+        failed.message,
+        "",
+      ].join("\n"),
+      "utf8"
+    );
+    const database = resolveRuntimePath(projectDir, context.database, context);
+    appendJsonl(database, {
+      runId,
+      file: loaded.file,
+      status: failed.status,
+      runDir,
+      block: options.block || "",
+      finishedAt: failed.finishedAt,
+    });
+    return failed;
+  }
   if (!dryRun && !readiness.ok) {
     const blocked = {
       ok: false,
@@ -1250,7 +1306,7 @@ function main() {
     const readiness = buildReadiness(plan, projectDir, manifest, registries, context);
     const compilePlan = AAPS.buildAgentCompilePlan(plan, readiness);
     console.log(JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, plan, readiness, compilePlan }, null, 2));
-    process.exit(ir.diagnostics.length || !readiness.ok ? 1 : 0);
+    process.exit(ir.diagnostics.length || !readiness.ok || (options.block && plan.blockFilter && plan.blockFilter.matched === 0) ? 1 : 0);
   }
   const summary = run(options);
   if (options.json) console.log(JSON.stringify(summary, null, 2));
