@@ -20,6 +20,7 @@ function usage() {
     "  aaps prepare-setup <file> [--project .] [--json]",
     "  aaps plan <file> [--project .] [--json]",
     "  aaps check <file> [--project .] [--json]",
+    "  aaps audit [file] [--project .] [--json]",
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
@@ -161,7 +162,12 @@ function shellCommandExists(command, cwd) {
   return result.status === 0;
 }
 
-function collectWorkflowCandidates(projectDir) {
+function collectWorkflowCandidates(projectDir, fileArg = "") {
+  if (fileArg) {
+    const full = safeRelative(projectDir, fileArg, "AAPS file");
+    if (!fs.existsSync(full)) throw new Error(`AAPS file not found: ${fileArg}`);
+    return [toProjectPath(path.relative(projectDir, full))];
+  }
   const manifest = readManifest(projectDir);
   const files = Object.keys(scanAapsFiles(projectDir)).sort();
   const preferred = [];
@@ -228,8 +234,8 @@ function runAapsSelf(projectDir, args) {
   };
 }
 
-function auditAapsBackendResult(projectDir) {
-  const workflows = collectWorkflowCandidates(projectDir);
+function auditAapsBackendResult(projectDir, fileArg = "") {
+  const workflows = collectWorkflowCandidates(projectDir, fileArg);
   const audit = {
     ok: false,
     status: workflows.length ? "checked" : "no_workflows",
@@ -519,6 +525,16 @@ function commandValidate(fileArg, options) {
   process.exit(ok ? 0 : 1);
 }
 
+function commandAudit(fileArg, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const payload = auditAapsBackendResult(projectDir, fileArg || "");
+  payload.project = projectDir;
+  if (options.json) print(payload, true);
+  else if (payload.ok) print(`AAPS audit verified ${payload.workflowCount} workflow${payload.workflowCount === 1 ? "" : "s"}.`, false);
+  else print(JSON.stringify(payload, null, 2), false);
+  process.exit(payload.ok ? 0 : 1);
+}
+
 function commandStudio(options) {
   const root = path.resolve(__dirname, "..");
   const host = String(options.host || "127.0.0.1");
@@ -561,6 +577,7 @@ function main() {
     "prepare-setup",
     "plan",
     "check",
+    "audit",
     "run",
     "check-block",
     "run-block",
@@ -584,6 +601,10 @@ function main() {
   }
   if (command === "validate") {
     commandValidate(file, options);
+    return;
+  }
+  if (command === "audit") {
+    commandAudit(file, options);
     return;
   }
   if (command === "studio") {

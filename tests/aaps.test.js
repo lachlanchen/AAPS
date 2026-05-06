@@ -699,6 +699,25 @@ assert(trustedPayload.command.includes("-s"));
 assert(trustedPayload.command.includes("danger"));
 assert(fs.readFileSync(fakeArgsFile, "utf8").includes("--allow-destructive"));
 
+const promptAudit = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "audit", "workflows/backend_verified.aaps", "--project", ".aaps-work/tests/prompt-project", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(promptAudit.status, 0, promptAudit.stderr || promptAudit.stdout);
+assert.strictEqual(JSON.parse(promptAudit.stdout).ok, true);
+
+fs.rmSync(path.join(promptProject, "runtime", "artifacts", "backend-ok.txt"), { force: true });
+const promptAuditMissing = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "audit", "workflows/backend_verified.aaps", "--project", ".aaps-work/tests/prompt-project", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.notStrictEqual(promptAuditMissing.status, 0, promptAuditMissing.stdout);
+const promptAuditMissingJson = JSON.parse(promptAuditMissing.stdout);
+assert.strictEqual(promptAuditMissingJson.ok, false);
+assert(promptAuditMissingJson.workflows[0].missingOutputs.some((item) => item.path === "runtime/artifacts/backend-ok.txt"));
+
 const directPrompt = childProcess.spawnSync(
   "node",
   [
