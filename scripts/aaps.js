@@ -27,7 +27,7 @@ function usage() {
     "  aaps prompt \"goal\" [--project .] [--backend aginti|print] [--json]",
     "  aaps \"goal\" [--project .] [--backend aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
-    "  aaps studio [--host 127.0.0.1] [--port 8796] [--mock-codex]",
+    "  aaps studio [--project .] [--host 127.0.0.1] [--port 8796] [--mock-codex]",
     "  aaps --version",
     "",
     "Options:",
@@ -537,10 +537,12 @@ function commandAudit(fileArg, options) {
 
 function commandStudio(options) {
   const root = path.resolve(__dirname, "..");
+  const projectDir = path.resolve(options.project || ".");
   const host = String(options.host || "127.0.0.1");
   const port = String(options.port || "8796");
   const env = { ...process.env };
   if (options.mockCodex) env.AAPS_MOCK_CODEX = "1";
+  env.AAPS_STUDIO_PROJECT = projectDir;
   const args = [
     path.join(root, "backend", "aaps_codex_server.py"),
     "--host",
@@ -549,7 +551,7 @@ function commandStudio(options) {
     port,
   ];
   const result = childProcess.spawnSync("python3", args, {
-    cwd: root,
+    cwd: projectDir,
     env,
     stdio: "inherit",
   });

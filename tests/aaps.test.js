@@ -760,6 +760,93 @@ assert.strictEqual(directPromptPayload.ok, true);
 assert.strictEqual(directPromptPayload.backend, "print");
 assert(fs.existsSync(path.join(promptProject, directPromptPayload.promptFile)));
 
+function httpJson(url, payload) {
+  const args = ["-sS", url];
+  if (payload) {
+    args.splice(1, 0, "-X", "POST", "-H", "content-type: application/json", "--data", JSON.stringify(payload));
+  }
+  const result = childProcess.spawnSync("curl", args, { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+const studioProject = path.join(__dirname, "..", ".aaps-work", "tests", "studio-project");
+fs.rmSync(studioProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(studioProject, "workflows"), { recursive: true });
+fs.mkdirSync(path.join(studioProject, "data"), { recursive: true });
+fs.mkdirSync(path.join(studioProject, "outputs", "runs"), { recursive: true });
+fs.mkdirSync(path.join(studioProject, ".aginti-sessions"), { recursive: true });
+fs.writeFileSync(
+  path.join(studioProject, "aaps.project.json"),
+  JSON.stringify({ name: "Studio Project", activeFile: "workflows/main.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(studioProject, "workflows", "main.aaps"),
+  `pipeline "Studio Project Compile" {
+  agent runner {
+    role "Local runner."
+    model "local"
+    tools "shell"
+  }
+  task done {
+    uses runner
+    exec shell "mkdir -p artifacts && printf ok > artifacts/ok.txt"
+    output ok_file: text = "artifacts/ok.txt"
+    validate exists "artifacts/ok.txt"
+  }
+}
+`,
+  "utf8"
+);
+fs.writeFileSync(path.join(studioProject, "data", "secret-ish.json"), '{"raw": true}\n', "utf8");
+fs.writeFileSync(path.join(studioProject, "outputs", "runs", "large.json"), '{"generated": true}\n', "utf8");
+fs.writeFileSync(path.join(studioProject, ".aginti-sessions", "session.json"), '{"private": true}\n', "utf8");
+
+const studioPort = "8898";
+const studio = childProcess.spawn(
+  "node",
+  ["scripts/aaps.js", "studio", "--project", ".aaps-work/tests/studio-project", "--host", "127.0.0.1", "--port", studioPort, "--mock-codex"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+);
+try {
+  const base = `http://127.0.0.1:${studioPort}`;
+  let healthy = false;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const health = httpJson(`${base}/api/health`);
+      healthy = health.ok && health.runtime.includes("studio-project");
+      if (healthy) break;
+    } catch {
+      childProcess.spawnSync("sleep", ["0.1"]);
+    }
+  }
+  assert.strictEqual(healthy, true, "studio server should start for requested project");
+  const studioProjectPayload = httpJson(`${base}/api/aaps/project`);
+  assert.strictEqual(studioProjectPayload.project_path, ".");
+  assert.deepStrictEqual(studioProjectPayload.files, ["workflows/main.aaps"]);
+  assert(!studioProjectPayload.text_files.some((file) => file.startsWith("data/")));
+  assert(!studioProjectPayload.text_files.some((file) => file.startsWith("outputs/")));
+  assert(!studioProjectPayload.text_files.some((file) => file.startsWith(".aginti")));
+  const studioCompileStart = httpJson(`${base}/api/aaps/compile`, {
+    path: ".",
+    file: "workflows/main.aaps",
+    mode: "check",
+  });
+  let studioCompile = null;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    studioCompile = httpJson(`${base}/api/aaps/compile?id=${studioCompileStart.id}`);
+    if (studioCompile.status !== "running") break;
+    childProcess.spawnSync("sleep", ["0.1"]);
+  }
+  assert.strictEqual(studioCompile.status, "succeeded", JSON.stringify(studioCompile));
+  assert.strictEqual(studioCompile.result.status, "compiled");
+  assert.strictEqual(studioCompile.result.project.projectRoot, studioProject);
+} finally {
+  studio.kill("SIGTERM");
+  childProcess.spawnSync("pkill", ["-f", `aaps_codex_server.py --host 127.0.0.1 --port ${studioPort}`]);
+}
+
 const badProject = AAPS.validateProjectManifest({
   ...AAPS.sampleProject,
   path: "/tmp/bad",

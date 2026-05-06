@@ -20,13 +20,34 @@ from urllib.parse import parse_qs, urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(os.environ.get("AAPS_STUDIO_PROJECT") or ROOT).expanduser().resolve()
 STUDIO_DIR = ROOT / "studio"
-RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
-RUN_DIR = ROOT / "runtime" / "aaps-runs"
-COMPILE_DIR = ROOT / "runtime" / "aaps-compiles"
-SETTINGS_PATH = ROOT / ".aaps-work" / "aaps-settings.json"
+if PROJECT_ROOT == ROOT:
+    RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
+    RUN_DIR = ROOT / "runtime" / "aaps-runs"
+    COMPILE_DIR = ROOT / "runtime" / "aaps-compiles"
+else:
+    RUNTIME_DIR = PROJECT_ROOT / ".aaps-work" / "studio-codex-jobs"
+    RUN_DIR = PROJECT_ROOT / ".aaps-work" / "studio-aaps-runs"
+    COMPILE_DIR = PROJECT_ROOT / ".aaps-work" / "studio-aaps-compiles"
+SETTINGS_PATH = PROJECT_ROOT / ".aaps-work" / "aaps-settings.json"
 PROJECT_MANIFEST = "aaps.project.json"
-SKIP_SCAN_DIRS = {".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"}
+SKIP_SCAN_DIRS = {
+    ".git",
+    ".aaps-work",
+    ".aginti",
+    ".aginti-sessions",
+    ".sessions",
+    ".venv",
+    "__pycache__",
+    "data",
+    "node_modules",
+    "outputs",
+    "runs",
+    "runtime",
+    "supervision-ledger",
+    "vendor",
+}
 TEXT_FILE_EXTENSIONS = {".aaps", ".py", ".sh", ".js", ".mjs", ".cjs", ".json", ".md", ".txt", ".yaml", ".yml", ".toml"}
 SCRIPT_FILE_EXTENSIONS = {".py", ".sh", ".js", ".mjs", ".cjs"}
 ENVIRONMENT_FILE_EXTENSIONS = {".txt", ".json", ".yaml", ".yml"}
@@ -133,13 +154,30 @@ def read_json(handler: SimpleHTTPRequestHandler) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
+def project_label(project_dir: Path) -> str:
+    resolved = project_dir.resolve()
+    if resolved == PROJECT_ROOT:
+        return "."
+    try:
+        return resolved.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
+
+
+def project_arg(project_dir: Path) -> str:
+    resolved = project_dir.resolve()
+    if resolved == PROJECT_ROOT:
+        return str(PROJECT_ROOT)
+    return str(resolved)
+
+
 def safe_repo_path(value: str | None = ".") -> Path:
     text = str(value or ".").strip() or "."
     candidate = Path(text)
-    if candidate.is_absolute() or text.startswith("~") or ".." in candidate.parts:
-        raise ValueError(f"path must be relative to the AAPS repository: {text}")
-    resolved = (ROOT / candidate).resolve()
-    resolved.relative_to(ROOT)
+    if text.startswith("~") or ".." in candidate.parts:
+        raise ValueError(f"path must stay inside the AAPS Studio project: {text}")
+    resolved = candidate.resolve() if candidate.is_absolute() else (PROJECT_ROOT / candidate).resolve()
+    resolved.relative_to(PROJECT_ROOT)
     return resolved
 
 
@@ -225,7 +263,7 @@ def default_aaps_source(kind: str, name: str) -> str:
 
 
 def starter_project_manifest(project_dir: Path, name: str, domain: str, goal: str) -> dict:
-    project_path = project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else "."
+    project_path = project_label(project_dir)
     return {
         "schema": "aaps_project/0.1",
         "name": name,
@@ -596,7 +634,7 @@ def read_project(project_dir: Path) -> dict:
     return {
         "manifest": manifest,
         "manifest_exists": manifest_path.exists(),
-        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+        "project_path": project_label(project_dir),
         "files": scan_aaps_files(project_dir),
         "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
         "environment_files": [
@@ -697,7 +735,7 @@ def codex_command(schema: str, output_path: Path, settings: dict | None = None) 
         "-c",
         f'model_reasoning_effort="{reasoning}"',
         "--cd",
-        str(ROOT),
+        str(PROJECT_ROOT),
         "--output-last-message",
         str(output_path),
     ]
@@ -1202,7 +1240,7 @@ def run_codex(job_id: str, prompt: str, schema: str = "response") -> dict:
         codex_command(schema, output_path, settings),
         input=prompt,
         text=True,
-        cwd=ROOT,
+        cwd=PROJECT_ROOT,
         capture_output=True,
         timeout=timeout,
         check=False,
@@ -1268,7 +1306,7 @@ def start_aaps_run(body: dict) -> dict:
     folder = run_dir(run_id)
     folder.mkdir(parents=True, exist_ok=True)
     project_dir = safe_repo_path(str(body.get("path") or "."))
-    project_arg = project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else "."
+    project_arg_value = project_arg(project_dir)
     dry_run = bool(body.get("dryRun") or body.get("dry_run"))
     block = str(body.get("block") or body.get("blockId") or "").strip()
     source = str(body.get("source") or "")
@@ -1290,7 +1328,7 @@ def start_aaps_run(body: dict) -> dict:
         "status": "running",
         "created_at": now_iso(),
         "updated_at": now_iso(),
-        "project": project_arg,
+        "project": project_label(project_dir),
         "file": file_name,
         "dryRun": dry_run,
         "block": block,
@@ -1306,7 +1344,7 @@ def start_aaps_run(body: dict) -> dict:
             str(ROOT / "scripts" / "aaps-runner.js"),
             "run",
             "--project",
-            project_arg,
+            project_arg_value,
             "--run-root",
             str(RUN_DIR),
             "--run-id",
@@ -1324,7 +1362,7 @@ def start_aaps_run(body: dict) -> dict:
         try:
             process = subprocess.run(
                 command,
-                cwd=ROOT,
+                cwd=PROJECT_ROOT,
                 text=True,
                 capture_output=True,
                 timeout=int(os.environ.get("AAPS_RUNTIME_TIMEOUT", "1800")),
@@ -1357,7 +1395,7 @@ def start_aaps_compile(body: dict) -> dict:
     folder = compile_dir(compile_id)
     folder.mkdir(parents=True, exist_ok=True)
     project_dir = safe_repo_path(str(body.get("path") or "."))
-    project_arg = project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else "."
+    project_arg_value = project_arg(project_dir)
     mode = str(body.get("mode") or "check").strip().lower()
     source = str(body.get("source") or "")
     file_name = str(body.get("file") or "").strip()
@@ -1379,7 +1417,7 @@ def start_aaps_compile(body: dict) -> dict:
         "status": "running",
         "created_at": now_iso(),
         "updated_at": now_iso(),
-        "project": project_arg,
+        "project": project_label(project_dir),
         "file": file_name,
         "mode": mode,
         "projectWide": project_wide,
@@ -1395,7 +1433,7 @@ def start_aaps_compile(body: dict) -> dict:
             str(ROOT / "scripts" / "aaps-compiler.js"),
             "compile-project" if project_wide else "compile",
             "--project",
-            project_arg,
+            project_arg_value,
             "--mode",
             mode,
             "--compile-id",
@@ -1409,7 +1447,7 @@ def start_aaps_compile(body: dict) -> dict:
         try:
             process = subprocess.run(
                 command,
-                cwd=ROOT,
+                cwd=PROJECT_ROOT,
                 text=True,
                 capture_output=True,
                 timeout=int(os.environ.get("AAPS_COMPILE_TIMEOUT", "900")),
@@ -1493,7 +1531,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(
                     self,
                     {
-                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "project_path": project_label(project_dir),
                         "file": file_path.relative_to(project_dir).as_posix(),
                         "source": file_path.read_text(encoding="utf-8"),
                     },
@@ -1513,7 +1551,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(
                     self,
                     {
-                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "project_path": project_label(project_dir),
                         "file": file_path.relative_to(project_dir).as_posix(),
                         "source": file_path.read_text(encoding="utf-8"),
                     },
@@ -1658,7 +1696,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     self,
                     {
                         "ok": True,
-                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "project_path": project_label(project_dir),
                         "file": file_path.relative_to(project_dir).as_posix(),
                         "files": scan_aaps_files(project_dir),
                     },
@@ -1680,7 +1718,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     self,
                     {
                         "ok": True,
-                        "project_path": project_dir.relative_to(ROOT).as_posix() if project_dir != ROOT else ".",
+                        "project_path": project_label(project_dir),
                         "file": file_path.relative_to(project_dir).as_posix(),
                         "files": scan_aaps_files(project_dir),
                         "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
