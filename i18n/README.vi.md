@@ -4,9 +4,7 @@
 
 **Prompt Is All You Need**
 
-AAPS là Autonomous Agentic Pipeline Script, một ngôn ngữ lập trình lấy prompt làm trung tâm để mô tả pipeline tác vụ tự trị, có thể tiếp tục và kiểm chứng.
-
-Phiên bản hiện tại thêm `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, input/output có kiểu, manifest dự án và AAPS Studio ba tab.
+Prompt is all you need: AAPS là một ngôn ngữ lập trình và Studio trực quan project-oriented, prompt-native để biến prompt thành pipeline có cấu trúc và kiểm chứng được. Nó kết nối thí nghiệm wet/dry, phần cứng và phần mềm, cùng ý định con người với công việc agentic có thể thực thi qua task, typed input, declared output, validation gate, recovery step và durable artifact.
 
 ## Nội dung
 

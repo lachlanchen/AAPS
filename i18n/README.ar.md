@@ -4,9 +4,7 @@
 
 **Prompt Is All You Need**
 
-AAPS هو اختصار Autonomous Agentic Pipeline Script. إنه لغة برمجة تجعل التعليمات النصية جزءا أساسيا من الكود لوصف مهام وكلاء مستقلة وقابلة للاستئناف والتحقق.
-
-الإصدار الحالي يضيف `skill` و `stage` و `action` و `method` و `guard` و `if` و `for_each` ومدخلات/مخرجات typed وملفات manifest للمشاريع و AAPS Studio بثلاث واجهات.
+Prompt is all you need: AAPS هو لغة برمجة وStudio مرئية project-oriented وprompt-native لتحويل التعليمات النصية إلى pipelines منظمة وقابلة للتحقق. يربط التجارب wet/dry والعتاد والبرمجيات ونية الإنسان بعمل agentic قابل للتنفيذ عبر المهام، والمدخلات typed، والمخرجات المعلنة، وبوابات التحقق، وخطوات التعافي، وartifacts دائمة.
 
 ## المحتويات
 

@@ -4,9 +4,7 @@
 
 **Prompt Is All You Need**
 
-AAPS는 Autonomous Agentic Pipeline Script입니다. 프롬프트를 실행 가능한 코드 단위로 다루고, 자율 에이전트 작업을 계획, 재개, 검증 가능한 파이프라인으로 표현합니다.
-
-현재 버전은 `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, 타입 입력/출력, 프로젝트 매니페스트, 세 탭 구조의 AAPS Studio를 포함합니다.
+Prompt is all you need: AAPS는 project-oriented이자 prompt-native인 프로그래밍 언어와 비주얼 Studio입니다. 프롬프트를 구조화되고 검증 가능한 pipeline으로 바꾸며, wet/dry 실험, 하드웨어와 소프트웨어, 사람의 의도를 task, typed input, declared output, validation gate, recovery step, durable artifact를 통해 실행 가능한 에이전트 작업으로 연결합니다.
 
 ## 구성
 

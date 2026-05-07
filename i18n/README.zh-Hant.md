@@ -4,9 +4,7 @@
 
 **Prompt Is All You Need**
 
-AAPS 是 Autonomous Agentic Pipeline Script，一種以提示詞為核心的程式語言，用來描述可規劃、可恢復、可驗證的自主智能體任務流水線。
-
-目前版本加入了 `skill`、`stage`、`action`、`method`、`guard`、`if`、`for_each`、型別化輸入輸出、專案清單，以及三分頁 AAPS Studio。
+Prompt is all you need：AAPS 是一個 project oriented 且 prompt-native 的程式語言與視覺化 Studio，用來把提示詞轉成結構化、可驗證的 pipeline。它把乾濕實驗、硬體與軟體，以及人的意圖連接到可執行的智能體工作中，透過任務、型別化輸入、宣告式輸出、驗證關卡、恢復步驟與持久 artifact 來完成。
 
 ## 內容
 

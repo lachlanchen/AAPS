@@ -4,9 +4,7 @@
 
 **Prompt Is All You Need**
 
-AAPS steht für Autonomous Agentic Pipeline Script. Es ist eine prompt-native Programmiersprache für autonome Workflows, die planbar, fortsetzbar und überprüfbar bleiben.
-
-Die aktuelle Version ergänzt `skill`, `stage`, `action`, `method`, `guard`, `if`, `for_each`, typisierte Ein- und Ausgaben, Projektmanifeste sowie AAPS Studio mit drei Tabs.
+Prompt is all you need: AAPS ist eine project-oriented und prompt-native Programmiersprache mit visuellem Studio, die Prompts in strukturierte, überprüfbare Pipelines verwandelt. Es verbindet Wet-/Dry-Experimente, Hardware und Software sowie menschliche Absicht mit ausführbarer agentischer Arbeit über Tasks, typisierte Eingaben, deklarierte Outputs, Validierungsgates, Recovery-Schritte und dauerhafte Artefakte.
 
 ## Inhalt
 
