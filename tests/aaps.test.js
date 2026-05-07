@@ -1062,6 +1062,8 @@ assert.strictEqual(trustedPayload.postRunAudit.workflows[0].file, "workflows/bac
 assert(trustedPayload.command.includes("--allow-destructive"));
 assert(trustedPayload.command.includes("-s"));
 assert(trustedPayload.command.includes("danger"));
+assert(trustedPayload.command.includes("--routing"));
+assert(trustedPayload.command.includes("complex"));
 assert.strictEqual(trustedPayload.handoffMode, "file");
 assert(trustedPayload.handoffGoal.includes(trustedPayload.promptFile));
 const fakeAgintiArgs = fs.readFileSync(fakeArgsFile, "utf8");

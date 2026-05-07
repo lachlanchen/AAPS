@@ -41,6 +41,7 @@ function usage() {
     "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --backend <name>  Prompt backend for direct goals. Defaults to aginti.",
     "  --provider <name> Provider passed to AgInTi backend.",
+    "  --routing <mode>  Routing passed to AgInTi backend. Defaults to complex for backend implementation.",
     "  --aginti-safety <safe|normal|danger> Safety shortcut passed to AgInTi backend.",
     "  --sandbox-mode <mode> Sandbox mode passed to AgInTi backend.",
     "  --package-install-policy <policy> Package policy passed to AgInTi backend.",
@@ -412,6 +413,8 @@ function commandPrompt(goal, options) {
     options.sandboxMode || "docker-workspace",
     "--package-install-policy",
     options.packageInstallPolicy || "prompt",
+    "--routing",
+    options.routing || "complex",
     "--allow-shell",
     "--allow-file-tools",
   ];
