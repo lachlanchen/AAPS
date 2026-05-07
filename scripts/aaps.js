@@ -174,7 +174,24 @@ function collectWorkflowCandidates(projectDir, fileArg = "", options = {}) {
   const preferred = [];
   if (manifest?.activeFile && files.includes(manifest.activeFile)) preferred.push(manifest.activeFile);
   if (manifest?.defaultMain && files.includes(manifest.defaultMain)) preferred.push(manifest.defaultMain);
-  if (options.scope === "entry") return [...new Set(preferred)].slice(0, 20);
+  if (options.scope === "entry") {
+    if (preferred.length) return [...new Set(preferred)].slice(0, 20);
+    const manifestWorkflows = Array.isArray(manifest?.files?.workflows)
+      ? manifest.files.workflows.filter((file) => files.includes(file))
+      : [];
+    if (manifestWorkflows.length) return [...new Set(manifestWorkflows)].slice(0, 20);
+    if (Number.isFinite(options.sinceMs)) {
+      const changed = files.filter((file) => {
+        try {
+          return fs.statSync(path.join(projectDir, file)).mtimeMs >= options.sinceMs - 1000;
+        } catch (_error) {
+          return false;
+        }
+      });
+      return changed.slice(0, 20);
+    }
+    return [];
+  }
   const workflowFiles = files.filter((file) => file.startsWith("workflows/"));
   const candidates = [...new Set([...preferred, ...workflowFiles, ...files])];
   return candidates.slice(0, 20);
@@ -406,8 +423,16 @@ function commandPrompt(goal, options) {
   if (options.provider) args.push("--provider", options.provider);
   if (options.model) args.push("--model", options.model);
   if (options.scoutCount) args.push("--scout-count", String(options.scoutCount));
-  args.push(handoff.prompt);
+  const handoffGoal = [
+    `Read and execute the AAPS backend handoff file at ${handoff.projectRelativePromptPath}.`,
+    "Treat that file as the authoritative task contract.",
+    "Inspect it before editing, then parse/compile/run/verify declared outputs before finishing.",
+  ].join(" ");
+  args.push(handoffGoal);
   payload.command = ["aginti", ...args];
+  payload.handoffMode = "file";
+  payload.handoffGoal = handoffGoal;
+  const auditStartedAtMs = Date.now();
   const result = childProcess.spawnSync("aginti", args, {
     cwd: projectDir,
     encoding: "utf8",
@@ -419,6 +444,7 @@ function commandPrompt(goal, options) {
   payload.signal = result.signal || "";
   payload.postRunAudit = auditAapsBackendResult(projectDir, options.auditFile || "", {
     scope: String(options.auditScope || "entry").toLowerCase() === "project" ? "project" : "entry",
+    sinceMs: auditStartedAtMs,
   });
   if (payload.exitCode === 0 && payload.postRunAudit.ok) payload.status = "succeeded_verified";
   else if (payload.exitCode === 0) payload.status = "backend_returned_unverified";

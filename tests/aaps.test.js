@@ -1062,7 +1062,84 @@ assert.strictEqual(trustedPayload.postRunAudit.workflows[0].file, "workflows/bac
 assert(trustedPayload.command.includes("--allow-destructive"));
 assert(trustedPayload.command.includes("-s"));
 assert(trustedPayload.command.includes("danger"));
-assert(fs.readFileSync(fakeArgsFile, "utf8").includes("--allow-destructive"));
+assert.strictEqual(trustedPayload.handoffMode, "file");
+assert(trustedPayload.handoffGoal.includes(trustedPayload.promptFile));
+const fakeAgintiArgs = fs.readFileSync(fakeArgsFile, "utf8");
+assert(fakeAgintiArgs.includes("--allow-destructive"));
+assert(fakeAgintiArgs.includes(trustedPayload.promptFile));
+assert(!fakeAgintiArgs.includes("AAPS Syntax Contract"));
+
+const manifestOnlyProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-manifest-only-project");
+fs.rmSync(manifestOnlyProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(manifestOnlyProject, "fake-bin"), { recursive: true });
+const manifestOnlyArgsFile = path.join(manifestOnlyProject, "fake-aginti-args.txt");
+fs.writeFileSync(
+  path.join(manifestOnlyProject, "fake-bin", "aginti"),
+  `#!/bin/sh
+printf '%s\\n' "$@" > "$AAPS_FAKE_AGINTI_ARGS"
+mkdir -p workflows runtime/artifacts
+cat > aaps.project.json <<'EOF'
+{
+  "schema": "aaps_project/0.1",
+  "name": "Prompt Manifest Only Project",
+  "files": {
+    "workflows": [
+      "workflows/backend_generated.aaps"
+    ]
+  }
+}
+EOF
+cat > workflows/backend_generated.aaps <<'EOF'
+pipeline "Backend Generated" {
+  output ok_file: text = "runtime/artifacts/backend-generated-ok.txt"
+  agent runner {
+    role "Local shell runner."
+    model "local"
+    tools "shell"
+  }
+  task done {
+    uses runner
+    output ok_file: text = "runtime/artifacts/backend-generated-ok.txt"
+    exec shell "mkdir -p runtime/artifacts && printf ok > runtime/artifacts/backend-generated-ok.txt"
+    validate exists "runtime/artifacts/backend-generated-ok.txt"
+  }
+}
+EOF
+printf ok > runtime/artifacts/backend-generated-ok.txt
+exit 0
+`,
+  { encoding: "utf8", mode: 0o755 }
+);
+const promptManifestOnly = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "prompt",
+    "Create the manifest-listed backend workflow.",
+    "--project",
+    ".aaps-work/tests/prompt-manifest-only-project",
+    "--backend",
+    "aginti",
+    "--sandbox-mode",
+    "host",
+    "--json",
+  ],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${path.join(manifestOnlyProject, "fake-bin")}${path.delimiter}${process.env.PATH || ""}`,
+      AAPS_FAKE_AGINTI_ARGS: manifestOnlyArgsFile,
+    },
+  }
+);
+assert.strictEqual(promptManifestOnly.status, 0, promptManifestOnly.stderr || promptManifestOnly.stdout);
+const manifestOnlyPayload = JSON.parse(promptManifestOnly.stdout);
+assert.strictEqual(manifestOnlyPayload.status, "succeeded_verified");
+assert.strictEqual(manifestOnlyPayload.postRunAudit.workflowCount, 1);
+assert.strictEqual(manifestOnlyPayload.postRunAudit.workflows[0].file, "workflows/backend_generated.aaps");
+assert(fs.readFileSync(manifestOnlyArgsFile, "utf8").includes(manifestOnlyPayload.promptFile));
 
 const promptProjectWideAudit = childProcess.spawnSync(
   "node",
