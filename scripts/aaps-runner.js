@@ -969,6 +969,40 @@ function run(options) {
     return file;
   }
 
+  const stepByPath = new Map(plan.steps.map((step) => [step.path, step]));
+  function parentPath(stepPath) {
+    const parts = String(stepPath || "").split("/");
+    parts.pop();
+    return parts.join("/");
+  }
+
+  function ancestorSteps(step) {
+    const chain = [];
+    let current = parentPath(step.path);
+    while (current) {
+      const parent = stepByPath.get(current);
+      if (parent) chain.unshift(parent);
+      current = parentPath(current);
+    }
+    return chain;
+  }
+
+  function applyPorts(local, sourceStep) {
+    (sourceStep.inputs || []).forEach((port) => {
+      const value = port.value ? expand(port.value, local) : local[port.name] || "";
+      local[port.name] = value;
+      local[`input.${port.name}`] = value;
+    });
+    (sourceStep.outputs || []).forEach((port) => {
+      const value = port.value ? expand(port.value, local) : local[port.name] || "";
+      local[port.name] = value;
+      local[`output.${port.name}`] = value;
+    });
+    (sourceStep.artifacts || []).forEach((artifact) => {
+      local[`artifact.${artifact.name}`] = artifact.path ? expand(artifact.path, local) : "";
+    });
+  }
+
   function contextForStep(step, overrides = {}) {
     const local = {
       ...context,
@@ -978,19 +1012,8 @@ function run(options) {
       "block.path": step.path || "",
       "block.python": (step.environment && step.environment.python) || context["project.python"] || "python3",
     };
-    (step.inputs || []).forEach((port) => {
-      const value = port.value ? expand(port.value, local) : local[port.name] || "";
-      local[port.name] = value;
-      local[`input.${port.name}`] = value;
-    });
-    (step.outputs || []).forEach((port) => {
-      const value = port.value ? expand(port.value, local) : local[port.name] || "";
-      local[port.name] = value;
-      local[`output.${port.name}`] = value;
-    });
-    (step.artifacts || []).forEach((artifact) => {
-      local[`artifact.${artifact.name}`] = artifact.path ? expand(artifact.path, local) : "";
-    });
+    ancestorSteps(step).forEach((ancestor) => applyPorts(local, ancestor));
+    applyPorts(local, step);
     return local;
   }
 
@@ -1116,7 +1139,9 @@ function run(options) {
         event({ type: "fallback_action", step: step.path, outcome: fallbackResult });
         ok = fallbackResult.status !== "failed";
       } else {
-        const target = plan.steps.find((candidate) => candidate.id === step.fallback);
+        const runTarget = String(step.fallback || "").trim().match(/^run\s+([A-Za-z_][\w.-]*)$/i);
+        const targetId = runTarget ? runTarget[1] : step.fallback;
+        const target = plan.steps.find((candidate) => candidate.id === targetId);
         if (target && target.path !== step.path && !fallbackVisited.has(target.path)) {
           fallbackVisited.add(target.path);
           fallbackResult = executeStep(target, overrides);
@@ -1139,12 +1164,6 @@ function run(options) {
     return result;
   }
 
-  const stepByPath = new Map(plan.steps.map((step) => [step.path, step]));
-  function parentPath(stepPath) {
-    const parts = String(stepPath || "").split("/");
-    parts.pop();
-    return parts.join("/");
-  }
   const childrenByPath = new Map();
   plan.steps.forEach((step) => {
     const parent = parentPath(step.path);

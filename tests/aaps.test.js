@@ -507,6 +507,70 @@ const generateScript = childProcess.spawnSync(
 assert.strictEqual(generateScript.status, 0, generateScript.stderr || generateScript.stdout);
 assert(fs.existsSync(path.join(generateScriptProject, "scripts", "qc_image.py")));
 
+const microscopyScriptProject = path.join(__dirname, "..", ".aaps-work", "tests", "compiler-microscopy-script-project");
+fs.rmSync(microscopyScriptProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(microscopyScriptProject, "blocks"), { recursive: true });
+fs.writeFileSync(
+  path.join(microscopyScriptProject, "aaps.project.json"),
+  JSON.stringify({ name: "compiler-microscopy-script-project", activeFile: "blocks/app81_preview.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(microscopyScriptProject, "blocks", "app81_preview.aaps"),
+  `pipeline "Microscopy Script Compile" {
+  domain "biology"
+  block app81_preview {
+    purpose "Segment App81 TIFF microscopy images and write masks, overlays, metrics, figures, and report artifacts."
+    input data_root: artifact required = "data/DEO App81 P8"
+    input image_glob: text optional = "**/*10x*.tif"
+    input preview_limit: integer optional = "3"
+    output run_manifest: json = "${"${run.artifacts}"}/run_manifest.json"
+    output per_image_metrics_csv: table = "${"${run.artifacts}"}/databases/per_image_metrics.csv"
+    requires_files "scripts/app81_backend_agent_tdv_test.py"
+    compile_prompt "Create a self-debuggable TIFF microscopy segmentation CLI. It must accept --data-root, --image-glob, --out-dir, --preview-limit, and --method, write masks, overlays, per-image metrics CSV/JSON, summary CSV/JSON, a summary figure, report.md, run_manifest.json, and debug logs."
+    stage segment_images {
+      method deterministic_threshold_morphology {
+        exec python_script "scripts/app81_backend_agent_tdv_test.py"
+        arg data_root = "${"${input.data_root}"}"
+        arg image_glob = "${"${input.image_glob}"}"
+        arg out_dir = "${"${run.artifacts}"}"
+        arg preview_limit = "${"${input.preview_limit}"}"
+        arg method = "threshold_morphology"
+      }
+    }
+  }
+}
+`,
+  "utf8"
+);
+const microscopyCompileApply = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "compile", "blocks/app81_preview.aaps", "--project", ".aaps-work/tests/compiler-microscopy-script-project", "--mode", "apply", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(microscopyCompileApply.status, 0, microscopyCompileApply.stderr || microscopyCompileApply.stdout);
+const microscopyScript = fs.readFileSync(path.join(microscopyScriptProject, "scripts", "app81_backend_agent_tdv_test.py"), "utf8");
+assert(microscopyScript.includes("AAPS generated TIFF microscopy segmentation preview script"));
+assert(microscopyScript.includes("--data-root"));
+assert(microscopyScript.includes("per_image_metrics.csv"));
+assert(!microscopyScript.includes("static project check script"));
+fs.writeFileSync(
+  path.join(microscopyScriptProject, "scripts", "app81_backend_agent_tdv_test.py"),
+  "#!/usr/bin/env python3\n\"\"\"AAPS generated static project check script.\"\"\"\nprint('stale')\n",
+  "utf8"
+);
+const microscopyCompileForce = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "compile", "blocks/app81_preview.aaps", "--project", ".aaps-work/tests/compiler-microscopy-script-project", "--mode", "force", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(microscopyCompileForce.status, 0, microscopyCompileForce.stderr || microscopyCompileForce.stdout);
+const microscopyForceReport = JSON.parse(microscopyCompileForce.stdout);
+assert(microscopyForceReport.generatedFiles.some((item) => item.file === "scripts/app81_backend_agent_tdv_test.py" && item.written && item.backup));
+const microscopyForceScript = fs.readFileSync(path.join(microscopyScriptProject, "scripts", "app81_backend_agent_tdv_test.py"), "utf8");
+assert(microscopyForceScript.includes("AAPS generated TIFF microscopy segmentation preview script"));
+assert(!microscopyForceScript.includes("print('stale')"));
+
 const folderDemoRun = childProcess.spawnSync(
   "node",
   [
@@ -596,6 +660,55 @@ assert.notStrictEqual(missingBlockRun.status, 0, missingBlockRun.stdout);
 const missingBlockRunJson = JSON.parse(missingBlockRun.stdout);
 assert.strictEqual(missingBlockRunJson.status, "failed_missing_block");
 assert.strictEqual(missingBlockRunJson.plan.blockFilter.matched, 0);
+
+const nestedContractProject = path.join(__dirname, "..", ".aaps-work", "tests", "nested-contract-project");
+fs.rmSync(nestedContractProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(nestedContractProject, "blocks"), { recursive: true });
+fs.writeFileSync(
+  path.join(nestedContractProject, "aaps.project.json"),
+  JSON.stringify({ name: "nested-contract-project", activeFile: "blocks/nested.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(nestedContractProject, "blocks", "nested.aaps"),
+  `pipeline "Nested Contract Runtime" {
+  block parent_block {
+    input message: text required = "hello inherited"
+    output out_file: text = "${"${run.artifacts}"}/nested.txt"
+    stage write_stage {
+      action write_file {
+        exec shell "mkdir -p ${"${run.artifacts}"} && printf '%s' '${"${input.message}"}' > '${"${output.out_file}"}'"
+        validate exists "${"${output.out_file}"}"
+        validate nonempty "${"${output.out_file}"}"
+      }
+    }
+  }
+}
+`,
+  "utf8"
+);
+const nestedContractRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run-block",
+    "blocks/nested.aaps",
+    "--project",
+    ".aaps-work/tests/nested-contract-project",
+    "--block",
+    "parent_block",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "nested-contract-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(nestedContractRun.status, 0, nestedContractRun.stderr || nestedContractRun.stdout);
+const nestedContractRunJson = JSON.parse(nestedContractRun.stdout);
+assert.strictEqual(nestedContractRunJson.status, "succeeded");
+assert.strictEqual(fs.readFileSync(path.join(nestedContractRunJson.runDir, "artifacts", "nested.txt"), "utf8"), "hello inherited");
 
 fs.writeFileSync(
   path.join(inlineAgentProject, "workflows", "pipefail.aaps"),

@@ -81,8 +81,19 @@ function normalizeMode(mode) {
   return value;
 }
 
-function inferKind(name) {
-  const text = String(name || "").toLowerCase();
+function contextText(value) {
+  try {
+    return JSON.stringify(value || {});
+  } catch {
+    return "";
+  }
+}
+
+function inferKind(name, context = {}) {
+  const text = `${String(name || "")} ${contextText(context)}`.toLowerCase();
+  if (/cellpose|microscop|organoid|brightfield|tiff?|\.tiff?\b|image_glob|mask_count|overlay_count|foreground_fraction|threshold_morphology/.test(text)) {
+    return "tiff_segmentation";
+  }
   if (/segment|threshold|mask/.test(text)) return "segment";
   if (/qc|quality|inspect/.test(text)) return "qc";
   if (/quantif|measure|metric|object/.test(text)) return "quantify";
@@ -177,6 +188,412 @@ def main():
 
 if __name__ == "__main__":
     main()
+`;
+  }
+  if (kind === "tiff_segmentation") {
+    return `#!/usr/bin/env python3
+"""AAPS generated TIFF microscopy segmentation preview script.
+
+This helper is intentionally deterministic and project-local. It is meant for
+compile/apply manifestation: process real microscopy TIFF files, create masks
+and overlays, calculate per-image and summary metrics, and write enough
+artifacts for AAPS Studio to show a biology user what happened.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import re
+import sys
+import traceback
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import tifffile
+from scipy import ndimage as ndi
+from skimage import exposure, filters, measure, morphology, segmentation
+
+
+REQUIRED_COLUMNS = [
+    "image_id",
+    "image_path",
+    "condition",
+    "date_group",
+    "method",
+    "object_count",
+    "foreground_area",
+    "foreground_fraction",
+    "mean_object_area",
+    "median_object_area",
+    "qc_flag",
+    "qc_notes",
+    "mask_path",
+    "overlay_path",
+]
+
+
+def safe_stem(path: Path) -> str:
+    text = "_".join(path.with_suffix("").parts[-3:])
+    text = re.sub(r"[^A-Za-z0-9._-]+", "_", text)
+    return text.strip("._-") or "image"
+
+
+def infer_condition(path: Path) -> str:
+    text = str(path).lower()
+    if "low" in text:
+        return "low_density"
+    if "middle" in text or "mid" in text:
+        return "middle_density"
+    if "high" in text:
+        return "high_density"
+    return "unknown"
+
+
+def select_preview(paths, limit: int):
+    if limit <= 0 or len(paths) <= limit:
+        return paths
+    selected = []
+    used = set()
+    for needle in ["low", "middle", "high"]:
+        for path in paths:
+            if needle in path.name.lower() and path not in used:
+                selected.append(path)
+                used.add(path)
+                break
+    for path in paths:
+        if len(selected) >= limit:
+            break
+        if path not in used:
+            selected.append(path)
+            used.add(path)
+    return selected[:limit]
+
+
+def read_gray(path: Path) -> np.ndarray:
+    image = tifffile.imread(path)
+    image = np.asarray(image)
+    image = np.squeeze(image)
+    if image.ndim == 3:
+        if image.shape[-1] in (3, 4):
+            image = image[..., :3].mean(axis=-1)
+        else:
+            image = image.mean(axis=0)
+    if image.ndim != 2:
+        raise ValueError(f"expected a 2D image after channel reduction, got shape {image.shape}")
+    image = image.astype("float32", copy=False)
+    finite = np.isfinite(image)
+    if not finite.all():
+        image = np.where(finite, image, np.nanmedian(image[finite]))
+    low, high = np.percentile(image, [1, 99])
+    if not math.isfinite(float(high - low)) or high <= low:
+        low, high = float(np.min(image)), float(np.max(image))
+    if high <= low:
+        return np.zeros_like(image, dtype="float32")
+    norm = np.clip((image - low) / (high - low), 0, 1)
+    return exposure.equalize_adapthist(norm, clip_limit=0.01).astype("float32")
+
+
+def candidate_masks(gray: np.ndarray):
+    threshold = filters.threshold_otsu(gray)
+    yield "dark_otsu", gray < threshold
+    yield "bright_otsu", gray > threshold
+    block = max(63, min(251, int(min(gray.shape) // 12) | 1))
+    local = filters.threshold_local(gray, block_size=block, offset=0)
+    yield "dark_local", gray < local
+    yield "bright_local", gray > local
+
+
+def filter_regions(mask: np.ndarray, min_size: int) -> np.ndarray:
+    labels = measure.label(mask)
+    keep = np.zeros_like(mask, dtype=bool)
+    max_area = max(min_size * 10, int(mask.size * 0.055))
+    height, width = mask.shape
+    for region in measure.regionprops(labels):
+        area = int(region.area)
+        if area < min_size:
+            continue
+        min_row, min_col, max_row, max_col = region.bbox
+        box_h = max_row - min_row
+        box_w = max_col - min_col
+        aspect = max(box_h, box_w) / max(1, min(box_h, box_w))
+        touches_border = min_row <= 1 or min_col <= 1 or max_row >= height - 1 or max_col >= width - 1
+        if touches_border and area > min_size * 6:
+            continue
+        if area > max_area and aspect > 2.8:
+            continue
+        if aspect > 9.0:
+            continue
+        if region.eccentricity > 0.985 and aspect > 4.0:
+            continue
+        keep[labels == region.label] = True
+    return keep
+
+
+def clean_mask(mask: np.ndarray, min_size: int) -> np.ndarray:
+    mask = ndi.binary_fill_holes(mask)
+    mask = morphology.remove_small_objects(mask.astype(bool), min_size=min_size)
+    mask = morphology.remove_small_holes(mask, area_threshold=max(min_size * 2, 128))
+    mask = morphology.binary_closing(mask, morphology.disk(4))
+    mask = morphology.binary_opening(mask, morphology.disk(2))
+    return filter_regions(mask.astype(bool), min_size)
+
+
+def choose_mask(gray: np.ndarray):
+    min_size = max(128, int(gray.size * 0.00008))
+    best = None
+    for name, raw_mask in candidate_masks(gray):
+        mask = clean_mask(raw_mask, min_size)
+        frac = float(mask.mean())
+        labels = measure.label(mask)
+        objects = [region.area for region in measure.regionprops(labels)]
+        object_count = len(objects)
+        if frac <= 0 or frac >= 0.95:
+            score = -10.0
+        else:
+            balance = 1.0 - abs(frac - 0.18)
+            score = balance + min(object_count, 50) * 0.02
+            if frac < 0.003 or frac > 0.75:
+                score -= 2.0
+        record = (score, name, mask, labels, objects, frac)
+        if best is None or score > best[0]:
+            best = record
+    if best is None:
+        mask = np.zeros_like(gray, dtype=bool)
+        return "failed_no_candidate", mask, measure.label(mask), [], 0.0
+    return best[1], best[2], best[3], best[4], best[5]
+
+
+def save_overlay(gray: np.ndarray, mask: np.ndarray, output: Path):
+    output.parent.mkdir(parents=True, exist_ok=True)
+    boundaries = segmentation.find_boundaries(mask, mode="outer")
+    rgb = np.dstack([gray, gray, gray])
+    rgb[mask, 0] = np.maximum(rgb[mask, 0], 0.95)
+    rgb[mask, 1] *= 0.45
+    rgb[mask, 2] *= 0.45
+    rgb[boundaries] = [1.0, 1.0, 0.0]
+    plt.imsave(output, np.clip(rgb, 0, 1))
+
+
+def write_csv(path: Path, rows, fieldnames):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def summarize(rows):
+    groups = {}
+    for row in rows:
+        group = groups.setdefault(row["condition"], {
+            "condition": row["condition"],
+            "image_count": 0,
+            "total_objects": 0,
+            "total_foreground_area": 0.0,
+            "mean_foreground_fraction": 0.0,
+            "mean_object_area": 0.0,
+        })
+        group["image_count"] += 1
+        group["total_objects"] += int(row["object_count"])
+        group["total_foreground_area"] += float(row["foreground_area"])
+        group["mean_foreground_fraction"] += float(row["foreground_fraction"])
+        group["mean_object_area"] += float(row["mean_object_area"])
+    for group in groups.values():
+        n = max(1, int(group["image_count"]))
+        group["mean_foreground_fraction"] = round(group["mean_foreground_fraction"] / n, 6)
+        group["mean_object_area"] = round(group["mean_object_area"] / n, 3)
+        group["total_foreground_area"] = round(group["total_foreground_area"], 3)
+    return list(groups.values())
+
+
+def save_summary_figure(summary_rows, output: Path):
+    output.parent.mkdir(parents=True, exist_ok=True)
+    conditions = [row["condition"] for row in summary_rows] or ["none"]
+    fractions = [float(row.get("mean_foreground_fraction", 0)) for row in summary_rows] or [0]
+    objects = [int(row.get("total_objects", 0)) for row in summary_rows] or [0]
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes[0].bar(conditions, fractions, color="#3c7f72")
+    axes[0].set_ylabel("Mean foreground fraction")
+    axes[0].tick_params(axis="x", rotation=25)
+    axes[1].bar(conditions, objects, color="#b06945")
+    axes[1].set_ylabel("Total objects")
+    axes[1].tick_params(axis="x", rotation=25)
+    fig.suptitle("App81 DEO segmentation preview")
+    fig.tight_layout()
+    fig.savefig(output, dpi=160)
+    plt.close(fig)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="AAPS App81 TIFF segmentation preview")
+    parser.add_argument("--data-root", required=True)
+    parser.add_argument("--image-glob", default="**/*10x*.tif")
+    parser.add_argument("--condition-map", default="")
+    parser.add_argument("--out-dir", "--output-dir", required=True)
+    parser.add_argument("--preview-limit", type=int, default=3)
+    parser.add_argument("--method", default="auto")
+    args, _unknown = parser.parse_known_args()
+
+    data_root = Path(args.data_root)
+    out_dir = Path(args.out_dir)
+    if not data_root.exists():
+        raise SystemExit(f"missing data root: {data_root}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = out_dir.parent / "block_logs" if out_dir.name == "artifacts" else out_dir / "logs"
+    alt_logs_dir = out_dir.parent / "logs" if out_dir.name == "artifacts" else logs_dir
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    alt_logs_dir.mkdir(parents=True, exist_ok=True)
+    debug_log = logs_dir / "app81_deo_segmentation_debug.log"
+    alt_debug_log = alt_logs_dir / "app81_deo_segmentation_debug.log"
+    fallback_reason = ""
+    selected_method = args.method
+    if args.method in {"cellpose", "cellpose_multiscale", "auto"}:
+        try:
+            __import__("cellpose")
+            fallback_reason = "cellpose detected but deterministic preview template uses threshold_morphology for reproducibility"
+        except Exception as exc:
+            fallback_reason = f"cellpose unavailable, using threshold_morphology: {exc.__class__.__name__}"
+        selected_method = "threshold_morphology"
+
+    patterns = [args.image_glob]
+    if args.image_glob.endswith(".tif"):
+        patterns.append(args.image_glob + "f")
+    paths = []
+    for pattern in patterns:
+        paths.extend(sorted(path for path in data_root.glob(pattern) if path.is_file()))
+    if not paths:
+        paths = sorted(data_root.rglob("*.tif")) + sorted(data_root.rglob("*.tiff"))
+    paths = [path for path in paths if "10x" in path.name.lower()] or paths
+    paths = select_preview(list(dict.fromkeys(paths)), int(args.preview_limit))
+    if not paths:
+        raise SystemExit(f"no TIFF images found under {data_root} using {args.image_glob}")
+
+    masks_dir = out_dir / "masks"
+    overlays_dir = out_dir / "overlays"
+    db_dir = out_dir / "databases"
+    figures_dir = out_dir / "figures"
+    for folder in [masks_dir, overlays_dir, db_dir, figures_dir]:
+        folder.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    log_lines = [
+        f"data_root={data_root}",
+        f"image_glob={args.image_glob}",
+        f"preview_limit={args.preview_limit}",
+        f"selected_method={selected_method}",
+        f"fallback_reason={fallback_reason}",
+        f"selected_images={len(paths)}",
+    ]
+    for index, image_path in enumerate(paths, start=1):
+        gray = read_gray(image_path)
+        candidate_name, mask, labels, object_areas, foreground_fraction = choose_mask(gray)
+        mask_path = masks_dir / f"{safe_stem(image_path)}.mask.png"
+        overlay_path = overlays_dir / f"{safe_stem(image_path)}.overlay.png"
+        plt.imsave(mask_path, mask.astype("uint8") * 255, cmap="gray")
+        save_overlay(gray, mask, overlay_path)
+        foreground_area = int(mask.sum())
+        object_count = int(len(object_areas))
+        mean_object_area = float(np.mean(object_areas)) if object_areas else 0.0
+        median_object_area = float(np.median(object_areas)) if object_areas else 0.0
+        qc_notes = []
+        if foreground_area == 0:
+            qc_notes.append("empty mask")
+        if foreground_fraction > 0.85:
+            qc_notes.append("foreground fraction unusually high")
+        if object_count == 0:
+            qc_notes.append("no labeled objects")
+        row = {
+            "image_id": safe_stem(image_path),
+            "image_path": str(image_path),
+            "condition": infer_condition(image_path),
+            "date_group": image_path.parent.name,
+            "method": f"{selected_method}:{candidate_name}",
+            "object_count": object_count,
+            "foreground_area": foreground_area,
+            "foreground_fraction": round(float(foreground_fraction), 6),
+            "mean_object_area": round(mean_object_area, 3),
+            "median_object_area": round(median_object_area, 3),
+            "qc_flag": "warn" if qc_notes else "pass",
+            "qc_notes": "; ".join(qc_notes),
+            "mask_path": str(mask_path),
+            "overlay_path": str(overlay_path),
+        }
+        rows.append(row)
+        log_lines.append(f"{index}. {image_path} -> objects={object_count}, foreground_fraction={foreground_fraction:.6f}, qc={row['qc_flag']}")
+
+    summary_rows = summarize(rows)
+    per_image_csv = db_dir / "per_image_metrics.csv"
+    per_image_json = db_dir / "per_image_metrics.json"
+    summary_csv = db_dir / "summary.csv"
+    summary_json = db_dir / "summary.json"
+    figure_path = figures_dir / "app81_deo_segmentation_summary.png"
+    report_path = out_dir / "report.md"
+    manifest_path = out_dir / "run_manifest.json"
+
+    write_csv(per_image_csv, rows, REQUIRED_COLUMNS)
+    per_image_json.write_text(json.dumps({"rows": rows, "row_count": len(rows)}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    write_csv(summary_csv, summary_rows, ["condition", "image_count", "total_objects", "total_foreground_area", "mean_foreground_fraction", "mean_object_area"])
+    summary_json.write_text(json.dumps({"rows": summary_rows, "row_count": len(summary_rows)}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    save_summary_figure(summary_rows, figure_path)
+
+    required_paths = [manifest_path, masks_dir, overlays_dir, per_image_csv, per_image_json, summary_csv, summary_json, figure_path, report_path]
+    manifest = {
+        "ok": True,
+        "method": selected_method,
+        "fallback_reason": fallback_reason,
+        "data_root": str(data_root),
+        "image_glob": args.image_glob,
+        "processed_count": len(rows),
+        "mask_count": len(list(masks_dir.glob("*.png"))),
+        "overlay_count": len(list(overlays_dir.glob("*.png"))),
+        "required_outputs": [str(path) for path in required_paths],
+        "condition_map": args.condition_map,
+        "debug_log": str(debug_log),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    report_lines = [
+        "# App81 DEO Segmentation Preview",
+        "",
+        f"- Data root: {data_root}",
+        f"- Images processed: {len(rows)}",
+        f"- Method: {selected_method}",
+        f"- Fallback reason: {fallback_reason or 'none'}",
+        f"- Per-image metrics: {per_image_csv}",
+        f"- Summary metrics: {summary_csv}",
+        f"- Summary figure: {figure_path}",
+        f"- Masks: {masks_dir}",
+        f"- Overlays: {overlays_dir}",
+        "",
+        "## QC",
+    ]
+    report_lines.extend([f"- {row['image_id']}: {row['qc_flag']} ({row['qc_notes'] or 'no warnings'})" for row in rows])
+    report_path.write_text("\\n".join(report_lines) + "\\n", encoding="utf-8")
+    debug_log.write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
+    alt_debug_log.write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
+    (out_dir / "app81_deo_segmentation_debug.log").write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
+
+    missing = [str(path) for path in required_paths if not path.exists()]
+    if missing:
+        raise SystemExit("missing required outputs after run: " + ", ".join(missing))
+    if len(rows) == 0 or len(list(masks_dir.glob("*.png"))) < len(rows) or len(list(overlays_dir.glob("*.png"))) < len(rows):
+        raise SystemExit("segmentation output count check failed")
+    print(json.dumps(manifest, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        raise
 `;
   }
   if (kind === "qc") {
@@ -745,13 +1162,67 @@ function updateRequirements(projectDir, compileDir, mode, missingComponents) {
   return writeGenerated(projectDir, compileDir, mode, file, content, "declare missing Python packages", { kind: "requirements" });
 }
 
-function generateAssets({ projectDir, compileDir, mode, missingComponents, loadedFile, manualTarget, manualKind }) {
+function parentBlockId(pathText) {
+  const match = String(pathText || "").match(/(?:^|\/)block:([^/]+)/);
+  return match ? match[1] : "";
+}
+
+function forceScriptTargets(plan) {
+  const targets = [];
+  const seen = new Set();
+  const stepsById = new Map((plan.steps || []).map((step) => [step.id, step]));
+  (plan.steps || []).forEach((step) => {
+    const parent = stepsById.get(parentBlockId(step.path)) || null;
+    const compilePrompt = step.compile?.prompt || parent?.compile?.prompt || "";
+    if (!compilePrompt) return;
+    (step.actions || []).forEach((action) => {
+      if (action.type !== "python_script" || !action.entry || /\$\{/.test(action.entry)) return;
+      if (seen.has(action.entry)) return;
+      seen.add(action.entry);
+      targets.push({
+        type: "force_script",
+        name: action.entry,
+        expected: action.entry,
+        block: step.id,
+        path: step.path,
+        reason: "Force-regenerate script from block compile contract.",
+        safeAutoAction: "generate_script",
+        requiresApproval: false,
+        raw: {
+          action,
+          step: {
+            id: step.id,
+            path: step.path,
+            kind: step.kind,
+            compile: step.compile,
+            contract: step.contract,
+          },
+          parentBlock: parent ? {
+            id: parent.id,
+            path: parent.path,
+            kind: parent.kind,
+            compile: parent.compile,
+            contract: parent.contract,
+          } : null,
+          compilePrompt,
+        },
+      });
+    });
+  });
+  return targets;
+}
+
+function generateAssets({ projectDir, compileDir, mode, missingComponents, loadedFile, manualTarget, manualKind, plan }) {
   const generatedFiles = [];
   const modifiedFiles = [];
   const manualMissing = manualTarget
     ? [{ type: manualKind === "script" ? "missing_script" : "missing_block", name: manualTarget, block: manualTarget, safeAutoAction: manualKind === "script" ? "generate_script" : "generate_block" }]
     : [];
-  const targets = [...missingComponents, ...manualMissing];
+  const targets = [
+    ...missingComponents,
+    ...manualMissing,
+    ...(mode === "force" ? forceScriptTargets(plan || {}) : []),
+  ];
   targets.forEach((missing) => {
     if (missing.type === "missing_block") {
       const block = blockSourceFor(missing.name);
@@ -761,7 +1232,7 @@ function generateAssets({ projectDir, compileDir, mode, missingComponents, loade
         agent: "aaps_internal_compiler",
       });
       generatedFiles.push(blockRecord);
-      const scriptKind = inferKind(missing.name);
+      const scriptKind = inferKind(missing.name, missing);
       const scriptRecord = writeGenerated(projectDir, compileDir, mode, block.script, pythonScriptFor(scriptKind), `generate script for ${missing.name}`, {
         kind: "script",
         block: missing.name,
@@ -771,10 +1242,10 @@ function generateAssets({ projectDir, compileDir, mode, missingComponents, loade
       const importRecord = ensureWorkflowImport(projectDir, compileDir, mode, loadedFile, block.file, missing.name);
       if (importRecord) modifiedFiles.push(importRecord);
     }
-    if (missing.type === "missing_script") {
+    if (missing.type === "missing_script" || missing.type === "force_script") {
       const scriptFile = missing.expected || missing.name;
       if (!scriptFile || /\$\{/.test(scriptFile)) return;
-      const scriptRecord = writeGenerated(projectDir, compileDir, mode, scriptFile, pythonScriptFor(inferKind(scriptFile)), `generate missing script ${scriptFile}`, {
+      const scriptRecord = writeGenerated(projectDir, compileDir, mode, scriptFile, pythonScriptFor(inferKind(scriptFile, missing)), `generate missing script ${scriptFile}`, {
         kind: "script",
         block: missing.block || "",
         agent: "aaps_internal_compiler",
@@ -800,6 +1271,29 @@ function validateGeneratedFiles(projectDir, records) {
         stderr: process.stderr || process.error?.message || "",
       };
     });
+}
+
+function hasReadyScriptForBlock(readiness, blockId) {
+  if (!blockId) return false;
+  const record = (readiness.blocks || []).find((item) => item.id === blockId);
+  if (!record) return false;
+  return (record.checks || []).some((check) => check.kind === "script" && check.ok);
+}
+
+function filterPostApplyMissing(missingComponents, readiness) {
+  const remaining = [];
+  const warnings = [];
+  missingComponents.forEach((item) => {
+    if (item.type === "missing_agent" && hasReadyScriptForBlock(readiness, item.block)) {
+      warnings.push({
+        ...item,
+        warning: "compile_agent is not registered, but the block now has a generated script and can be compiled/run locally.",
+      });
+      return;
+    }
+    remaining.push(item);
+  });
+  return { remaining, warnings };
 }
 
 function loadContext(options) {
@@ -879,25 +1373,68 @@ function compile(options = {}) {
     loadedFile: context.loaded.file,
     manualTarget: options.manualTarget,
     manualKind: options.manualKind,
+    plan: context.plan,
   });
   const validation = validateGeneratedFiles(context.projectDir, [...assets.generatedFiles, ...assets.modifiedFiles]);
 
+  let finalReadiness = context.readiness;
+  let finalRequirements = context.requirements;
+  let finalPlan = context.plan;
+  let finalIr = context.ir;
+  let finalMissingComponents = missingComponents;
+  let postApplyWarnings = [];
+  if (WRITE_MODES.has(mode)) {
+    const refreshed = loadContext({ ...options, mode, compileId: context.compileId });
+    finalPlan = refreshed.plan;
+    finalIr = refreshed.ir;
+    finalReadiness = refreshed.readiness;
+    finalRequirements = refreshed.requirements;
+    finalMissingComponents = collectMissing({
+      ir: refreshed.ir,
+      plan: refreshed.plan,
+      readiness: refreshed.readiness,
+      requirements: refreshed.requirements,
+      registries: refreshed.registries,
+      projectDir: refreshed.projectDir,
+    });
+    const filtered = filterPostApplyMissing(finalMissingComponents, finalReadiness);
+    finalMissingComponents = filtered.remaining;
+    postApplyWarnings = filtered.warnings;
+    if (options.manualTarget) {
+      const manualSlug = slug(options.manualTarget);
+      const manualTargetExists = assets.generatedFiles.some((record) => record.file === options.manualTarget && (record.written || record.existed));
+      if (manualTargetExists) {
+        const kept = [];
+        finalMissingComponents.forEach((item) => {
+          if (item.type === "missing_block" && (item.name === manualSlug || item.block === manualSlug)) {
+            postApplyWarnings.push({
+              ...item,
+              warning: "manual generation target was written; the synthetic compiler-request block is not a real project dependency.",
+            });
+            return;
+          }
+          kept.push(item);
+        });
+        finalMissingComponents = kept;
+      }
+    }
+  }
+
   const generatedOk = validation.every((item) => item.ok);
-  const unresolvedAfterApply = mode === "apply" || mode === "force"
-    ? missingComponents.filter((item) => !["missing_block", "missing_script", "missing_python_package"].includes(item.type))
-    : missingComponents;
-  const ok = context.ir.diagnostics.length === 0 && generatedOk && unresolvedAfterApply.length === 0 && context.requirements.every((item) => item.ok || item.kind === "file");
-  const status = ok ? "compiled" : missingComponents.length ? "missing_components" : context.ir.diagnostics.length ? "parse_failed" : "compiled_with_warnings";
+  const ok = finalIr.diagnostics.length === 0 && generatedOk && finalMissingComponents.length === 0 && finalRequirements.every((item) => item.ok || item.kind === "file");
+  const status = ok ? "compiled" : finalMissingComponents.length ? "missing_components" : finalIr.diagnostics.length ? "parse_failed" : "compiled_with_warnings";
 
   const resolvedIr = {
-    ...context.ir,
+    ...finalIr,
     compile: {
       version: "aaps_compile/0.1",
       mode,
       status,
-      missingComponents,
+      missingComponents: finalMissingComponents,
+      initialMissingComponents: missingComponents,
       generatedFiles: assets.generatedFiles,
       modifiedFiles: assets.modifiedFiles,
+      postApplyWarnings,
       setupPrompts: prompts.setupPrompts.map((item) => item.file),
       agentPrompts: prompts.agentPrompts.map((item) => item.file),
     },
@@ -909,29 +1446,31 @@ function compile(options = {}) {
     mode,
     status,
     phase: {
-      parse: context.ir.diagnostics.length ? "failed" : "ok",
-      compile: missingComponents.length ? "needs_resolution" : "ok",
-      plan: context.plan.warnings.length ? "warning" : "ok",
+      parse: finalIr.diagnostics.length ? "failed" : "ok",
+      compile: finalMissingComponents.length ? "needs_resolution" : "ok",
+      plan: finalPlan.warnings.length ? "warning" : "ok",
       execute: ok ? "ready" : "blocked",
     },
     project: projectSummary,
     file: context.loaded.file,
     compileId: context.compileId,
     compileDir: context.compileDir,
-    missingComponents,
+    missingComponents: finalMissingComponents,
+    initialMissingComponents: missingComponents,
     generatedFiles: assets.generatedFiles,
     modifiedFiles: assets.modifiedFiles,
-    setupSuggestions: missingComponents.map((item) => item.suggestedSetupCommand).filter(Boolean),
+    setupSuggestions: finalMissingComponents.map((item) => item.suggestedSetupCommand).filter(Boolean),
     setupPrompts: prompts.setupPrompts,
     agentPrompts: prompts.agentPrompts,
+    postApplyWarnings,
     validation,
-    diagnostics: context.ir.diagnostics,
-    readiness: context.readiness,
+    diagnostics: finalIr.diagnostics,
+    readiness: finalReadiness,
     plan: {
-      steps: context.plan.steps.length,
-      executableSteps: context.plan.executableSteps,
-      promptOnlySteps: context.plan.promptOnlySteps,
-      warnings: context.plan.warnings,
+      steps: finalPlan.steps.length,
+      executableSteps: finalPlan.executableSteps,
+      promptOnlySteps: finalPlan.promptOnlySteps,
+      warnings: finalPlan.warnings,
     },
     startedAt,
     finishedAt: nowIso(),
@@ -940,10 +1479,12 @@ function compile(options = {}) {
   writeJson(path.join(context.compileDir, "parsed_ir.json"), context.ir);
   writeJson(path.join(context.compileDir, "unresolved_ir.json"), context.ir);
   writeJson(path.join(context.compileDir, "resolved_ir.json"), resolvedIr);
-  writeJson(path.join(context.compileDir, "execution_plan.json"), context.plan);
-  writeJson(path.join(context.compileDir, "block_readiness.json"), context.readiness);
+  writeJson(path.join(context.compileDir, "execution_plan.json"), finalPlan);
+  writeJson(path.join(context.compileDir, "block_readiness.json"), finalReadiness);
   writeJson(path.join(context.compileDir, "compile_report.json"), report);
-  writeJson(path.join(context.compileDir, "missing_components.json"), missingComponents);
+  writeJson(path.join(context.compileDir, "missing_components.json"), finalMissingComponents);
+  writeJson(path.join(context.compileDir, "initial_missing_components.json"), missingComponents);
+  writeJson(path.join(context.compileDir, "post_apply_warnings.json"), postApplyWarnings);
   writeJson(path.join(context.compileDir, "generated_files.json"), assets.generatedFiles);
   writeJson(path.join(context.compileDir, "modified_files.json"), assets.modifiedFiles);
   fs.writeFileSync(
@@ -952,7 +1493,8 @@ function compile(options = {}) {
       `AAPS compile ${context.compileId}`,
       `mode=${mode}`,
       `status=${status}`,
-      `missing=${missingComponents.length}`,
+      `missing=${finalMissingComponents.length}`,
+      `initial_missing=${missingComponents.length}`,
       `generated=${assets.generatedFiles.filter((item) => item.written).length}`,
       "",
     ].join("\n"),

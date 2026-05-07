@@ -555,20 +555,25 @@ function renderArtifacts(payload = currentArtifacts) {
     </div>
   `;
   artifactListEl.innerHTML = items.length
-    ? items
+    ? (() => {
+        let previewedImages = 0;
+        return items
         .map((item) => {
-          const isPreview = item.kind === "image" && item.path.startsWith("outputs/");
+          const isSmallPreview = item.kind === "image" && item.path.startsWith("outputs/") && Number(item.size || 0) <= 2_500_000 && previewedImages < 12;
+          if (isSmallPreview) previewedImages += 1;
           return `
             <article class="artifact-item">
-              ${isPreview ? `<img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />` : ""}
+              ${isSmallPreview ? `<img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />` : ""}
               <div>
                 <strong>${escapeHtml(item.path)}</strong>
-                <span>${escapeHtml(item.source)} · ${escapeHtml(item.kind)} · ${formatBytes(item.size)}</span>
+                <span>${escapeHtml(item.source)} · <span class="artifact-kind">${escapeHtml(item.kind)}</span> · ${formatBytes(item.size)}${item.kind === "image" && !isSmallPreview ? " · preview skipped for large image" : ""}</span>
+                <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">Open</a>
               </div>
             </article>
           `;
         })
-        .join("")
+        .join("");
+      })()
     : '<div class="message">No artifacts found yet. Run or compile a workflow first.</div>';
 }
 
