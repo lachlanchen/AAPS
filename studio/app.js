@@ -3318,16 +3318,19 @@ document.getElementById("program-run-btn")?.addEventListener("click", () => {
 });
 
 document.getElementById("program-edit-selected-btn")?.addEventListener("click", () => {
+  const file = programBlockSelectEl?.value || selectedBlockFile;
+  if (file) {
+    loadProjectFile(file).catch((error) => addMessage("assistant", `Could not load block: ${error.message}`));
+    return;
+  }
   if (selectedRef) {
     editSelectedInBlocks(selectedRef);
     return;
   }
-  const file = programBlockSelectEl?.value || selectedBlockFile;
   if (!file) {
     addMessage("assistant", "Select a block first.");
     return;
   }
-  loadProjectFile(file).catch((error) => addMessage("assistant", `Could not load block: ${error.message}`));
 });
 
 document.getElementById("sample-project-btn").addEventListener("click", () => {
