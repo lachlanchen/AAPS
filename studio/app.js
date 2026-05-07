@@ -61,6 +61,8 @@ const newProjectNameEl = document.getElementById("new-project-name");
 const newProjectDomainEl = document.getElementById("new-project-domain");
 const newProjectGoalEl = document.getElementById("new-project-goal");
 const createProjectBtnEl = document.getElementById("create-project-btn");
+const nodeKindSelectEl = document.getElementById("node-kind-select");
+const structureStatusEl = document.getElementById("structure-status");
 
 const fields = {
   kind: document.getElementById("field-kind"),
@@ -106,6 +108,7 @@ let lastRuntimeResult = null;
 let lastCompileResult = null;
 let currentArtifacts = { items: [], counts: {}, kindCounts: {} };
 let currentVersions = { items: [], count: 0 };
+let draggedNodeRef = "";
 let currentSettings = {
   agentProvider: "codex",
   codexModel: "gpt-5.3-codex",
@@ -506,6 +509,42 @@ function renderBlockCanvas(payload = null) {
     if (selected && latestRun?.runSummary) {
       const run = latestRun.runSummary;
       const passed = Number(run.validations || 0) - Number(run.failedValidations || 0);
+      const runBase = String(latestRun.path || "").replace(/\/run\.json$/, "");
+      const relatedItems = (currentArtifacts.items || [])
+        .filter((item) => runBase && item.path && item.path.startsWith(`${runBase}/`) && item.path !== latestRun.path)
+        .slice(0, 80);
+      const previewImages = relatedItems
+        .filter((item) => item.kind === "image" && Number(item.size || 0) <= 2_500_000)
+        .slice(0, 4);
+      const keyFiles = relatedItems
+        .filter((item) => {
+          const value = String(item.path || "").toLowerCase();
+          return (
+            item.kind !== "image" &&
+            (value.endsWith("report.md") ||
+              value.endsWith("run_manifest.json") ||
+              value.endsWith("method_selection.json") ||
+              value.includes("metrics") ||
+              value.includes("summary") ||
+              value.endsWith("events.jsonl") ||
+              value.includes("/logs/") ||
+              value.includes("/block_logs/"))
+          );
+        })
+        .sort((a, b) => {
+          const priority = (item) => {
+            const value = String(item.path || "").toLowerCase();
+            if (value.endsWith("report.md")) return 0;
+            if (value.endsWith("run_manifest.json")) return 1;
+            if (value.endsWith("method_selection.json")) return 2;
+            if (value.includes("per_image_metrics")) return 3;
+            if (value.includes("summary")) return 4;
+            if (value.endsWith("events.jsonl")) return 5;
+            return 10;
+          };
+          return priority(a) - priority(b) || String(a.path || "").localeCompare(String(b.path || ""));
+        })
+        .slice(0, 12);
       blockCanvasEl.innerHTML = `
         <div class="block-canvas-head">
           <div>
@@ -528,6 +567,41 @@ function renderBlockCanvas(payload = null) {
             </a>
           </div>
         </div>
+        ${
+          keyFiles.length
+            ? `<div class="block-run-card">
+                <strong>Related artifacts</strong>
+                <div class="block-canvas-files">
+                  ${keyFiles
+                    .map(
+                      (item) => `
+                        <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">
+                          <strong>${escapeHtml(item.kind)}</strong>
+                          <span>${escapeHtml(item.path)} · ${formatBytes(item.size)}</span>
+                        </a>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </div>`
+            : ""
+        }
+        ${
+          previewImages.length
+            ? `<div class="block-canvas-images">
+                ${previewImages
+                  .map(
+                    (item) => `
+                      <figure class="block-canvas-item">
+                        <img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />
+                        <figcaption>${escapeHtml(item.path)}</figcaption>
+                      </figure>
+                    `
+                  )
+                  .join("")}
+              </div>`
+            : ""
+        }
       `;
       return;
     }
@@ -791,6 +865,85 @@ function allNodes(ir) {
 
 function findNodeById(ir, id) {
   return allNodes(ir).find((node) => node.id === id);
+}
+
+function rootListForRef(ir, name) {
+  if (name === "agent") return ir.pipeline.agents || (ir.pipeline.agents = []);
+  if (name === "block") return ir.pipeline.blocks || (ir.pipeline.blocks = []);
+  if (name === "skill") return ir.pipeline.skills || (ir.pipeline.skills = []);
+  if (name === "task") return ir.pipeline.tasks || (ir.pipeline.tasks = []);
+  return null;
+}
+
+function nodeLocationByRef(ir, ref) {
+  if (!ref) return null;
+  const parts = String(ref).split("/");
+  const first = parts.shift();
+  const rootMatch = first?.match(/^(agent|block|skill|task):(\d+)$/);
+  if (!rootMatch) return null;
+  let list = rootListForRef(ir, rootMatch[1]);
+  let listRef = rootMatch[1];
+  let index = Number(rootMatch[2]);
+  let parent = null;
+  let parentRef = "";
+  let node = list?.[index];
+  if (!node) return null;
+  for (const part of parts) {
+    const match = part.match(/^children:(\d+)$/);
+    if (!match) return null;
+    parent = node;
+    parentRef = `${listRef}:${index}`;
+    list = parent.children || (parent.children = []);
+    listRef = `${parentRef}/children`;
+    index = Number(match[1]);
+    node = list[index];
+    if (!node) return null;
+  }
+  return { list, listRef, index, node, parent, parentRef, ref: `${listRef}:${index}` };
+}
+
+function nodeRefById(ir, id) {
+  const target = String(id || "").trim();
+  if (!target) return "";
+  function walk(nodes, listRef) {
+    for (let index = 0; index < (nodes || []).length; index += 1) {
+      const node = nodes[index];
+      const ref = `${listRef}:${index}`;
+      if (node.id === target) return ref;
+      const childRef = walk(node.children || [], `${ref}/children`);
+      if (childRef) return childRef;
+    }
+    return "";
+  }
+  return (
+    walk(ir.pipeline.agents || [], "agent") ||
+    walk(ir.pipeline.blocks || [], "block") ||
+    walk(ir.pipeline.skills || [], "skill") ||
+    walk(ir.pipeline.tasks || [], "task")
+  );
+}
+
+function uniqueIdFromUsed(base, used) {
+  const clean = AAPS.slug(base || "node") || "node";
+  let candidate = clean;
+  let index = 2;
+  while (used.has(candidate)) {
+    candidate = `${clean}_${index}`;
+    index += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function cloneNodeForInsert(node, ir, suffix = "copy") {
+  const used = new Set(allNodes(ir).map((item) => item.id));
+  function cloneWithIds(item) {
+    const copy = clone(item);
+    copy.id = uniqueIdFromUsed(`${copy.id || copy.kind}_${suffix}`, used);
+    copy.children = (copy.children || []).map(cloneWithIds);
+    return copy;
+  }
+  return cloneWithIds(node);
 }
 
 function parseLines(text) {
@@ -1078,7 +1231,7 @@ function renderNode(node, ref, depth = 0) {
     .map((child, index) => renderNode(child, `${ref}/children:${index}`, depth + 1))
     .join("");
   return `
-    <article class="node-card${selectedClass}" data-ref="${escapeHtml(ref)}" style="border-left-color:${nodeColor(node.kind)}">
+    <article class="node-card${selectedClass}" data-ref="${escapeHtml(ref)}" draggable="true" style="border-left-color:${nodeColor(node.kind)}">
       <div class="node-top">
         <div>
           <div class="node-kind">${escapeHtml(node.kind)}</div>
@@ -1358,6 +1511,17 @@ function templateNode(kind, ir) {
   };
   if (kind === "for_each") base.prompt = "";
   if (kind === "action") base.id = "new_action";
+  if (["stage", "method", "choose"].includes(kind)) {
+    base.kind = kind;
+    base.id = kind === "choose" ? "method_route" : `new_${kind}`;
+    base.prompt =
+      kind === "choose"
+        ? "Choose the best available method and record why."
+        : kind === "method"
+          ? "Implement one concrete method path with declared outputs and validations."
+          : "Group related method, action, and validation steps.";
+    base.verify = kind === "choose" ? ["A method-selection decision is recorded."] : base.verify;
+  }
   return base;
 }
 
@@ -1410,6 +1574,122 @@ function deleteSelected() {
   selectedRef = "";
   setIr(ir);
   addMessage("assistant", `Deleted ${id}.`);
+}
+
+function selectedInsertKind() {
+  return nodeKindSelectEl?.value || "task";
+}
+
+function makeInsertedNode(ir, kind, baseId = "") {
+  const node = templateNode(kind, ir);
+  node.id = uniqueId(baseId || node.id || kind, allNodes(ir));
+  return node;
+}
+
+function setStructureStatus(message) {
+  if (structureStatusEl) structureStatusEl.textContent = message;
+}
+
+function runNodeStructureAction(action) {
+  const ir = getIr();
+  const loc = nodeLocationByRef(ir, selectedRef);
+  const kind = selectedInsertKind();
+  let message = "";
+  if (!loc && !["add-child", "append-sibling", "prepend-sibling"].includes(action)) {
+    setStructureStatus("Select a node first.");
+    return false;
+  }
+  if (action === "add-child") {
+    if (!loc) {
+      const node = makeInsertedNode(ir, kind, kind);
+      const list = node.kind === "block" ? ir.pipeline.blocks || (ir.pipeline.blocks = []) : ir.pipeline.tasks || (ir.pipeline.tasks = []);
+      list.push(node);
+      selectedRef = `${node.kind === "block" ? "block" : "task"}:${list.length - 1}`;
+      message = `Added root ${node.kind} ${node.id}.`;
+    } else {
+      const node = makeInsertedNode(ir, kind, `${loc.node.id}_${kind}`);
+      loc.node.children = loc.node.children || [];
+      loc.node.children.push(node);
+      selectedRef = `${loc.ref}/children:${loc.node.children.length - 1}`;
+      message = `Added child ${node.kind} ${node.id} under ${loc.node.id}.`;
+    }
+  } else if (action === "append-sibling" || action === "prepend-sibling") {
+    if (!loc) {
+      setStructureStatus("Select a node before adding a sibling.");
+      return false;
+    }
+    const node = makeInsertedNode(ir, kind, `${loc.node.id}_${action === "append-sibling" ? "next" : "previous"}_${kind}`);
+    const insertAt = action === "append-sibling" ? loc.index + 1 : loc.index;
+    loc.list.splice(insertAt, 0, node);
+    selectedRef = `${loc.listRef}:${insertAt}`;
+    message = `${action === "append-sibling" ? "Appended" : "Prepended"} ${node.kind} ${node.id}.`;
+  } else if (action === "duplicate") {
+    const copy = cloneNodeForInsert(loc.node, ir);
+    loc.list.splice(loc.index + 1, 0, copy);
+    selectedRef = `${loc.listRef}:${loc.index + 1}`;
+    message = `Duplicated ${loc.node.id} as ${copy.id}.`;
+  } else if (action === "move-up" || action === "move-down") {
+    const delta = action === "move-up" ? -1 : 1;
+    const nextIndex = loc.index + delta;
+    if (nextIndex < 0 || nextIndex >= loc.list.length) {
+      setStructureStatus(action === "move-up" ? "Already first in this level." : "Already last in this level.");
+      return false;
+    }
+    const [node] = loc.list.splice(loc.index, 1);
+    loc.list.splice(nextIndex, 0, node);
+    selectedRef = `${loc.listRef}:${nextIndex}`;
+    message = `Moved ${node.id} ${action === "move-up" ? "up" : "down"}.`;
+  } else if (action === "indent") {
+    if (loc.index <= 0) {
+      setStructureStatus("Indent needs a previous sibling to become the parent.");
+      return false;
+    }
+    const parent = loc.list[loc.index - 1];
+    const [node] = loc.list.splice(loc.index, 1);
+    parent.children = parent.children || [];
+    parent.children.push(node);
+    selectedRef = `${loc.listRef}:${loc.index - 1}/children:${parent.children.length - 1}`;
+    message = `Indented ${node.id} under ${parent.id}.`;
+  } else if (action === "outdent") {
+    if (!loc.parentRef) {
+      setStructureStatus("Root nodes cannot be outdented.");
+      return false;
+    }
+    const parentLoc = nodeLocationByRef(ir, loc.parentRef);
+    if (!parentLoc) {
+      setStructureStatus("Could not find the parent node.");
+      return false;
+    }
+    const [node] = loc.list.splice(loc.index, 1);
+    parentLoc.list.splice(parentLoc.index + 1, 0, node);
+    selectedRef = `${parentLoc.listRef}:${parentLoc.index + 1}`;
+    message = `Outdented ${node.id} after ${parentLoc.node.id}.`;
+  } else {
+    setStructureStatus(`Unknown action: ${action}`);
+    return false;
+  }
+  setIr(ir);
+  setStructureStatus(message);
+  addMessage("assistant", message);
+  return true;
+}
+
+function moveNodeAfter(sourceRef, targetRef) {
+  if (!sourceRef || !targetRef || sourceRef === targetRef || targetRef.startsWith(`${sourceRef}/`)) return false;
+  const ir = getIr();
+  const sourceLoc = nodeLocationByRef(ir, sourceRef);
+  const targetLoc = nodeLocationByRef(ir, targetRef);
+  if (!sourceLoc || !targetLoc) return false;
+  const [node] = sourceLoc.list.splice(sourceLoc.index, 1);
+  let insertAt = targetLoc.index + 1;
+  if (sourceLoc.list === targetLoc.list && sourceLoc.index < targetLoc.index) insertAt -= 1;
+  targetLoc.list.splice(insertAt, 0, node);
+  selectedRef = `${targetLoc.listRef}:${insertAt}`;
+  setIr(ir);
+  const message = `Moved ${node.id} after ${targetLoc.node.id}.`;
+  setStructureStatus(message);
+  addMessage("assistant", message);
+  return true;
 }
 
 function applyInspector() {
@@ -1552,6 +1832,52 @@ function localChatEdit(text) {
     target.children.push(loop);
     setIr(ir);
     return `Added loop to ${target.id}.`;
+  }
+  match = raw.match(/^add child\s+(task|stage|method|choose|action|for_each|if)\s+([A-Za-z_][\w.-]*)\s+to\s+([A-Za-z_][\w.-]*)$/i);
+  if (match) {
+    const target = findNodeById(ir, match[3]);
+    if (!target) return `Node ${match[3]} was not found.`;
+    const child = makeInsertedNode(ir, match[1], match[2]);
+    target.children = target.children || [];
+    target.children.push(child);
+    setIr(ir);
+    return `Added child ${child.kind} ${child.id} to ${target.id}.`;
+  }
+  match = raw.match(/^append sibling\s+(task|stage|method|choose|action|for_each|if|block)\s+([A-Za-z_][\w.-]*)\s+after\s+([A-Za-z_][\w.-]*)$/i);
+  if (match) {
+    const targetRef = nodeRefById(ir, match[3]);
+    const loc = nodeLocationByRef(ir, targetRef);
+    if (!loc) return `Node ${match[3]} was not found.`;
+    const sibling = makeInsertedNode(ir, match[1], match[2]);
+    loc.list.splice(loc.index + 1, 0, sibling);
+    setIr(ir);
+    return `Appended ${sibling.kind} ${sibling.id} after ${loc.node.id}.`;
+  }
+  match = raw.match(/^prepend sibling\s+(task|stage|method|choose|action|for_each|if|block)\s+([A-Za-z_][\w.-]*)\s+before\s+([A-Za-z_][\w.-]*)$/i);
+  if (match) {
+    const targetRef = nodeRefById(ir, match[3]);
+    const loc = nodeLocationByRef(ir, targetRef);
+    if (!loc) return `Node ${match[3]} was not found.`;
+    const sibling = makeInsertedNode(ir, match[1], match[2]);
+    loc.list.splice(loc.index, 0, sibling);
+    setIr(ir);
+    return `Prepended ${sibling.kind} ${sibling.id} before ${loc.node.id}.`;
+  }
+  match = raw.match(/^move\s+([A-Za-z_][\w.-]*)\s+(up|down)$/i);
+  if (match) {
+    const ref = nodeRefById(ir, match[1]);
+    if (!ref) return `Node ${match[1]} was not found.`;
+    selectedRef = ref;
+    return runNodeStructureAction(match[2].toLowerCase() === "up" ? "move-up" : "move-down")
+      ? `Moved ${match[1]} ${match[2].toLowerCase()}.`
+      : `Could not move ${match[1]} ${match[2].toLowerCase()}.`;
+  }
+  match = raw.match(/^(indent|outdent|duplicate)\s+([A-Za-z_][\w.-]*)$/i);
+  if (match) {
+    const ref = nodeRefById(ir, match[2]);
+    if (!ref) return `Node ${match[2]} was not found.`;
+    selectedRef = ref;
+    return runNodeStructureAction(match[1].toLowerCase()) ? `${match[1]} ${match[2]}.` : `Could not ${match[1]} ${match[2]}.`;
   }
   match = raw.match(/^prompt\s+([A-Za-z_][\w.-]*)\s*:\s*(.+)$/i);
   if (match) {
@@ -2109,6 +2435,35 @@ blockBrowserEl?.addEventListener("click", (event) => {
   render();
 });
 
+function handleNodeDragStart(event) {
+  const card = event.target.closest("[data-ref]");
+  if (!card) return;
+  draggedNodeRef = card.dataset.ref;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", draggedNodeRef);
+}
+
+function handleNodeDragOver(event) {
+  if (!event.target.closest("[data-ref]")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+}
+
+function handleNodeDrop(event) {
+  const card = event.target.closest("[data-ref]");
+  if (!card) return;
+  event.preventDefault();
+  const sourceRef = event.dataTransfer.getData("text/plain") || draggedNodeRef;
+  moveNodeAfter(sourceRef, card.dataset.ref);
+  draggedNodeRef = "";
+}
+
+[treeEl, blockBrowserEl].filter(Boolean).forEach((container) => {
+  container.addEventListener("dragstart", handleNodeDragStart);
+  container.addEventListener("dragover", handleNodeDragOver);
+  container.addEventListener("drop", handleNodeDrop);
+});
+
 sourceEl.addEventListener("input", render);
 
 chatFormEl.addEventListener("submit", (event) => {
@@ -2140,6 +2495,9 @@ inspectorFormEl.addEventListener("submit", (event) => {
 });
 
 document.getElementById("delete-block").addEventListener("click", deleteSelected);
+document.querySelectorAll("[data-node-action]").forEach((button) => {
+  button.addEventListener("click", () => runNodeStructureAction(button.dataset.nodeAction));
+});
 document.getElementById("save-block-file-btn").addEventListener("click", () => {
   applyInspector();
   saveActiveProjectFile().catch((error) => {

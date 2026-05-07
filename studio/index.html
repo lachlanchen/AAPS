@@ -111,6 +111,35 @@
               <button id="save-block-file-btn" type="button">Save Block File</button>
               <button id="delete-block" type="button">Delete</button>
             </div>
+            <section class="structure-actions" aria-label="Program structure editor">
+              <div>
+                <h3>Structure Actions</h3>
+                <p>Reorder and nest the selected block/program step without editing source text.</p>
+              </div>
+              <label>New node kind
+                <select id="node-kind-select">
+                  <option value="task">Task</option>
+                  <option value="stage">Stage</option>
+                  <option value="method">Method</option>
+                  <option value="choose">Choose Router</option>
+                  <option value="action">Action</option>
+                  <option value="for_each">For Each</option>
+                  <option value="if">If</option>
+                  <option value="block">Reusable Block</option>
+                </select>
+              </label>
+              <div class="form-actions structure-action-grid">
+                <button type="button" data-node-action="add-child">Add Child</button>
+                <button type="button" data-node-action="append-sibling">Append Sibling</button>
+                <button type="button" data-node-action="prepend-sibling">Prepend Sibling</button>
+                <button type="button" data-node-action="duplicate">Duplicate</button>
+                <button type="button" data-node-action="move-up">Move Up</button>
+                <button type="button" data-node-action="move-down">Move Down</button>
+                <button type="button" data-node-action="indent">Indent</button>
+                <button type="button" data-node-action="outdent">Outdent</button>
+              </div>
+              <div id="structure-status" class="structure-status">Select a node to edit its structure.</div>
+            </section>
             <section class="block-chat-box" aria-label="Block chat and code authoring">
               <h3>Block Chat / Code</h3>
               <textarea

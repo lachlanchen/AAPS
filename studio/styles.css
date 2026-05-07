@@ -694,6 +694,31 @@ main {
   font-size: 12px;
 }
 
+.structure-actions {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(33, 90, 67, 0.16);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(242, 248, 241, 0.72));
+}
+
+.structure-actions h3,
+.structure-actions p {
+  margin: 0;
+}
+
+.structure-actions p,
+.structure-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.structure-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 #delete-block {
   color: #b91c1c;
 }
@@ -726,7 +751,11 @@ main {
   border-left: 8px solid var(--pink);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.97);
-  cursor: pointer;
+  cursor: grab;
+}
+
+.node-card:active {
+  cursor: grabbing;
 }
 
 .node-card.is-selected {
