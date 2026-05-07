@@ -1113,6 +1113,11 @@ try {
   const studioProjectPayload = httpJson(`${base}/api/aaps/project`);
   assert.strictEqual(studioProjectPayload.project_path, ".");
   assert.deepStrictEqual(studioProjectPayload.files, ["workflows/main.aaps"]);
+  const studioProjects = httpJson(`${base}/api/aaps/projects`);
+  assert.strictEqual(studioProjects.ok, true);
+  const currentStudioProject = studioProjects.items.find((item) => item.path === ".");
+  assert(currentStudioProject, JSON.stringify(studioProjects));
+  assert.strictEqual(currentStudioProject.manifestExists, true);
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("data/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("outputs/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith(".aginti")));

@@ -22,13 +22,14 @@
       </a>
       <nav class="mode-tabs" aria-label="Studio views">
         <button class="mode-tab is-active" type="button" data-tab="project">Project</button>
-        <button class="mode-tab" type="button" data-tab="lab">Blocks</button>
         <button class="mode-tab" type="button" data-tab="program">Programs</button>
+        <button class="mode-tab" type="button" data-tab="lab">Blocks</button>
       </nav>
       <div class="toolbar" role="group" aria-label="Pipeline actions">
-        <button id="sample-general" type="button">General</button>
-        <button id="sample-biology" type="button">Biology</button>
-        <button id="sample-writing" type="button">Writing</button>
+        <span class="toolbar-label">Templates</span>
+        <button id="sample-general" type="button" data-template-choice="general">General</button>
+        <button id="sample-biology" type="button" data-template-choice="biology">Biology</button>
+        <button id="sample-writing" type="button" data-template-choice="writing">Writing</button>
         <button id="format-btn" type="button">Format</button>
         <button id="markdown-btn" type="button">Runbook</button>
         <button id="download-btn" type="button">Download</button>
@@ -176,6 +177,22 @@
             </div>
             <span id="diagnostics">Ready</span>
           </div>
+          <div class="program-controls" aria-label="Program controls">
+            <label>Workflow / Program
+              <select id="program-workflow-select"></select>
+            </label>
+            <label>Reusable Block
+              <select id="program-block-select"></select>
+            </label>
+            <div id="program-active-summary" class="program-active-summary">No active program loaded.</div>
+            <div class="form-actions">
+              <button id="program-load-btn" type="button">Load Program</button>
+              <button id="program-compile-btn" type="button">Compile</button>
+              <button id="program-dry-run-btn" type="button">Dry Run</button>
+              <button id="program-run-btn" type="button">Run</button>
+              <button id="program-edit-selected-btn" type="button">Edit Selected in Blocks</button>
+            </div>
+          </div>
           <div id="tree" class="tree" tabindex="0" aria-label="AAPS program tree"></div>
         </section>
 
@@ -215,17 +232,14 @@
             <div class="project-concept">
               A project is a research/app/book/lecture workspace. Keep several workflows in it, run one active `.aaps`, and reuse its blocks, tools, agents, and environments across tmux panes or Studio runs.
             </div>
-            <label>Project Path <input id="project-path" value="." /></label>
-            <section class="project-create-box" aria-label="Create AAPS project">
-              <h3>Create Project</h3>
-              <label>New Project Path <input id="new-project-path" placeholder="projects/my-aaps-project" /></label>
-              <label>Name <input id="new-project-name" placeholder="My AAPS Project" /></label>
-              <label>Domain <input id="new-project-domain" placeholder="research, app, writing, biology" /></label>
-              <label>Goal <textarea id="new-project-goal" rows="3" placeholder="Describe the topic and first pipeline goal."></textarea></label>
-              <div class="form-actions">
-                <button id="create-project-btn" type="button">Create Starter Project</button>
-              </div>
-            </section>
+            <div class="project-open-row">
+              <label>Project
+                <select id="project-selector"></select>
+              </label>
+              <label>Project Path <input id="project-path" value="." /></label>
+              <button id="refresh-projects-btn" class="icon-button" type="button" aria-label="Refresh projects">↻</button>
+              <button id="open-create-project-modal" class="icon-button primary" type="button" aria-label="Create project">+</button>
+            </div>
             <div class="form-actions">
               <button id="load-project-btn" type="button">Load</button>
               <button id="sample-project-btn" type="button">Sample</button>
@@ -337,10 +351,15 @@
               <h2>Artifacts / Runs</h2>
               <p>Recent outputs, block-chat artifacts, histories, version snapshots, compile records, and run records for this project.</p>
             </div>
-            <button id="refresh-artifacts-btn" type="button">Refresh</button>
+            <div class="panel-actions">
+              <button id="open-artifact-modal-btn" type="button">Open Canvas</button>
+              <button id="refresh-artifacts-btn" type="button">Refresh</button>
+            </div>
           </div>
           <div id="artifact-summary" class="project-summary"></div>
-          <div id="artifact-list" class="artifact-list"></div>
+          <div class="artifact-panel-note">
+            Open the canvas modal to inspect images, tables, PDFs, reports, run JSON, logs, and source artifacts with a larger viewer.
+          </div>
         </section>
 
         <section class="panel project-versions-panel">
@@ -409,5 +428,52 @@
       </div>
       <div id="chat-log" class="chat-log" aria-live="polite"></div>
     </aside>
+
+    <div id="create-project-overlay" class="modal-overlay" hidden></div>
+    <section id="create-project-modal" class="studio-modal small-modal" aria-hidden="true" aria-label="Create AAPS project">
+      <div class="modal-head">
+        <div>
+          <h2>Create Project</h2>
+          <p>Start from a topic workspace. Templates can be applied after creation.</p>
+        </div>
+        <button id="close-create-project-modal" type="button">Close</button>
+      </div>
+      <div class="modal-body project-create-box">
+        <label>New Project Path <input id="new-project-path" placeholder="projects/my-aaps-project" /></label>
+        <label>Name <input id="new-project-name" placeholder="My AAPS Project" /></label>
+        <label>Domain <input id="new-project-domain" placeholder="research, app, writing, biology" /></label>
+        <label>Goal <textarea id="new-project-goal" rows="4" placeholder="Describe the topic and first pipeline goal."></textarea></label>
+        <div class="form-actions">
+          <button id="create-project-btn" type="button">Create Starter Project</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="artifact-modal-overlay" class="modal-overlay" hidden></div>
+    <section id="artifact-modal" class="studio-modal artifact-modal" aria-hidden="true" aria-label="Artifacts and runs canvas">
+      <div class="modal-head">
+        <div>
+          <h2>Artifacts / Runs Canvas</h2>
+          <p>Inspect run outputs as images, tables, PDFs, reports, source files, and explorer records.</p>
+        </div>
+        <button id="close-artifact-modal-btn" type="button">Close</button>
+      </div>
+      <div class="artifact-modal-toolbar">
+        <button type="button" class="artifact-filter is-active" data-artifact-filter="all">Explorer</button>
+        <button type="button" class="artifact-filter" data-artifact-filter="run">Runs</button>
+        <button type="button" class="artifact-filter" data-artifact-filter="image">Images</button>
+        <button type="button" class="artifact-filter" data-artifact-filter="table">Tables</button>
+        <button type="button" class="artifact-filter" data-artifact-filter="pdf">PDF</button>
+        <button type="button" class="artifact-filter" data-artifact-filter="source">Editor</button>
+        <button type="button" class="artifact-filter" data-artifact-filter="text">Text</button>
+      </div>
+      <div class="artifact-modal-body">
+        <aside id="artifact-list" class="artifact-list"></aside>
+        <section id="artifact-preview" class="artifact-preview">
+          <strong>Select an artifact</strong>
+          <span>Images, CSV/TSV tables, PDFs, Markdown reports, JSON run manifests, logs, and source files render here.</span>
+        </section>
+      </div>
+    </section>
   </body>
 </html>

@@ -30,6 +30,11 @@ const runLogEl = document.getElementById("run-log");
 const artifactSummaryEl = document.getElementById("artifact-summary");
 const artifactListEl = document.getElementById("artifact-list");
 const refreshArtifactsBtnEl = document.getElementById("refresh-artifacts-btn");
+const openArtifactModalBtnEl = document.getElementById("open-artifact-modal-btn");
+const artifactModalEl = document.getElementById("artifact-modal");
+const artifactModalOverlayEl = document.getElementById("artifact-modal-overlay");
+const closeArtifactModalBtnEl = document.getElementById("close-artifact-modal-btn");
+const artifactPreviewEl = document.getElementById("artifact-preview");
 const versionsSummaryEl = document.getElementById("versions-summary");
 const versionsListEl = document.getElementById("versions-list");
 const refreshVersionsBtnEl = document.getElementById("refresh-versions-btn");
@@ -61,8 +66,17 @@ const newProjectNameEl = document.getElementById("new-project-name");
 const newProjectDomainEl = document.getElementById("new-project-domain");
 const newProjectGoalEl = document.getElementById("new-project-goal");
 const createProjectBtnEl = document.getElementById("create-project-btn");
+const projectSelectorEl = document.getElementById("project-selector");
+const refreshProjectsBtnEl = document.getElementById("refresh-projects-btn");
+const openCreateProjectModalBtnEl = document.getElementById("open-create-project-modal");
+const closeCreateProjectModalBtnEl = document.getElementById("close-create-project-modal");
+const createProjectModalEl = document.getElementById("create-project-modal");
+const createProjectOverlayEl = document.getElementById("create-project-overlay");
 const nodeKindSelectEl = document.getElementById("node-kind-select");
 const structureStatusEl = document.getElementById("structure-status");
+const programWorkflowSelectEl = document.getElementById("program-workflow-select");
+const programBlockSelectEl = document.getElementById("program-block-select");
+const programActiveSummaryEl = document.getElementById("program-active-summary");
 
 const fields = {
   kind: document.getElementById("field-kind"),
@@ -109,6 +123,9 @@ let lastCompileResult = null;
 let currentArtifacts = { items: [], counts: {}, kindCounts: {} };
 let currentVersions = { items: [], count: 0 };
 let draggedNodeRef = "";
+let currentProjects = { items: [] };
+let artifactFilter = "all";
+let selectedArtifactPath = "";
 let currentSettings = {
   agentProvider: "codex",
   codexModel: "gpt-5.3-codex",
@@ -245,6 +262,10 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;");
 }
 
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/'/g, "&#39;");
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -270,6 +291,45 @@ function projectCounts(manifest, payload) {
     environments: (payload.environment_files || []).length,
     runs: countByPrefix(manifest.paths?.runs || "runs"),
   };
+}
+
+function recentProjectPaths() {
+  try {
+    return JSON.parse(localStorage.getItem("aaps.studio.recentProjects") || "[]").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function rememberProjectPath(pathValue) {
+  const path = String(pathValue || ".").trim() || ".";
+  const next = [path, ...recentProjectPaths().filter((item) => item !== path)].slice(0, 12);
+  localStorage.setItem("aaps.studio.recentProjects", JSON.stringify(next));
+}
+
+function renderProjectSelector(payload = currentProjects) {
+  if (!projectSelectorEl) return;
+  const current = projectPathEl.value || ".";
+  const byPath = new Map();
+  (payload.items || []).forEach((item) => byPath.set(item.path, item));
+  recentProjectPaths().forEach((path) => {
+    if (!byPath.has(path)) byPath.set(path, { path, name: path, domain: "recent", source: "recent" });
+  });
+  if (!byPath.has(current)) byPath.set(current, { path: current, name: current, domain: "current", source: "current" });
+  projectSelectorEl.innerHTML = [...byPath.values()]
+    .map(
+      (item) =>
+        `<option value="${escapeAttr(item.path)}"${item.path === current ? " selected" : ""}>${escapeHtml(item.name || item.path)} · ${escapeHtml(item.path)}${item.domain ? ` · ${escapeHtml(item.domain)}` : ""}</option>`
+    )
+    .join("");
+}
+
+async function loadProjectChoices() {
+  const response = await fetch(`/api/aaps/projects?path=${encodeURIComponent(projectPathEl.value || ".")}`);
+  if (!response.ok) throw new Error(`projects API returned ${response.status}`);
+  currentProjects = await response.json();
+  renderProjectSelector(currentProjects);
+  return currentProjects;
 }
 
 function tmuxCommand(manifest) {
@@ -303,9 +363,12 @@ function renderProject(payload = currentProjectPayload) {
   localStorage.setItem("aaps.studio.selectedWorkflowFile", selectedWorkflowFile);
   localStorage.setItem("aaps.studio.selectedProgramFile", selectedProgramFile);
   localStorage.setItem("aaps.studio.selectedBlockFile", selectedBlockFile);
+  rememberProjectPath(payload.project_path || projectPathEl.value || ".");
 
   projectManifestEl.value = JSON.stringify(manifest, null, 2);
   projectPathEl.value = payload.project_path || projectPathEl.value || ".";
+  renderProjectSelector(currentProjects);
+  renderProgramSelectors(manifest);
   projectStatusEl.textContent = errorCount
     ? `${errorCount} error${errorCount === 1 ? "" : "s"}`
     : warningCount
@@ -351,7 +414,7 @@ function renderProject(payload = currentProjectPayload) {
         ${categoryFiles
           .map(
             (file) => `
-              <button class="project-file${file === manifest.activeFile ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
+              <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
                 <span>${escapeHtml(file)}</span>
                 <span>${files.includes(file) ? "found" : "listed"}</span>
               </button>
@@ -368,7 +431,7 @@ function renderProject(payload = currentProjectPayload) {
         ${scriptFiles
           .map(
             (file) => `
-              <button class="project-file${file === openTextFile ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
+                <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
                 <span>${escapeHtml(file)}</span>
                 <span>script</span>
               </button>
@@ -391,7 +454,7 @@ function renderProject(payload = currentProjectPayload) {
         ${categoryFiles
           .map(
             (file) => `
-              <button class="project-file${file === openTextFile ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
+              <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
                 <span>${escapeHtml(file)}</span>
                 <span>${label}</span>
               </button>
@@ -483,6 +546,32 @@ function artifactFileUrl(file, projectPath = projectPathEl.value || ".") {
   return `/api/aaps/artifact-file?path=${encodeURIComponent(projectPath)}&file=${encodeURIComponent(file)}`;
 }
 
+function artifactDisplayKind(item) {
+  const path = String(item?.path || "").toLowerCase();
+  if (item?.kind === "run") return "run";
+  if (item?.kind === "image") return "image";
+  if (item?.kind === "table" || path.endsWith(".csv") || path.endsWith(".tsv")) return "table";
+  if (path.endsWith(".pdf")) return "pdf";
+  if (["source", "json", "jsonl"].includes(item?.kind) || /\.(aaps|py|js|mjs|cjs|sh|json|jsonl|yaml|yml|toml)$/i.test(path)) return "source";
+  if (["text"].includes(item?.kind) || /\.(md|txt|log)$/i.test(path)) return "text";
+  return item?.kind || "file";
+}
+
+function artifactMatchesFilter(item, filter = artifactFilter) {
+  if (!filter || filter === "all") return true;
+  const kind = artifactDisplayKind(item);
+  if (filter === "source") return kind === "source" || kind === "text";
+  return kind === filter;
+}
+
+function setArtifactFilter(filter) {
+  artifactFilter = filter || "all";
+  document.querySelectorAll("[data-artifact-filter]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.artifactFilter === artifactFilter);
+  });
+  renderArtifacts(currentArtifacts);
+}
+
 function csvRows(text, maxRows = 6) {
   const rows = [];
   let row = [];
@@ -516,6 +605,70 @@ function csvRows(text, maxRows = 6) {
     if (row.some((value) => String(value).trim())) rows.push(row);
   }
   return rows.slice(0, maxRows);
+}
+
+async function previewArtifact(item) {
+  if (!artifactPreviewEl || !item) return;
+  selectedArtifactPath = item.path || "";
+  artifactListEl?.querySelectorAll("[data-artifact-path]").forEach((button) => {
+    button.classList.toggle("is-selected", button.dataset.artifactPath === selectedArtifactPath);
+  });
+  const kind = artifactDisplayKind(item);
+  const url = artifactFileUrl(item.path);
+  artifactPreviewEl.innerHTML = `
+    <div class="artifact-preview-head">
+      <div>
+        <strong>${escapeHtml(item.path)}</strong>
+        <span>${escapeHtml(item.source || "")} · ${escapeHtml(kind)} · ${formatBytes(item.size)}</span>
+      </div>
+      <a href="${url}" target="_blank" rel="noopener noreferrer">Open raw</a>
+    </div>
+    <div class="message">Loading preview...</div>
+  `;
+  if (kind === "image") {
+    artifactPreviewEl.innerHTML = `
+      <div class="artifact-preview-head">
+        <div><strong>${escapeHtml(item.path)}</strong><span>${escapeHtml(item.source || "")} · image · ${formatBytes(item.size)}</span></div>
+        <a href="${url}" target="_blank" rel="noopener noreferrer">Open raw</a>
+      </div>
+      <figure class="artifact-image-preview"><img src="${url}" alt="${escapeHtml(item.path)}" /></figure>`;
+    return;
+  }
+  if (kind === "pdf") {
+    artifactPreviewEl.innerHTML = `
+      <div class="artifact-preview-head">
+        <div><strong>${escapeHtml(item.path)}</strong><span>${escapeHtml(item.source || "")} · pdf · ${formatBytes(item.size)}</span></div>
+        <a href="${url}" target="_blank" rel="noopener noreferrer">Open raw</a>
+      </div>
+      <iframe class="artifact-pdf-preview" src="${url}" title="${escapeAttr(item.path)}"></iframe>`;
+    return;
+  }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`artifact preview returned ${response.status}`);
+  const text = await response.text();
+  if (kind === "table") {
+    artifactPreviewEl.innerHTML = artifactPreviewEl.innerHTML.replace('<div class="message">Loading preview...</div>', csvPreviewHtml(text, item.path));
+    return;
+  }
+  if (kind === "run" || kind === "source" || kind === "text") {
+    let pretty = text;
+    if (String(item.path || "").toLowerCase().endsWith(".json")) {
+      try {
+        pretty = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        pretty = text;
+      }
+    }
+    artifactPreviewEl.innerHTML = artifactPreviewEl.innerHTML.replace(
+      '<div class="message">Loading preview...</div>',
+      `<textarea class="artifact-editor" readonly spellcheck="false">${escapeHtml(pretty)}</textarea>`
+    );
+    return;
+  }
+  artifactPreviewEl.innerHTML = artifactPreviewEl.innerHTML.replace(
+    '<div class="message">Loading preview...</div>',
+    `<pre class="artifact-text-preview">${escapeHtml(text.slice(0, 20000))}</pre>`
+  );
 }
 
 function csvPreviewHtml(text, caption) {
@@ -918,32 +1071,37 @@ function renderArtifacts(payload = currentArtifacts) {
       <div class="project-kpi"><strong>${kindCounts.run || 0}</strong>runs</div>
     </div>
   `;
-  artifactListEl.innerHTML = items.length
+  const shownItems = items.filter((item) => artifactMatchesFilter(item));
+  artifactListEl.innerHTML = shownItems.length
     ? (() => {
         let previewedImages = 0;
-        return items
+        return shownItems
         .map((item) => {
-          const isSmallPreview = item.kind === "image" && item.path.startsWith("outputs/") && Number(item.size || 0) <= 2_500_000 && previewedImages < 12;
+          const kind = artifactDisplayKind(item);
+          const isSmallPreview = kind === "image" && Number(item.size || 0) <= 2_500_000 && previewedImages < 12;
           if (isSmallPreview) previewedImages += 1;
           return `
-            <article class="artifact-item${isSmallPreview ? "" : " artifact-item--compact"}">
+            <article class="artifact-item${isSmallPreview ? "" : " artifact-item--compact"}${item.path === selectedArtifactPath ? " is-selected" : ""}">
               ${isSmallPreview ? `<img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />` : ""}
               <div>
                 <strong>${escapeHtml(item.path)}</strong>
-                <span>${escapeHtml(item.source)} · <span class="artifact-kind">${escapeHtml(item.kind)}</span> · ${formatBytes(item.size)}${item.kind === "image" && !isSmallPreview ? " · preview skipped for large image" : ""}</span>
+                <span>${escapeHtml(item.source)} · <span class="artifact-kind">${escapeHtml(kind)}</span> · ${formatBytes(item.size)}${kind === "image" && !isSmallPreview ? " · preview opens on select" : ""}</span>
                 ${
                   item.runSummary
                     ? `<span class="run-artifact-summary">${escapeHtml(item.runSummary.status)} · ${Number(item.runSummary.failedSteps || 0)} failed steps · ${Number(item.runSummary.validations || 0) - Number(item.runSummary.failedValidations || 0)}/${Number(item.runSummary.validations || 0)} validations passed · ${escapeHtml(item.runSummary.runId || "")}</span>`
                     : ""
                 }
-                <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">Open</a>
+                <div class="artifact-actions">
+                  <button type="button" data-artifact-path="${escapeAttr(item.path)}">Preview</button>
+                  <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">Open raw</a>
+                </div>
               </div>
             </article>
           `;
         })
         .join("");
       })()
-    : '<div class="message">No artifacts found yet. Run or compile a workflow first.</div>';
+    : '<div class="message">No artifacts match this filter yet. Run or compile a workflow first.</div>';
   if (selectedRef) renderBlockCanvas(null);
 }
 
@@ -1400,8 +1558,66 @@ function selectedScopeLabel() {
   return parts.join(" · ");
 }
 
+function activeFileMatches(file, manifest) {
+  return (
+    file === manifest.activeFile ||
+    file === selectedWorkflowFile ||
+    file === selectedProgramFile ||
+    file === selectedBlockFile ||
+    file === openTextFile
+  );
+}
+
+function renderProgramSelectors(manifest) {
+  if (!programWorkflowSelectEl || !programBlockSelectEl) return;
+  const workflows = [
+    ...(manifest.files?.workflows || []),
+    ...(manifest.files?.subworkflows || []),
+    ...(manifest.files?.modules || []),
+  ].filter(Boolean);
+  const blocks = [...(manifest.files?.blocks || []), ...(manifest.files?.skills || [])].filter(Boolean);
+  const workflowValue = selectedProgramFile || selectedWorkflowFile || manifest.activeFile || manifest.defaultMain || workflows[0] || "";
+  const blockValue = selectedBlockFile || blocks[0] || "";
+  programWorkflowSelectEl.innerHTML = workflows.length
+    ? workflows
+        .map((file) => `<option value="${escapeAttr(file)}"${file === workflowValue ? " selected" : ""}>${escapeHtml(file)}</option>`)
+        .join("")
+    : '<option value="">No workflows</option>';
+  programBlockSelectEl.innerHTML = blocks.length
+    ? blocks
+        .map((file) => `<option value="${escapeAttr(file)}"${file === blockValue ? " selected" : ""}>${escapeHtml(file)}</option>`)
+        .join("")
+    : '<option value="">No blocks</option>';
+  if (programActiveSummaryEl) {
+    programActiveSummaryEl.textContent = `Program: ${workflowValue || "(none)"} · Block: ${blockValue || "(none)"} · Active: ${manifest.activeFile || manifest.defaultMain || "(none)"}`;
+  }
+}
+
+function firstNodeRef(ir, preferredKinds = []) {
+  const preferred = new Set(preferredKinds);
+  const rootGroups = [
+    ["block", ir.pipeline.blocks || []],
+    ["skill", ir.pipeline.skills || []],
+    ["task", ir.pipeline.tasks || []],
+    ["agent", ir.pipeline.agents || []],
+  ];
+  for (const [prefix, nodes] of rootGroups) {
+    if (nodes.length && (!preferred.size || preferred.has(prefix))) return `${prefix}:0`;
+  }
+  for (const [prefix, nodes] of rootGroups) {
+    if (nodes.length) return `${prefix}:0`;
+  }
+  return "";
+}
+
 function setChatStatus(text) {
   chatStatusEl.textContent = text;
+}
+
+function setTemplateActive(name) {
+  document.querySelectorAll("[data-template-choice]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.templateChoice === name);
+  });
 }
 
 function updateChatContext() {
@@ -1424,6 +1640,32 @@ function setHistoryOpen(open) {
   chatHistoryPanelEl.classList.toggle("is-open", open);
   chatHistoryPanelEl.setAttribute("aria-hidden", open ? "false" : "true");
   chatHistoryOverlayEl.hidden = !open;
+  if (open) loadChatHistory().catch(() => {});
+}
+
+function setCreateProjectOpen(open) {
+  if (!createProjectModalEl || !createProjectOverlayEl) return;
+  createProjectModalEl.classList.toggle("is-open", open);
+  createProjectModalEl.setAttribute("aria-hidden", open ? "false" : "true");
+  createProjectOverlayEl.hidden = !open;
+  if (open) {
+    const base = projectPathEl.value && projectPathEl.value !== "." ? `${projectPathEl.value}/projects/new-aaps-project` : "projects/new-aaps-project";
+    if (newProjectPathEl && !newProjectPathEl.value.trim()) newProjectPathEl.value = base;
+    window.setTimeout(() => newProjectPathEl?.focus(), 0);
+  }
+}
+
+function setArtifactModalOpen(open) {
+  if (!artifactModalEl || !artifactModalOverlayEl) return;
+  artifactModalEl.classList.toggle("is-open", open);
+  artifactModalEl.setAttribute("aria-hidden", open ? "false" : "true");
+  artifactModalOverlayEl.hidden = !open;
+  if (open) {
+    renderArtifacts(currentArtifacts);
+    if (!selectedArtifactPath && (currentArtifacts.items || []).length) {
+      previewArtifact(currentArtifacts.items[0]).catch(() => {});
+    }
+  }
 }
 
 function addMessage(role, text) {
@@ -1435,6 +1677,32 @@ function addMessage(role, text) {
   chatLogEl.scrollTop = chatLogEl.scrollHeight;
   chatMessageCount += 1;
   chatCountEl.textContent = String(chatMessageCount);
+}
+
+function responseTextFromEvent(event) {
+  const response = event?.response || {};
+  if (typeof response === "string") return response;
+  return response.message || response.summary || response.error || JSON.stringify(response, null, 2).slice(0, 1200);
+}
+
+async function loadChatHistory() {
+  const scope = selectedAapsScope();
+  const selected = nodeRefs.get(selectedRef);
+  const historyScope = activeTab === "lab" && selected ? "block" : activeTab || "program";
+  const historyId = activeTab === "lab" && selected ? selected.id : scope.workingFile || scope.activeFile || selectedRef || "active";
+  const response = await fetch(
+    `/api/aaps/history?path=${encodeURIComponent(projectPathEl.value || ".")}&scope=${encodeURIComponent(historyScope)}&id=${encodeURIComponent(historyId)}`
+  );
+  if (!response.ok) return;
+  const payload = await response.json();
+  const events = payload.events || [];
+  if (!events.length) return;
+  chatLogEl.innerHTML = "";
+  chatMessageCount = 0;
+  events.forEach((event) => {
+    if (event.message) addMessage("user", event.message);
+    addMessage("assistant", responseTextFromEvent(event));
+  });
 }
 
 function nodeColor(kind) {
@@ -1481,6 +1749,10 @@ function renderNode(node, ref, depth = 0) {
           <div class="node-id">${escapeHtml(node.id)}</div>
         </div>
         <div class="node-kind">${(node.inputs || []).length} in / ${(node.outputs || []).length} out / ${(node.artifacts || []).length} art</div>
+      </div>
+      <div class="node-actions">
+        <button type="button" data-select-node-ref="${escapeHtml(ref)}">Select</button>
+        <button type="button" data-edit-node-ref="${escapeHtml(ref)}">Edit in Blocks</button>
       </div>
       ${meta.length ? `<div class="node-meta">${escapeHtml(meta.join(" · "))}</div>` : ""}
       ${node.prompt ? `<div class="node-prompt">${escapeHtml(node.prompt.replace(/\s+/g, " ").slice(0, 180))}</div>` : ""}
@@ -1532,7 +1804,7 @@ function renderProjectBlockFiles() {
               ${groupFiles
                 .map(
                   (file) => `
-                    <button class="project-file${file === manifest.activeFile ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
+                    <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
                       <span>${escapeHtml(file)}</span>
                       <span>${(currentProjectPayload.files || []).includes(file) ? "found" : "listed"}</span>
                     </button>
@@ -1643,6 +1915,20 @@ function render() {
   irEl.textContent = JSON.stringify(ir, null, 2);
   fillInspector(nodeRefs.get(selectedRef));
   updateChatContext();
+}
+
+function selectNodeRef(ref, options = {}) {
+  selectedRef = ref || "";
+  render();
+  if (options.editInBlocks) activateTab("lab");
+}
+
+function editSelectedInBlocks(ref = selectedRef) {
+  if (!ref) {
+    addMessage("assistant", "Select a program or block node first.");
+    return;
+  }
+  selectNodeRef(ref, { editInBlocks: true });
 }
 
 function templateNode(kind, ir) {
@@ -2199,11 +2485,14 @@ async function createStarterProject() {
   const payload = await response.json();
   projectPathEl.value = payload.project_path || rawPath;
   renderProject(payload);
+  rememberProjectPath(payload.project_path || rawPath);
+  loadProjectChoices().catch(() => {});
   const manifest = AAPS.normalizeProjectManifest(payload.manifest || {});
   if (manifest.activeFile || manifest.defaultMain) {
     await loadProjectFile(manifest.activeFile || manifest.defaultMain);
   }
   activateTab("project");
+  setCreateProjectOpen(false);
   addMessage("assistant", `Created starter AAPS project ${manifest.name}.`);
   return payload;
 }
@@ -2213,6 +2502,8 @@ async function loadProject(path = projectPathEl.value || ".") {
   if (!response.ok) throw new Error(`project API returned ${response.status}`);
   const payload = await response.json();
   renderProject(payload);
+  rememberProjectPath(payload.project_path || path);
+  loadProjectChoices().catch(() => {});
   loadArtifacts(path).catch((error) => {
     if (artifactListEl) artifactListEl.innerHTML = `<div class="message">${escapeHtml(error.message)}</div>`;
   });
@@ -2250,14 +2541,26 @@ async function loadProjectFile(file) {
   const payload = await response.json();
   sourceEl.value = payload.source;
   const manifest = getProjectManifest();
+  const role = projectFileRole(file);
   if (!manifest.error) {
     rememberSelectedProjectFile(file);
     manifest.activeFile = file;
     renderProject({ ...currentProjectPayload, manifest });
   }
-  selectedRef = "";
+  selectedRef = firstNodeRef(getIr(), role === "block" ? ["block", "skill", "task"] : role === "program" ? ["task", "block", "skill"] : []);
   render();
+  if (role === "block" || role === "skill") activateTab("lab");
+  else if (role === "program") activateTab("program");
   addMessage("assistant", `Loaded ${file}.`);
+}
+
+function setManifestActiveFile(file) {
+  const manifest = getProjectManifest();
+  if (manifest.error || !file) return null;
+  rememberSelectedProjectFile(file);
+  manifest.activeFile = file;
+  renderProject({ ...currentProjectPayload, manifest });
+  return manifest;
 }
 
 async function loadTextFile(file) {
@@ -2658,10 +2961,27 @@ document.querySelectorAll("[data-template]").forEach((button) => {
 });
 
 treeEl.addEventListener("click", (event) => {
+  const editButton = event.target.closest("[data-edit-node-ref]");
+  if (editButton) {
+    event.stopPropagation();
+    editSelectedInBlocks(editButton.dataset.editNodeRef);
+    return;
+  }
+  const selectButton = event.target.closest("[data-select-node-ref]");
+  if (selectButton) {
+    event.stopPropagation();
+    selectNodeRef(selectButton.dataset.selectNodeRef);
+    return;
+  }
   const card = event.target.closest("[data-ref]");
   if (!card) return;
-  selectedRef = card.dataset.ref;
-  render();
+  selectNodeRef(card.dataset.ref);
+});
+
+treeEl.addEventListener("dblclick", (event) => {
+  const card = event.target.closest("[data-ref]");
+  if (!card) return;
+  editSelectedInBlocks(card.dataset.ref);
 });
 
 blockBrowserEl?.addEventListener("click", (event) => {
@@ -2672,10 +2992,21 @@ blockBrowserEl?.addEventListener("click", (event) => {
     });
     return;
   }
+  const editButton = event.target.closest("[data-edit-node-ref]");
+  if (editButton) {
+    event.stopPropagation();
+    editSelectedInBlocks(editButton.dataset.editNodeRef);
+    return;
+  }
+  const selectButton = event.target.closest("[data-select-node-ref]");
+  if (selectButton) {
+    event.stopPropagation();
+    selectNodeRef(selectButton.dataset.selectNodeRef);
+    return;
+  }
   const card = event.target.closest("[data-ref]");
   if (!card) return;
-  selectedRef = card.dataset.ref;
-  render();
+  selectNodeRef(card.dataset.ref);
 });
 
 function handleNodeDragStart(event) {
@@ -2731,6 +3062,12 @@ chatFormEl.addEventListener("submit", (event) => {
 chatHistoryToggleEl.addEventListener("click", () => setHistoryOpen(true));
 chatHistoryCloseEl.addEventListener("click", () => setHistoryOpen(false));
 chatHistoryOverlayEl.addEventListener("click", () => setHistoryOpen(false));
+openCreateProjectModalBtnEl?.addEventListener("click", () => setCreateProjectOpen(true));
+closeCreateProjectModalBtnEl?.addEventListener("click", () => setCreateProjectOpen(false));
+createProjectOverlayEl?.addEventListener("click", () => setCreateProjectOpen(false));
+openArtifactModalBtnEl?.addEventListener("click", () => setArtifactModalOpen(true));
+closeArtifactModalBtnEl?.addEventListener("click", () => setArtifactModalOpen(false));
+artifactModalOverlayEl?.addEventListener("click", () => setArtifactModalOpen(false));
 
 inspectorFormEl.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -2751,16 +3088,19 @@ document.getElementById("save-block-file-btn").addEventListener("click", () => {
 document.getElementById("sample-general").addEventListener("click", () => {
   sourceEl.value = AAPS.samples.general;
   selectedRef = "";
+  setTemplateActive("general");
   render();
 });
 document.getElementById("sample-biology").addEventListener("click", () => {
   sourceEl.value = AAPS.samples.biology;
   selectedRef = "";
+  setTemplateActive("biology");
   render();
 });
 document.getElementById("sample-writing").addEventListener("click", () => {
   sourceEl.value = AAPS.samples.writing;
   selectedRef = "";
+  setTemplateActive("writing");
   render();
 });
 document.getElementById("format-btn").addEventListener("click", () => setIr(getIr()));
@@ -2808,6 +3148,20 @@ refreshArtifactsBtnEl?.addEventListener("click", () => {
   });
 });
 
+document.querySelectorAll("[data-artifact-filter]").forEach((button) => {
+  button.addEventListener("click", () => setArtifactFilter(button.dataset.artifactFilter));
+});
+
+artifactListEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-artifact-path]");
+  if (!button) return;
+  const item = (currentArtifacts.items || []).find((candidate) => candidate.path === button.dataset.artifactPath);
+  if (!item) return;
+  previewArtifact(item).catch((error) => {
+    if (artifactPreviewEl) artifactPreviewEl.innerHTML = `<strong>Preview failed</strong><span>${escapeHtml(error.message)}</span>`;
+  });
+});
+
 blockCanvasEl?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-qc-action]");
   if (!button) return;
@@ -2841,11 +3195,76 @@ createProjectBtnEl?.addEventListener("click", () => {
   });
 });
 
+projectSelectorEl?.addEventListener("change", () => {
+  projectPathEl.value = projectSelectorEl.value || ".";
+  loadProject(projectPathEl.value).catch((error) => {
+    addMessage("assistant", `Could not load selected project: ${error.message}`);
+  });
+});
+
+refreshProjectsBtnEl?.addEventListener("click", () => {
+  loadProjectChoices().catch((error) => {
+    addMessage("assistant", `Could not refresh projects: ${error.message}`);
+  });
+});
+
 saveSettingsBtnEl?.addEventListener("click", () => {
   saveSettings().catch((error) => {
     if (settingsStatusEl) settingsStatusEl.textContent = "save failed";
     addMessage("assistant", `Could not save settings: ${error.message}`);
   });
+});
+
+programWorkflowSelectEl?.addEventListener("change", () => {
+  selectedProgramFile = programWorkflowSelectEl.value || "";
+  selectedWorkflowFile = selectedProgramFile;
+  setManifestActiveFile(selectedProgramFile);
+});
+
+programBlockSelectEl?.addEventListener("change", () => {
+  selectedBlockFile = programBlockSelectEl.value || "";
+  localStorage.setItem("aaps.studio.selectedBlockFile", selectedBlockFile);
+  renderProject(currentProjectPayload);
+});
+
+document.getElementById("program-load-btn")?.addEventListener("click", () => {
+  const file = programWorkflowSelectEl?.value || selectedProgramFile || selectedWorkflowFile;
+  if (!file) {
+    addMessage("assistant", "Select a workflow/program first.");
+    return;
+  }
+  loadProjectFile(file).catch((error) => addMessage("assistant", `Could not load program: ${error.message}`));
+});
+
+document.getElementById("program-compile-btn")?.addEventListener("click", () => {
+  const file = programWorkflowSelectEl?.value || selectedProgramFile || selectedWorkflowFile;
+  if (file) setManifestActiveFile(file);
+  startCompile("check").catch((error) => addMessage("assistant", `Could not compile selected program: ${error.message}`));
+});
+
+document.getElementById("program-dry-run-btn")?.addEventListener("click", () => {
+  const file = programWorkflowSelectEl?.value || selectedProgramFile || selectedWorkflowFile;
+  if (file) setManifestActiveFile(file);
+  startRuntimeRun(true).catch((error) => addMessage("assistant", `Could not dry run selected program: ${error.message}`));
+});
+
+document.getElementById("program-run-btn")?.addEventListener("click", () => {
+  const file = programWorkflowSelectEl?.value || selectedProgramFile || selectedWorkflowFile;
+  if (file) setManifestActiveFile(file);
+  startRuntimeRun(false).catch((error) => addMessage("assistant", `Could not run selected program: ${error.message}`));
+});
+
+document.getElementById("program-edit-selected-btn")?.addEventListener("click", () => {
+  if (selectedRef) {
+    editSelectedInBlocks(selectedRef);
+    return;
+  }
+  const file = programBlockSelectEl?.value || selectedBlockFile;
+  if (!file) {
+    addMessage("assistant", "Select a block first.");
+    return;
+  }
+  loadProjectFile(file).catch((error) => addMessage("assistant", `Could not load block: ${error.message}`));
 });
 
 document.getElementById("sample-project-btn").addEventListener("click", () => {
@@ -3007,10 +3426,14 @@ renderArtifacts(currentArtifacts);
 renderSettings(currentSettings);
 activateTab(activeTab, false);
 setHistoryOpen(false);
+setCreateProjectOpen(false);
+setArtifactModalOpen(false);
+setTemplateActive("biology");
 loadSettings().catch((error) => {
   if (settingsStatusEl) settingsStatusEl.textContent = "local defaults";
   settingsAvailabilityEl.textContent = error.message;
 });
+loadProjectChoices().catch(() => {});
 loadProject().catch(() => {});
 
 if ("serviceWorker" in navigator) {

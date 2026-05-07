@@ -902,6 +902,58 @@ def read_project(project_dir: Path) -> dict:
     }
 
 
+def list_studio_projects(base_dir: Path, limit: int = 120) -> dict:
+    projects: list[dict] = []
+    seen: set[str] = set()
+
+    def add_project(project_dir: Path, source: str) -> None:
+        try:
+            label = project_label(project_dir)
+            if label in seen:
+                return
+            seen.add(label)
+            manifest_path = project_dir / PROJECT_MANIFEST
+            manifest = {}
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    manifest = {}
+            projects.append(
+                {
+                    "path": label,
+                    "name": str(manifest.get("name") or project_dir.name or label),
+                    "domain": str(manifest.get("domain") or ""),
+                    "description": str(manifest.get("description") or ""),
+                    "manifestExists": manifest_path.exists(),
+                    "source": source,
+                }
+            )
+        except Exception:
+            return
+
+    add_project(PROJECT_ROOT, "current")
+    root = base_dir.resolve()
+    max_depth = 4
+    for current, dirnames, filenames in os.walk(root):
+        current_path = Path(current)
+        try:
+            depth = len(current_path.relative_to(PROJECT_ROOT).parts)
+        except ValueError:
+            continue
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in SKIP_SCAN_DIRS and not name.startswith(".") and depth < max_depth
+        ]
+        if PROJECT_MANIFEST in filenames:
+            add_project(current_path, "scan")
+            if len(projects) >= limit:
+                break
+    projects = sorted(projects, key=lambda item: (item["path"] != ".", item["path"]))
+    return {"ok": True, "project_root": project_label(PROJECT_ROOT), "items": projects[:limit]}
+
+
 def artifact_kind(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}:
@@ -914,6 +966,8 @@ def artifact_kind(path: Path) -> str:
         return "jsonl"
     if suffix in {".md", ".txt", ".log"}:
         return "text"
+    if suffix == ".pdf":
+        return "pdf"
     if suffix in {".aaps", ".py", ".js", ".sh"}:
         return "source"
     return "file"
@@ -3269,6 +3323,15 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
+        if parsed.path == "/api/aaps/projects":
+            try:
+                query = parse_qs(parsed.query)
+                base_dir = safe_repo_path(query.get("path", ["."])[0])
+                limit = max(1, min(500, int(query.get("limit", ["120"])[0] or "120")))
+                write_json(self, list_studio_projects(base_dir, limit))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
         if parsed.path == "/api/aaps/artifacts":
             try:
                 query = parse_qs(parsed.query)
@@ -3715,7 +3778,7 @@ def main() -> None:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     COMPILE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/settings, /api/aaps/project, /api/aaps/project/create, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/qc-review, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/settings, /api/aaps/projects, /api/aaps/project, /api/aaps/project/create, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/qc-review, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 
