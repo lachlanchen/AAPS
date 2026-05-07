@@ -1000,6 +1000,22 @@ pipeline "Backend Verified" {
   }
 }
 EOF
+cat > workflows/unrelated_broken.aaps <<'EOF'
+pipeline "Unrelated Broken Workflow" {
+  output missing_file: text = "runtime/artifacts/unrelated-missing.txt"
+  agent runner {
+    role "Local shell runner."
+    model "local"
+    tools "shell"
+  }
+  task broken {
+    uses runner
+    output missing_file: text = "runtime/artifacts/unrelated-missing.txt"
+    exec shell "mkdir -p runtime/artifacts && printf unrelated > runtime/artifacts/unrelated-side-effect.txt"
+    validate exists "runtime/artifacts/unrelated-missing.txt"
+  }
+}
+EOF
 printf ok > runtime/artifacts/backend-ok.txt
 exit 0
 `,
@@ -1041,10 +1057,22 @@ assert.strictEqual(trustedPayload.ok, true);
 assert.strictEqual(trustedPayload.executed, true);
 assert.strictEqual(trustedPayload.status, "succeeded_verified");
 assert.strictEqual(trustedPayload.postRunAudit.ok, true);
+assert.strictEqual(trustedPayload.postRunAudit.workflowCount, 1);
+assert.strictEqual(trustedPayload.postRunAudit.workflows[0].file, "workflows/backend_verified.aaps");
 assert(trustedPayload.command.includes("--allow-destructive"));
 assert(trustedPayload.command.includes("-s"));
 assert(trustedPayload.command.includes("danger"));
 assert(fs.readFileSync(fakeArgsFile, "utf8").includes("--allow-destructive"));
+
+const promptProjectWideAudit = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "audit", "--project", ".aaps-work/tests/prompt-project", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.notStrictEqual(promptProjectWideAudit.status, 0, promptProjectWideAudit.stdout);
+const promptProjectWideAuditJson = JSON.parse(promptProjectWideAudit.stdout);
+assert.strictEqual(promptProjectWideAuditJson.ok, false);
+assert(promptProjectWideAuditJson.workflows.some((item) => item.file === "workflows/unrelated_broken.aaps"));
 
 const promptAudit = childProcess.spawnSync(
   "node",

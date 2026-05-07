@@ -47,6 +47,7 @@ function usage() {
     "  --approve-package-installs Approve package installs for the AgInTi backend run.",
     "  --allow-destructive Pass trusted host/destructive approval to AgInTi backend.",
     "  --print-prompt    Save and print the generated backend prompt without running it.",
+    "  --audit-scope <entry|project> Post-backend audit scope. Defaults to entry for prompt backends.",
     "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
     "  --json            Print machine-readable JSON where supported.",
   ].join("\n");
@@ -162,7 +163,7 @@ function shellCommandExists(command, cwd) {
   return result.status === 0;
 }
 
-function collectWorkflowCandidates(projectDir, fileArg = "") {
+function collectWorkflowCandidates(projectDir, fileArg = "", options = {}) {
   if (fileArg) {
     const full = safeRelative(projectDir, fileArg, "AAPS file");
     if (!fs.existsSync(full)) throw new Error(`AAPS file not found: ${fileArg}`);
@@ -173,6 +174,7 @@ function collectWorkflowCandidates(projectDir, fileArg = "") {
   const preferred = [];
   if (manifest?.activeFile && files.includes(manifest.activeFile)) preferred.push(manifest.activeFile);
   if (manifest?.defaultMain && files.includes(manifest.defaultMain)) preferred.push(manifest.defaultMain);
+  if (options.scope === "entry") return [...new Set(preferred)].slice(0, 20);
   const workflowFiles = files.filter((file) => file.startsWith("workflows/"));
   const candidates = [...new Set([...preferred, ...workflowFiles, ...files])];
   return candidates.slice(0, 20);
@@ -234,8 +236,8 @@ function runAapsSelf(projectDir, args) {
   };
 }
 
-function auditAapsBackendResult(projectDir, fileArg = "") {
-  const workflows = collectWorkflowCandidates(projectDir, fileArg);
+function auditAapsBackendResult(projectDir, fileArg = "", options = {}) {
+  const workflows = collectWorkflowCandidates(projectDir, fileArg, options);
   const audit = {
     ok: false,
     status: workflows.length ? "checked" : "no_workflows",
@@ -415,7 +417,9 @@ function commandPrompt(goal, options) {
   payload.executed = true;
   payload.exitCode = result.status ?? 1;
   payload.signal = result.signal || "";
-  payload.postRunAudit = auditAapsBackendResult(projectDir);
+  payload.postRunAudit = auditAapsBackendResult(projectDir, options.auditFile || "", {
+    scope: String(options.auditScope || "entry").toLowerCase() === "project" ? "project" : "entry",
+  });
   if (payload.exitCode === 0 && payload.postRunAudit.ok) payload.status = "succeeded_verified";
   else if (payload.exitCode === 0) payload.status = "backend_returned_unverified";
   else payload.status = "failed";
