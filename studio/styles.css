@@ -722,6 +722,7 @@ main {
 .run-table-preview,
 .run-method-preview,
 .run-manifest-preview,
+.run-qc-review,
 .run-report-preview {
   display: grid;
   gap: 8px;
@@ -782,6 +783,53 @@ main {
 .run-manifest-preview small {
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.qc-review-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.qc-review-summary span {
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: #fff;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.run-qc-review label {
+  display: grid;
+  gap: 5px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.run-qc-review textarea {
+  min-height: 54px;
+  resize: vertical;
+}
+
+.run-qc-review small {
+  color: var(--muted);
+}
+
+.qc-actions button[data-qc-action="accepted"] {
+  border-color: rgba(15, 118, 110, 0.24);
+  background: #e8fff8;
+}
+
+.qc-actions button[data-qc-action="needs_refinement"] {
+  border-color: rgba(180, 83, 9, 0.24);
+  background: #fff7e8;
+}
+
+.qc-actions button[data-qc-action="rejected"] {
+  border-color: rgba(185, 28, 28, 0.24);
+  background: #fff1f2;
 }
 
 .run-report-preview pre {

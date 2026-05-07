@@ -619,6 +619,66 @@ function runManifestPreviewHtml(manifest, manifestPath) {
   `;
 }
 
+function qcReviewHtml(runPath, review) {
+  const status = review?.status || "unreviewed";
+  const historyCount = Number(review?.historyCount || 0);
+  return `
+    <div class="run-qc-review" data-qc-run="${escapeHtml(runPath)}">
+      <div class="block-canvas-head">
+        <div>
+          <strong>Human QC review</strong>
+          <span>${escapeHtml(status)} · ${historyCount} review events</span>
+        </div>
+      </div>
+      <div class="qc-review-summary">
+        <span>${Number(review?.overlayCount || 0)} overlays</span>
+        <span>${Number(review?.maskCount || 0)} masks</span>
+        <span>${escapeHtml(review?.reviewPath || "")}</span>
+      </div>
+      <label>QC notes
+        <textarea data-qc-notes rows="3" placeholder="Example: overlays are acceptable, but low-density images need a higher min_area.">${escapeHtml(review?.notes || "")}</textarea>
+      </label>
+      <label>Parameter refinement suggestion
+        <textarea data-qc-params rows="2" placeholder="Example: rerun threshold fallback with min_area=120 and preview_limit=6.">${escapeHtml(review?.parameterSuggestion || "")}</textarea>
+      </label>
+      <div class="form-actions qc-actions">
+        <button type="button" data-qc-action="accepted">Accept QC</button>
+        <button type="button" data-qc-action="needs_refinement">Needs Refinement</button>
+        <button type="button" data-qc-action="rejected">Reject QC</button>
+      </div>
+      <small>QC decisions are written into the run directory and indexed under .aaps-work/qc for later refinement.</small>
+    </div>
+  `;
+}
+
+async function loadQcReview(runPath) {
+  const response = await fetch(`/api/aaps/qc-review?path=${encodeURIComponent(projectPathEl.value || ".")}&runPath=${encodeURIComponent(runPath)}`);
+  if (!response.ok) throw new Error(`QC review API returned ${response.status}`);
+  return response.json();
+}
+
+async function saveQcReview(runPath, status) {
+  const card = document.querySelector(`[data-qc-run="${CSS.escape(runPath)}"]`);
+  if (!card) return;
+  const payload = {
+    path: projectPathEl.value || ".",
+    runPath,
+    status,
+    reviewer: "studio_user",
+    notes: card.querySelector("[data-qc-notes]")?.value || "",
+    parameterSuggestion: card.querySelector("[data-qc-params]")?.value || "",
+  };
+  const response = await fetch("/api/aaps/qc-review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const review = await response.json();
+  if (!response.ok) throw new Error(review.error || `QC review save returned ${response.status}`);
+  card.outerHTML = qcReviewHtml(runPath, review);
+  await loadArtifacts(projectPathEl.value || ".");
+}
+
 async function loadRunCanvasDetails(runPath, keyFiles) {
   const detailsEl = document.querySelector(`[data-run-details="${CSS.escape(runPath)}"]`);
   if (!detailsEl) return;
@@ -650,7 +710,13 @@ async function loadRunCanvasDetails(runPath, keyFiles) {
       reportPreview = `<div class="run-report-preview"><strong>Report preview</strong><pre>${escapeHtml((await response.text()).slice(0, 1400))}</pre></div>`;
     }
   }
-  detailsEl.innerHTML = [validationPreviewHtml(runData), methodPreviewHtml(runData), manifestPreview, tables.join(""), reportPreview].filter(Boolean).join("");
+  let qcReview = "";
+  try {
+    qcReview = qcReviewHtml(runPath, await loadQcReview(runPath));
+  } catch (error) {
+    qcReview = `<div class="run-qc-review"><strong>Human QC review</strong><span>QC review could not load: ${escapeHtml(error.message)}</span></div>`;
+  }
+  detailsEl.innerHTML = [validationPreviewHtml(runData), methodPreviewHtml(runData), manifestPreview, tables.join(""), reportPreview, qcReview].filter(Boolean).join("");
 }
 
 function latestRunForNode(node) {
@@ -2739,6 +2805,17 @@ document.getElementById("load-project-btn").addEventListener("click", () => {
 refreshArtifactsBtnEl?.addEventListener("click", () => {
   loadArtifacts(projectPathEl.value || ".").catch((error) => {
     addMessage("assistant", `Could not refresh artifacts: ${error.message}`);
+  });
+});
+
+blockCanvasEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-qc-action]");
+  if (!button) return;
+  const card = button.closest("[data-qc-run]");
+  if (!card) return;
+  saveQcReview(card.dataset.qcRun, button.dataset.qcAction).catch((error) => {
+    blockLogEl.textContent = error.message;
+    addMessage("assistant", `Could not save QC review: ${error.message}`);
   });
 });
 

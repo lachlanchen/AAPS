@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -36,6 +37,7 @@ SETTINGS_PATH = PROJECT_ROOT / ".aaps-work" / "aaps-settings.json"
 STUDIO_HISTORY_DIR = PROJECT_ROOT / ".aaps-work" / "studio-history"
 STUDIO_ARTIFACT_DIR = PROJECT_ROOT / ".aaps-work" / "studio-artifacts"
 STUDIO_VERSION_DIR = PROJECT_ROOT / ".aaps-work" / "versions"
+STUDIO_QC_DIR = PROJECT_ROOT / ".aaps-work" / "qc"
 PROJECT_MANIFEST = "aaps.project.json"
 SKIP_SCAN_DIRS = {
     ".git",
@@ -983,6 +985,7 @@ def list_studio_artifacts(project_dir: Path, limit: int = 240) -> dict:
         ("outputs", artifact_root),
         ("studio_artifacts", ".aaps-work/studio-artifacts"),
         ("studio_history", ".aaps-work/studio-history"),
+        ("studio_qc", ".aaps-work/qc"),
         ("studio_runs", ".aaps-work/studio-aaps-runs"),
         ("studio_compiles", ".aaps-work/studio-aaps-compiles"),
         ("versions", ".aaps-work/versions"),
@@ -1023,6 +1026,7 @@ def artifact_roots(project_dir: Path) -> list[Path]:
         artifact_root,
         ".aaps-work/studio-artifacts",
         ".aaps-work/studio-history",
+        ".aaps-work/qc",
         ".aaps-work/studio-aaps-runs",
         ".aaps-work/studio-aaps-compiles",
         ".aaps-work/versions",
@@ -1058,6 +1062,115 @@ def collect_canvas_items(project_dir: Path, root_rel: str, source: str = "block_
     items = list_files_under(project_dir, root, source, max(limit * 6, 48))
     items.sort(key=lambda item: (priority.get(item["kind"], 9), -int(item.get("mtime") or 0), item["path"]))
     return items[:limit]
+
+
+def qc_review_paths(project_dir: Path, run_path: str) -> tuple[Path, Path, str]:
+    run_target = relative_to_project(project_dir, run_path)
+    run_dir = run_target.parent if run_target.name == "run.json" else run_target
+    if not run_dir.exists() or not run_dir.is_dir():
+        raise FileNotFoundError(f"run directory not found: {run_path}")
+    if not any(is_relative_to(run_dir, root) for root in artifact_roots(project_dir)):
+        raise ValueError("QC review target must live under outputs or AAPS Studio artifact folders")
+    run_rel = run_dir.relative_to(project_dir).as_posix()
+    review_path = run_dir / "qc_review.json"
+    digest = hashlib.sha1(run_rel.encode("utf-8")).hexdigest()[:10]
+    qc_index_path = STUDIO_QC_DIR / f"{slug(run_rel, 'run')}-{digest}.json"
+    return run_dir, review_path, qc_index_path
+
+
+def read_qc_review(project_dir: Path, run_path: str) -> dict:
+    run_dir, review_path, qc_index_path = qc_review_paths(project_dir, run_path)
+    payload: dict = {}
+    if review_path.exists():
+        try:
+            payload = json.loads(review_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {"status": "malformed", "history": []}
+    if not payload and qc_index_path.exists():
+        try:
+            payload = json.loads(qc_index_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {"status": "malformed", "history": []}
+    run_json = run_dir / "run.json"
+    run_id = run_dir.name
+    if run_json.exists():
+        try:
+            run_id = str(json.loads(run_json.read_text(encoding="utf-8")).get("runId") or run_id)
+        except json.JSONDecodeError:
+            pass
+    overlays = sorted((run_dir / "artifacts" / "overlays").glob("*.png")) if (run_dir / "artifacts" / "overlays").exists() else []
+    masks = sorted((run_dir / "artifacts" / "masks").glob("*.png")) if (run_dir / "artifacts" / "masks").exists() else []
+    history = payload.get("history") if isinstance(payload.get("history"), list) else []
+    return {
+        "ok": True,
+        "project_path": project_label(project_dir),
+        "runPath": run_dir.relative_to(project_dir).as_posix(),
+        "runId": run_id,
+        "status": str(payload.get("status") or "unreviewed"),
+        "notes": str(payload.get("notes") or ""),
+        "parameterSuggestion": str(payload.get("parameterSuggestion") or ""),
+        "reviewer": str(payload.get("reviewer") or ""),
+        "updatedAt": str(payload.get("updatedAt") or ""),
+        "history": history,
+        "historyCount": len(history),
+        "overlayCount": len(overlays),
+        "maskCount": len(masks),
+        "reviewPath": review_path.relative_to(project_dir).as_posix(),
+        "indexPath": qc_index_path.relative_to(project_dir).as_posix(),
+    }
+
+
+def write_qc_review(project_dir: Path, payload: dict) -> dict:
+    run_path = str(payload.get("runPath") or payload.get("run") or "").strip()
+    if not run_path:
+        raise ValueError("runPath is required")
+    run_dir, review_path, qc_index_path = qc_review_paths(project_dir, run_path)
+    current = read_qc_review(project_dir, run_dir.relative_to(project_dir).as_posix())
+    status = str(payload.get("status") or "").strip().lower()
+    allowed = {"unreviewed", "accepted", "rejected", "needs_refinement"}
+    if status not in allowed:
+        raise ValueError(f"unsupported QC status: {status}")
+    record = {
+        "time": now_iso(),
+        "status": status,
+        "previousStatus": current.get("status") or "unreviewed",
+        "reviewer": str(payload.get("reviewer") or "studio_user")[:120],
+        "notes": str(payload.get("notes") or "")[:4000],
+        "parameterSuggestion": str(payload.get("parameterSuggestion") or "")[:4000],
+        "selectedArtifacts": [str(item)[:500] for item in payload.get("selectedArtifacts", []) if isinstance(item, str)][:80],
+    }
+    history = current.get("history") if isinstance(current.get("history"), list) else []
+    next_payload = {
+        "schema": "aaps_qc_review/0.1",
+        "project": project_label(project_dir),
+        "runPath": run_dir.relative_to(project_dir).as_posix(),
+        "runId": current.get("runId") or run_dir.name,
+        "status": status,
+        "reviewer": record["reviewer"],
+        "notes": record["notes"],
+        "parameterSuggestion": record["parameterSuggestion"],
+        "selectedArtifacts": record["selectedArtifacts"],
+        "updatedAt": record["time"],
+        "history": [*history, record],
+    }
+    snapshot = snapshot_file(project_dir, review_path, "qc_review_update")
+    review_path.write_text(json.dumps(next_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    qc_index_path.parent.mkdir(parents=True, exist_ok=True)
+    qc_index_path.write_text(json.dumps(next_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    append_jsonl(
+        STUDIO_QC_DIR / "index.jsonl",
+        {
+            "time": record["time"],
+            "runPath": next_payload["runPath"],
+            "runId": next_payload["runId"],
+            "status": status,
+            "reviewPath": next_payload["runPath"] + "/qc_review.json",
+            "indexPath": qc_index_path.relative_to(project_dir).as_posix(),
+        },
+    )
+    result = read_qc_review(project_dir, run_dir.relative_to(project_dir).as_posix())
+    result["previousSnapshot"] = snapshot
+    return result
 
 
 def write_project_artifact_file(handler: SimpleHTTPRequestHandler, project_dir: Path, file_name: str) -> None:
@@ -3173,6 +3286,14 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
+        if parsed.path == "/api/aaps/qc-review":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                write_json(self, read_qc_review(project_dir, query.get("runPath", query.get("run", [""]))[0]))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
         if parsed.path == "/api/aaps/versions":
             try:
                 query = parse_qs(parsed.query)
@@ -3394,6 +3515,14 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(self, {"error": str(exc)}, 400)
             return
 
+        if parsed.path == "/api/aaps/qc-review":
+            try:
+                project_dir = safe_repo_path(str(body.get("path") or "."))
+                write_json(self, write_qc_review(project_dir, body))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
         if parsed.path == "/api/aaps/project/file":
             try:
                 project_dir = safe_repo_path(str(body.get("path") or "."))
@@ -3586,7 +3715,7 @@ def main() -> None:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     COMPILE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"AAPS Studio: http://{args.host}:{args.port}")
-    print("API: /api/health, /api/aaps/settings, /api/aaps/project, /api/aaps/project/create, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
+    print("API: /api/health, /api/aaps/settings, /api/aaps/project, /api/aaps/project/create, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/qc-review, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 
 
