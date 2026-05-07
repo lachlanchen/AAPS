@@ -126,6 +126,8 @@ let draggedNodeRef = "";
 let currentProjects = { items: [] };
 let artifactFilter = "all";
 let selectedArtifactPath = "";
+let editorProjectPath = "";
+let editorFile = "";
 let currentSettings = {
   agentProvider: "codex",
   codexModel: "gpt-5.3-codex",
@@ -276,6 +278,27 @@ function getProjectManifest() {
   } catch (error) {
     return { error: error.message };
   }
+}
+
+function currentProjectPath() {
+  return projectPathEl.value || ".";
+}
+
+function clearEditorOwnership() {
+  editorProjectPath = "";
+  editorFile = "";
+}
+
+function markEditorSource(file) {
+  editorProjectPath = currentProjectPath();
+  editorFile = file || "";
+}
+
+function sourceForExecution(file, { projectWide = false } = {}) {
+  if (projectWide) return "";
+  if (!file) return sourceEl.value;
+  if (!editorFile) return sourceEl.value;
+  return editorFile === file && editorProjectPath === currentProjectPath() ? sourceEl.value : "";
 }
 
 function projectCounts(manifest, payload) {
@@ -2537,6 +2560,8 @@ async function loadProject(path = projectPathEl.value || ".") {
   const response = await fetch(`/api/aaps/project?path=${encodeURIComponent(path)}`);
   if (!response.ok) throw new Error(`project API returned ${response.status}`);
   const payload = await response.json();
+  const nextProjectPath = payload.absolute_path || payload.project_path || path;
+  if (editorProjectPath && editorProjectPath !== nextProjectPath) clearEditorOwnership();
   renderProject(payload);
   rememberProjectPath(payload.absolute_path || payload.project_path || path);
   loadProjectChoices().catch(() => {});
@@ -2576,6 +2601,7 @@ async function loadProjectFile(file) {
   if (!response.ok) throw new Error(`file API returned ${response.status}`);
   const payload = await response.json();
   sourceEl.value = payload.source;
+  markEditorSource(file);
   const manifest = getProjectManifest();
   const role = projectFileRole(file);
   if (!manifest.error) {
@@ -2626,6 +2652,7 @@ async function saveActiveProjectFile() {
   });
   if (!response.ok) throw new Error(`file save returned ${response.status}`);
   const payload = await response.json();
+  markEditorSource(file);
   renderProject({ ...currentProjectPayload, files: payload.files, manifest });
   loadVersions(projectPathEl.value || ".").catch(() => {});
   addMessage("assistant", `Saved ${file}.`);
@@ -2729,7 +2756,7 @@ async function startCompile(mode = "check", projectWide = false) {
     body: JSON.stringify({
       path: projectPathEl.value || ".",
       file,
-      source: projectWide ? "" : sourceEl.value,
+      source: sourceForExecution(file, { projectWide }),
       mode,
       projectWide,
     }),
@@ -2760,7 +2787,7 @@ async function startRuntimeRun(dryRun, blockId = "") {
     body: JSON.stringify({
       path: projectPathEl.value || ".",
       file,
-      source: sourceEl.value,
+      source: sourceForExecution(file),
       dryRun,
       block: blockId,
     }),
