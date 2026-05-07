@@ -669,6 +669,31 @@ main {
   text-transform: uppercase;
 }
 
+.block-run-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(33, 90, 67, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.block-run-card div > strong,
+.block-run-card div > span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.block-run-card div > strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.block-run-card div > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 #delete-block {
   color: #b91c1c;
 }

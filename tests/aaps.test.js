@@ -797,6 +797,65 @@ const semanticValidationNegativeRun = childProcess.spawnSync(
 assert.notStrictEqual(semanticValidationNegativeRun.status, 0, semanticValidationNegativeRun.stdout);
 assert.strictEqual(JSON.parse(semanticValidationNegativeRun.stdout).status, "failed");
 
+const methodRouterProject = path.join(__dirname, "..", ".aaps-work", "tests", "method-router-project");
+fs.rmSync(methodRouterProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(methodRouterProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(methodRouterProject, "aaps.project.json"),
+  JSON.stringify({ name: "method-router-project", activeFile: "workflows/main.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(methodRouterProject, "workflows", "main.aaps"),
+  `pipeline "Method Router Runtime" {
+  block route_once {
+    output selected: text = "${"${run.artifacts}"}/selected.txt"
+    output second_marker: text = "${"${run.artifacts}"}/second.txt"
+    stage choose_method {
+      choose method_route {
+        prompt "Pick one segmentation method for this run."
+      }
+      method first_method {
+        exec shell "mkdir -p ${"${run.artifacts}"} && printf first > ${"${output.selected}"}"
+        validate exists "${"${output.selected}"}"
+      }
+      method second_method {
+        exec shell "mkdir -p ${"${run.artifacts}"} && printf second > ${"${output.second_marker}"}"
+      }
+    }
+  }
+}
+`,
+  "utf8"
+);
+const methodRouterRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run-block",
+    "workflows/main.aaps",
+    "--project",
+    ".aaps-work/tests/method-router-project",
+    "--block",
+    "route_once",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "method-router-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(methodRouterRun.status, 0, methodRouterRun.stderr || methodRouterRun.stdout);
+const methodRouterRunJson = JSON.parse(methodRouterRun.stdout);
+assert.strictEqual(methodRouterRunJson.status, "succeeded");
+assert.strictEqual(methodRouterRunJson.methodSelections[0].selected, "first_method");
+assert(methodRouterRunJson.results.some((item) => item.id === "second_method" && item.status === "skipped" && item.reason === "method_not_selected"));
+assert.strictEqual(fs.readFileSync(path.join(methodRouterRunJson.runDir, "artifacts", "selected.txt"), "utf8"), "first");
+assert(!fs.existsSync(path.join(methodRouterRunJson.runDir, "artifacts", "second.txt")));
+const methodSelectionRecord = JSON.parse(fs.readFileSync(path.join(methodRouterRunJson.runDir, "method_selection.json"), "utf8"));
+assert.strictEqual(methodSelectionRecord.selections[0].selected, "first_method");
+
 fs.writeFileSync(
   path.join(inlineAgentProject, "workflows", "pipefail.aaps"),
   `pipeline "Pipefail Runtime" {

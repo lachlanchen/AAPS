@@ -935,6 +935,7 @@ def summarize_aaps_run_file(path: Path) -> dict | None:
         "status": data.get("status") or "unknown",
         "runId": data.get("runId") or "",
         "file": data.get("file") or "",
+        "block": data.get("block") or "",
         "runDir": data.get("runDir") or "",
         "startedAt": data.get("startedAt") or "",
         "finishedAt": data.get("finishedAt") or "",
@@ -942,6 +943,7 @@ def summarize_aaps_run_file(path: Path) -> dict | None:
         "failedSteps": len(failed_steps),
         "validations": len(validations),
         "failedValidations": len(failed_validations),
+        "methodSelections": len(data.get("methodSelections") if isinstance(data.get("methodSelections"), list) else []),
     }
 
 

@@ -1164,9 +1164,37 @@ function run(options) {
   const eventsFile = path.join(runDir, "events.jsonl");
   const results = [];
   const fallbackVisited = new Set();
+  const methodSelections = [];
 
   function event(payload) {
     appendJsonl(eventsFile, { time: nowIso(), runId, ...payload });
+  }
+
+  function writeMethodSelections() {
+    writeJson(path.join(runDir, "method_selection.json"), {
+      version: "aaps_method_selection/0.1",
+      runId,
+      selections: methodSelections,
+    });
+  }
+
+  function recordMethodSelection(stage, chooseSteps, candidates, selected, reason, overrides = {}) {
+    const selection = {
+      time: nowIso(),
+      stage: stage.path,
+      stageId: stage.id,
+      selected: selected ? selected.id : "",
+      selectedPath: selected ? selected.path : "",
+      candidates: candidates.map((item) => ({ id: item.id, path: item.path, condition: item.condition || "" })),
+      router: chooseSteps.map((item) => ({ id: item.id, path: item.path, prompt: item.prompt || "" })),
+      reason,
+      loop: overrides["loop.index"] ?? null,
+      item: overrides.item || "",
+    };
+    methodSelections.push(selection);
+    writeMethodSelections();
+    event({ type: "method_selection", selection });
+    return selection;
   }
 
   function repairRecord(step, reason) {
@@ -1449,8 +1477,53 @@ function run(options) {
       event({ type: "step_skipped", step: step.path, reason: "condition_false" });
       return result;
     }
+    const children = childrenByPath.get(step.path) || [];
+    const chooseChildren = children.filter((child) => child.kind === "choose");
+    const methodChildren = children.filter((child) => child.kind === "method");
+    if (step.kind === "stage" && chooseChildren.length && methodChildren.length) {
+      const result = executeStep(step, overrides);
+      chooseChildren.forEach((child) => executeTree(child, overrides));
+      const runnableMethods = methodChildren.filter((child) => conditionPasses(child, overrides));
+      const executedMethodPaths = new Set();
+      let selectedResult = null;
+      runnableMethods.forEach((candidate, index) => {
+        if (selectedResult && selectedResult.status !== "failed") return;
+        recordMethodSelection(
+          step,
+          chooseChildren,
+          runnableMethods,
+          candidate,
+          index === 0 ? "first_available_method" : "previous_method_failed_try_next",
+          overrides
+        );
+        selectedResult = executeTree(candidate, { ...overrides, "method.selected": candidate.id });
+        executedMethodPaths.add(candidate.path);
+        if (selectedResult && selectedResult.fallback && selectedResult.fallback.step) {
+          executedMethodPaths.add(selectedResult.fallback.step);
+        }
+      });
+      methodChildren.forEach((candidate) => {
+        if (executedMethodPaths.has(candidate.path)) return;
+        const reason = runnableMethods.includes(candidate) ? "method_not_selected" : "condition_false";
+        const skipped = {
+          step: candidate.path,
+          id: candidate.id,
+          status: "skipped",
+          reason,
+          selectedMethod: methodSelections[methodSelections.length - 1]?.selected || "",
+          loop: overrides["loop.index"] ?? null,
+          item: overrides.item || "",
+        };
+        results.push(skipped);
+        event({ type: "step_skipped", step: candidate.path, reason, selectedMethod: skipped.selectedMethod });
+      });
+      children
+        .filter((child) => child.kind !== "choose" && child.kind !== "method")
+        .forEach((child) => executeTree(child, overrides));
+      return result;
+    }
     const result = executeStep(step, overrides);
-    (childrenByPath.get(step.path) || []).forEach((child) => executeTree(child, overrides));
+    children.forEach((child) => executeTree(child, overrides));
     return result;
   }
 
@@ -1474,6 +1547,7 @@ function run(options) {
     runId,
     status: summaryStatus,
     file: loaded.file,
+    block: options.block || "",
     project: projectDir,
     runDir,
     dryRun,
@@ -1488,6 +1562,7 @@ function run(options) {
       warnings: plan.warnings,
     },
     results,
+    methodSelections,
     startedAt: fs.existsSync(eventsFile) ? fs.statSync(eventsFile).birthtime.toISOString() : nowIso(),
     finishedAt: nowIso(),
   };

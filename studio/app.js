@@ -480,11 +480,57 @@ function artifactFileUrl(file, projectPath = projectPathEl.value || ".") {
   return `/api/aaps/artifact-file?path=${encodeURIComponent(projectPath)}&file=${encodeURIComponent(file)}`;
 }
 
+function latestRunForNode(node) {
+  const runs = (currentArtifacts.items || []).filter((item) => item.kind === "run" && item.runSummary);
+  if (!runs.length) return null;
+  if (node && node.id) {
+    const byBlock = runs.find((item) => item.runSummary.block === node.id);
+    if (byBlock) return byBlock;
+  }
+  const manifest = getProjectManifest();
+  const activeFile = manifest.activeFile || manifest.defaultMain || "";
+  if (activeFile) {
+    const byFile = runs.find((item) => item.runSummary.file === activeFile);
+    if (byFile) return byFile;
+  }
+  return runs[0];
+}
+
 function renderBlockCanvas(payload = null) {
   if (!blockCanvasEl) return;
   const items = payload?.canvasItems || payload?.previewRun?.canvasItems || [];
   const preview = payload?.previewRun || {};
   if (!payload) {
+    const selected = nodeRefs.get(selectedRef);
+    const latestRun = latestRunForNode(selected);
+    if (selected && latestRun?.runSummary) {
+      const run = latestRun.runSummary;
+      const passed = Number(run.validations || 0) - Number(run.failedValidations || 0);
+      blockCanvasEl.innerHTML = `
+        <div class="block-canvas-head">
+          <div>
+            <strong>Latest ${escapeHtml(selected.kind)} Run</strong>
+            <span>${escapeHtml(selected.id)} · ${escapeHtml(run.status)} · ${escapeHtml(run.runId || "")}</span>
+          </div>
+          <div class="block-canvas-kpis">
+            <span>${Number(run.failedSteps || 0)} failed steps</span>
+            <span>${passed}/${Number(run.validations || 0)} validations</span>
+            <span>${Number(run.methodSelections || 0)} method routes</span>
+          </div>
+        </div>
+        <div class="block-run-card">
+          <div><strong>Workflow file</strong><span>${escapeHtml(run.file || "")}</span></div>
+          <div><strong>Run directory</strong><span>${escapeHtml(run.runDir || "")}</span></div>
+          <div class="block-canvas-files">
+            <a href="${artifactFileUrl(latestRun.path)}" target="_blank" rel="noopener noreferrer">
+              <strong>run</strong>
+              <span>${escapeHtml(latestRun.path)} · ${formatBytes(latestRun.size)}</span>
+            </a>
+          </div>
+        </div>
+      `;
+      return;
+    }
     blockCanvasEl.innerHTML = `
       <strong>Block Artifact Canvas</strong>
       <span>Ask block chat to create or refine a segmentation block. AAPS will run a small preview when possible and show masks, overlays, tables, and reports here.</span>
@@ -581,6 +627,7 @@ function renderArtifacts(payload = currentArtifacts) {
         .join("");
       })()
     : '<div class="message">No artifacts found yet. Run or compile a workflow first.</div>';
+  if (selectedRef) renderBlockCanvas(null);
 }
 
 async function loadArtifacts(path = projectPathEl.value || ".") {
