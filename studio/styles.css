@@ -721,6 +721,7 @@ main {
 
 .run-table-preview,
 .run-method-preview,
+.run-manifest-preview,
 .run-report-preview {
   display: grid;
   gap: 8px;
@@ -767,6 +768,20 @@ main {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+}
+
+.run-manifest-preview div {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.run-manifest-preview small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .run-report-preview pre {

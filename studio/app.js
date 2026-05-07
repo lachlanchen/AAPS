@@ -591,6 +591,34 @@ function methodPreviewHtml(runData) {
   `;
 }
 
+function runManifestPreviewHtml(manifest, manifestPath) {
+  if (!manifest || typeof manifest !== "object") return "";
+  const requiredOutputs = Array.isArray(manifest.required_outputs) ? manifest.required_outputs : [];
+  return `
+    <div class="run-manifest-preview">
+      <strong>Run manifest</strong>
+      <div>
+        <span>Actual method</span>
+        <strong>${escapeHtml(manifest.method || "(not recorded)")}</strong>
+      </div>
+      ${
+        manifest.fallback_reason
+          ? `<div><span>Fallback reason</span><span>${escapeHtml(manifest.fallback_reason)}</span></div>`
+          : ""
+      }
+      <div>
+        <span>Processed images</span>
+        <strong>${escapeHtml(manifest.processed_count ?? 0)} processed · ${escapeHtml(manifest.mask_count ?? 0)} masks · ${escapeHtml(manifest.overlay_count ?? 0)} overlays</strong>
+      </div>
+      <div>
+        <span>Declared output evidence</span>
+        <strong>${requiredOutputs.length} required outputs listed</strong>
+      </div>
+      <small>${escapeHtml(manifestPath || "")}</small>
+    </div>
+  `;
+}
+
 async function loadRunCanvasDetails(runPath, keyFiles) {
   const detailsEl = document.querySelector(`[data-run-details="${CSS.escape(runPath)}"]`);
   if (!detailsEl) return;
@@ -606,6 +634,14 @@ async function loadRunCanvasDetails(runPath, keyFiles) {
     if (!response.ok) continue;
     tables.push(csvPreviewHtml(await response.text(), item.path));
   }
+  const manifestFile = (keyFiles || []).find((item) => String(item.path || "").toLowerCase().endsWith("run_manifest.json"));
+  let manifestPreview = "";
+  if (manifestFile) {
+    const response = await fetch(artifactFileUrl(manifestFile.path));
+    if (response.ok) {
+      manifestPreview = runManifestPreviewHtml(await response.json(), manifestFile.path);
+    }
+  }
   const reportFile = (keyFiles || []).find((item) => String(item.path || "").toLowerCase().endsWith("report.md"));
   let reportPreview = "";
   if (reportFile) {
@@ -614,7 +650,7 @@ async function loadRunCanvasDetails(runPath, keyFiles) {
       reportPreview = `<div class="run-report-preview"><strong>Report preview</strong><pre>${escapeHtml((await response.text()).slice(0, 1400))}</pre></div>`;
     }
   }
-  detailsEl.innerHTML = [validationPreviewHtml(runData), methodPreviewHtml(runData), tables.join(""), reportPreview].filter(Boolean).join("");
+  detailsEl.innerHTML = [validationPreviewHtml(runData), methodPreviewHtml(runData), manifestPreview, tables.join(""), reportPreview].filter(Boolean).join("");
 }
 
 function latestRunForNode(node) {
