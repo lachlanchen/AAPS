@@ -806,6 +806,11 @@ function checkBlockReadiness(step, projectDir, manifest, registries, baseContext
     "block.path": step.path || "",
     "block.python": (step.environment && step.environment.python) || projectPython(manifest, registries),
   };
+  Object.entries(step.parameters || (step.contract && step.contract.parameters) || {}).forEach(([key, value]) => {
+    const expanded = expand(value, stepContext);
+    stepContext[`param.${key}`] = expanded;
+    stepContext[`parameter.${key}`] = expanded;
+  });
   function deferredCheck(kind, name, value, missing) {
     return {
       kind,
@@ -1235,6 +1240,11 @@ function run(options) {
   }
 
   function applyPorts(local, sourceStep) {
+    Object.entries(sourceStep.parameters || (sourceStep.contract && sourceStep.contract.parameters) || {}).forEach(([key, value]) => {
+      const expanded = expand(value, local);
+      local[`param.${key}`] = expanded;
+      local[`parameter.${key}`] = expanded;
+    });
     (sourceStep.inputs || []).forEach((port) => {
       const value = port.value ? expand(port.value, local) : local[port.name] || "";
       local[port.name] = value;

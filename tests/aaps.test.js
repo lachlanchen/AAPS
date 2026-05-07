@@ -552,6 +552,10 @@ assert.strictEqual(microscopyCompileApply.status, 0, microscopyCompileApply.stde
 const microscopyScript = fs.readFileSync(path.join(microscopyScriptProject, "scripts", "app81_backend_agent_tdv_test.py"), "utf8");
 assert(microscopyScript.includes("AAPS generated TIFF microscopy segmentation preview script"));
 assert(microscopyScript.includes("--data-root"));
+assert(microscopyScript.includes("allow_abbrev=False"));
+assert(microscopyScript.includes("--preview"));
+assert(microscopyScript.includes("--mode"));
+assert(microscopyScript.includes("method_selection.json"));
 assert(microscopyScript.includes("per_image_metrics.csv"));
 assert(!microscopyScript.includes("static project check script"));
 fs.writeFileSync(
@@ -612,6 +616,8 @@ const neutralMicroscopyScript = fs.readFileSync(path.join(neutralMicroscopyProje
 assert(neutralMicroscopyScript.includes("AAPS generated TIFF microscopy segmentation preview script"));
 assert(neutralMicroscopyScript.includes("--data-root"));
 assert(neutralMicroscopyScript.includes("--output-root"));
+assert(neutralMicroscopyScript.includes("--min-mask-pixels"));
+assert(neutralMicroscopyScript.includes("method_selection.json"));
 assert(!neutralMicroscopyScript.includes("synthetic PGM image generator"));
 
 const folderDemoRun = childProcess.spawnSync(
@@ -752,6 +758,55 @@ assert.strictEqual(nestedContractRun.status, 0, nestedContractRun.stderr || nest
 const nestedContractRunJson = JSON.parse(nestedContractRun.stdout);
 assert.strictEqual(nestedContractRunJson.status, "succeeded");
 assert.strictEqual(fs.readFileSync(path.join(nestedContractRunJson.runDir, "artifacts", "nested.txt"), "utf8"), "hello inherited");
+
+const parameterContextProject = path.join(__dirname, "..", ".aaps-work", "tests", "parameter-context-project");
+fs.rmSync(parameterContextProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(parameterContextProject, "blocks"), { recursive: true });
+fs.writeFileSync(
+  path.join(parameterContextProject, "aaps.project.json"),
+  JSON.stringify({ name: "parameter-context-project", activeFile: "blocks/params.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(parameterContextProject, "blocks", "params.aaps"),
+  `pipeline "Parameter Runtime Context" {
+  block parent_block {
+    param min_mask_pixels = "50"
+    output observed: text = "${"${run.artifacts}"}/param.txt"
+    stage write_stage {
+      action write_param {
+        exec shell "mkdir -p ${"${run.artifacts}"} && printf '%s' '${"${param.min_mask_pixels}"}' > '${"${output.observed}"}'"
+        validate exists "${"${output.observed}"}"
+        validate nonempty "${"${output.observed}"}"
+      }
+    }
+  }
+}
+`,
+  "utf8"
+);
+const parameterContextRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run-block",
+    "blocks/params.aaps",
+    "--project",
+    ".aaps-work/tests/parameter-context-project",
+    "--block",
+    "parent_block",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "parameter-context-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(parameterContextRun.status, 0, parameterContextRun.stderr || parameterContextRun.stdout);
+const parameterContextRunJson = JSON.parse(parameterContextRun.stdout);
+assert.strictEqual(parameterContextRunJson.status, "succeeded");
+assert.strictEqual(fs.readFileSync(path.join(parameterContextRunJson.runDir, "artifacts", "param.txt"), "utf8"), "50");
 
 const semanticValidationProject = path.join(__dirname, "..", ".aaps-work", "tests", "semantic-validation-project");
 fs.rmSync(semanticValidationProject, { recursive: true, force: true });

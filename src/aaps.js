@@ -1109,6 +1109,7 @@
         promptOnly: Boolean(node.prompt && actions.length === 0),
         inputs: node.inputs || [],
         outputs: node.outputs || [],
+        parameters: node.params || {},
         artifacts,
         validations: node.validations || [],
         verify: node.verify || [],

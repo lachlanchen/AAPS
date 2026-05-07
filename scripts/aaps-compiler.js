@@ -345,8 +345,8 @@ def clean_mask(mask: np.ndarray, min_size: int) -> np.ndarray:
     return filter_regions(mask.astype(bool), min_size)
 
 
-def choose_mask(gray: np.ndarray):
-    min_size = max(128, int(gray.size * 0.00008))
+def choose_mask(gray: np.ndarray, min_mask_pixels: int = 50):
+    min_size = max(int(min_mask_pixels), int(gray.size * 0.00008))
     best = None
     for name, raw_mask in candidate_masks(gray):
         mask = clean_mask(raw_mask, min_size)
@@ -432,13 +432,15 @@ def save_summary_figure(summary_rows, output: Path):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="AAPS App81 TIFF segmentation preview")
+    parser = argparse.ArgumentParser(description="AAPS App81 TIFF segmentation preview", allow_abbrev=False)
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--image-glob", default="**/*10x*.tif")
     parser.add_argument("--condition-map", default="")
     parser.add_argument("--out-dir", "--output-dir", "--output-root", dest="out_dir", required=True)
+    parser.add_argument("--preview", default="false")
     parser.add_argument("--preview-limit", type=int, default=3)
-    parser.add_argument("--method", "--method-hint", dest="method", default="auto")
+    parser.add_argument("--mode", "--method", "--method-hint", dest="method", default="auto")
+    parser.add_argument("--min-mask-pixels", type=int, default=50)
     args, _unknown = parser.parse_known_args()
 
     data_root = Path(args.data_root)
@@ -494,7 +496,7 @@ def main() -> int:
     ]
     for index, image_path in enumerate(paths, start=1):
         gray = read_gray(image_path)
-        candidate_name, mask, labels, object_areas, foreground_fraction = choose_mask(gray)
+        candidate_name, mask, labels, object_areas, foreground_fraction = choose_mask(gray, args.min_mask_pixels)
         mask_path = masks_dir / f"{safe_stem(image_path)}.mask.png"
         overlay_path = overlays_dir / f"{safe_stem(image_path)}.overlay.png"
         plt.imsave(mask_path, mask.astype("uint8") * 255, cmap="gray")
@@ -538,6 +540,7 @@ def main() -> int:
     figure_path = figures_dir / "app81_deo_segmentation_summary.png"
     report_path = out_dir / "report.md"
     manifest_path = out_dir / "run_manifest.json"
+    method_selection_path = out_dir / "method_selection.json"
     image_manifest_json = out_dir / "manifest.json"
     image_manifest_csv = out_dir / "manifest.csv"
     result_path = out_dir / "result.json"
@@ -561,12 +564,24 @@ def main() -> int:
     ]
     write_csv(image_manifest_csv, manifest_rows, ["image_id", "image_path", "mask_path", "overlay_path", "qc_flag"])
     image_manifest_json.write_text(json.dumps({"images": manifest_rows, "image_count": len(manifest_rows)}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    method_selection_path.write_text(json.dumps({
+        "requested_method": args.method,
+        "selected_method": selected_method,
+        "fallback_reason": fallback_reason,
+        "preview": str(args.preview).lower() in {"1", "true", "yes", "on"},
+        "preview_limit": int(args.preview_limit),
+        "min_mask_pixels": int(args.min_mask_pixels),
+        "method_family": "deterministic_threshold_morphology",
+    }, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
 
-    required_paths = [manifest_path, image_manifest_json, image_manifest_csv, masks_dir, overlays_dir, stats_dir, per_image_csv, per_image_json, summary_csv, summary_json, figure_path, report_path, result_path, stdout_log, stderr_log]
+    required_paths = [manifest_path, method_selection_path, image_manifest_json, image_manifest_csv, masks_dir, overlays_dir, stats_dir, per_image_csv, per_image_json, summary_csv, summary_json, figure_path, report_path, result_path, stdout_log, stderr_log]
     manifest = {
         "ok": True,
         "method": selected_method,
         "fallback_reason": fallback_reason,
+        "preview": str(args.preview).lower() in {"1", "true", "yes", "on"},
+        "preview_limit": int(args.preview_limit),
+        "min_mask_pixels": int(args.min_mask_pixels),
         "data_root": str(data_root),
         "image_glob": args.image_glob,
         "output_root": str(out_dir),
