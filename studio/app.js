@@ -483,6 +483,140 @@ function artifactFileUrl(file, projectPath = projectPathEl.value || ".") {
   return `/api/aaps/artifact-file?path=${encodeURIComponent(projectPath)}&file=${encodeURIComponent(file)}`;
 }
 
+function csvRows(text, maxRows = 6) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  const source = String(text || "");
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (char === '"' && quoted && next === '"') {
+      cell += '"';
+      index += 1;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") index += 1;
+      row.push(cell);
+      if (row.some((value) => String(value).trim())) rows.push(row);
+      row = [];
+      cell = "";
+      if (rows.length >= maxRows) break;
+    } else {
+      cell += char;
+    }
+  }
+  if (rows.length < maxRows && (cell || row.length)) {
+    row.push(cell);
+    if (row.some((value) => String(value).trim())) rows.push(row);
+  }
+  return rows.slice(0, maxRows);
+}
+
+function csvPreviewHtml(text, caption) {
+  const rows = csvRows(text, 7);
+  if (!rows.length) return "";
+  const [head, ...body] = rows;
+  return `
+    <div class="run-table-preview">
+      <strong>${escapeHtml(caption)}</strong>
+      <div class="run-table-scroll">
+        <table>
+          <thead><tr>${head.map((cell) => `<th>${escapeHtml(cell)}</th>`).join("")}</tr></thead>
+          <tbody>${body.map((row) => `<tr>${head.map((_, index) => `<td>${escapeHtml(row[index] || "")}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function validationPreviewHtml(runData) {
+  const validations = (runData.results || []).flatMap((result) =>
+    (result.validations || []).map((validation) => ({
+      step: result.id || result.step || "",
+      status: validation.ok === false ? "failed" : "passed",
+      rule: validation.rule || "",
+      observed: validation.observed || "",
+      path: validation.path || "",
+    }))
+  );
+  const failed = validations.filter((item) => item.status === "failed");
+  const shown = [...failed, ...validations.filter((item) => item.status !== "failed")].slice(0, 14);
+  return `
+    <div class="run-validation-preview">
+      <div class="block-canvas-head">
+        <div>
+          <strong>Validation details</strong>
+          <span>${validations.length - failed.length}/${validations.length} passed${failed.length ? ` · ${failed.length} failed` : ""}</span>
+        </div>
+      </div>
+      <ul>
+        ${shown
+          .map(
+            (item) => `
+              <li class="${item.status === "failed" ? "bad" : "ok"}">
+                <strong>${escapeHtml(item.status)}</strong>
+                <span>${escapeHtml(item.step)} · ${escapeHtml(item.rule)}${item.observed ? ` · observed ${escapeHtml(item.observed)}` : ""}</span>
+              </li>
+            `
+          )
+          .join("")}
+      </ul>
+    </div>
+  `;
+}
+
+function methodPreviewHtml(runData) {
+  const selections = Array.isArray(runData.methodSelections) ? runData.methodSelections : [];
+  if (!selections.length) return "";
+  return `
+    <div class="run-method-preview">
+      <strong>Method selection</strong>
+      ${selections
+        .map(
+          (item) => `
+            <div>
+              <span>${escapeHtml(item.stageId || item.stage || "stage")} selected <strong>${escapeHtml(item.selected || "(none)")}</strong></span>
+              <span>${escapeHtml(item.reason || "")}</span>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+async function loadRunCanvasDetails(runPath, keyFiles) {
+  const detailsEl = document.querySelector(`[data-run-details="${CSS.escape(runPath)}"]`);
+  if (!detailsEl) return;
+  const runResponse = await fetch(artifactFileUrl(runPath));
+  if (!runResponse.ok) throw new Error(`run detail fetch returned ${runResponse.status}`);
+  const runData = await runResponse.json();
+  const tableFiles = (keyFiles || [])
+    .filter((item) => item.kind === "table" || String(item.path || "").toLowerCase().endsWith(".csv"))
+    .slice(0, 3);
+  const tables = [];
+  for (const item of tableFiles) {
+    const response = await fetch(artifactFileUrl(item.path));
+    if (!response.ok) continue;
+    tables.push(csvPreviewHtml(await response.text(), item.path));
+  }
+  const reportFile = (keyFiles || []).find((item) => String(item.path || "").toLowerCase().endsWith("report.md"));
+  let reportPreview = "";
+  if (reportFile) {
+    const response = await fetch(artifactFileUrl(reportFile.path));
+    if (response.ok) {
+      reportPreview = `<div class="run-report-preview"><strong>Report preview</strong><pre>${escapeHtml((await response.text()).slice(0, 1400))}</pre></div>`;
+    }
+  }
+  detailsEl.innerHTML = [validationPreviewHtml(runData), methodPreviewHtml(runData), tables.join(""), reportPreview].filter(Boolean).join("");
+}
+
 function latestRunForNode(node) {
   const runs = (currentArtifacts.items || []).filter((item) => item.kind === "run" && item.runSummary);
   if (!runs.length) return null;
@@ -602,7 +736,14 @@ function renderBlockCanvas(payload = null) {
               </div>`
             : ""
         }
+        <div class="block-run-card run-detail-card" data-run-details="${escapeHtml(latestRun.path)}">
+          <strong>Loading validation details and table previews...</strong>
+        </div>
       `;
+      loadRunCanvasDetails(latestRun.path, keyFiles).catch((error) => {
+        const detailsEl = document.querySelector(`[data-run-details="${CSS.escape(latestRun.path)}"]`);
+        if (detailsEl) detailsEl.innerHTML = `<strong>Run details could not load</strong><span>${escapeHtml(error.message)}</span>`;
+      });
       return;
     }
     blockCanvasEl.innerHTML = `

@@ -694,6 +694,93 @@ main {
   font-size: 12px;
 }
 
+.run-validation-preview ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.run-validation-preview li {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.run-validation-preview li.ok strong {
+  color: #0f766e;
+}
+
+.run-validation-preview li.bad strong {
+  color: #b91c1c;
+}
+
+.run-table-preview,
+.run-method-preview,
+.run-report-preview {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(19, 81, 91, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.run-table-scroll {
+  overflow: auto;
+  max-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.run-table-preview table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.run-table-preview th,
+.run-table-preview td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.run-table-preview th {
+  position: sticky;
+  top: 0;
+  color: var(--ink);
+  background: #f8feff;
+}
+
+.run-method-preview div {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.run-report-preview pre {
+  overflow: auto;
+  max-height: 220px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  white-space: pre-wrap;
+}
+
 .structure-actions {
   display: grid;
   gap: 10px;
