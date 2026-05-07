@@ -1435,6 +1435,14 @@ main {
   text-transform: uppercase;
 }
 
+.project-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+  align-items: stretch;
+  margin: 0 0 6px;
+}
+
 .project-file {
   display: flex;
   align-items: center;
@@ -1442,7 +1450,7 @@ main {
   gap: 8px;
   width: 100%;
   min-height: 36px;
-  margin: 0 0 6px;
+  margin: 0;
   padding: 0 10px;
   text-align: left;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -1470,6 +1478,28 @@ main {
   box-shadow:
     0 0 0 3px rgba(6, 182, 212, 0.16),
     0 12px 26px rgba(6, 182, 212, 0.18);
+}
+
+.project-file-edit {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0;
+  color: #352f42;
+  border-color: rgba(235, 231, 244, 0.98);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(239, 252, 255, 0.92));
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+
+.project-file-edit:hover,
+.project-file-edit:focus-visible {
+  color: #fff;
+  border-color: #06b6d4;
+  background:
+    linear-gradient(135deg, #06b6d4, var(--violet));
 }
 
 .project-file:focus-visible,

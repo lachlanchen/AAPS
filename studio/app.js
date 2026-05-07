@@ -433,7 +433,9 @@ function renderProject(payload = currentProjectPayload) {
     }
   `;
 
-  const aapsSections = AAPS.PROJECT_FILE_CATEGORIES.map((category) => {
+  const workspaceCategoryOrder = ["workflows", "subworkflows", "modules", "blocks", "skills", "drafts", "archives", "references"];
+  const remainingCategories = AAPS.PROJECT_FILE_CATEGORIES.filter((category) => !workspaceCategoryOrder.includes(category));
+  const aapsSections = [...workspaceCategoryOrder, ...remainingCategories].map((category) => {
     const categoryFiles = manifest.files[category] || [];
     if (!categoryFiles.length) return "";
     return `
@@ -441,12 +443,7 @@ function renderProject(payload = currentProjectPayload) {
         <h3>${escapeHtml(category)}</h3>
         ${categoryFiles
           .map(
-            (file) => `
-              <button class="${escapeAttr(projectFileClasses(file, manifest))}" type="button" data-project-file="${escapeHtml(file)}" aria-pressed="${activeFileMatches(file, manifest) ? "true" : "false"}">
-                <span>${escapeHtml(file)}</span>
-                <span>${files.includes(file) ? "found" : "listed"}</span>
-              </button>
-            `
+            (file) => projectFileRow(file, files.includes(file) ? "found" : "listed", manifest)
           )
           .join("")}
       </section>
@@ -1746,6 +1743,32 @@ function projectFileClasses(file, manifest) {
   return classes.join(" ");
 }
 
+function projectFileEditLabel(file) {
+  const role = projectFileRole(file);
+  if (role === "block" || role === "skill") return "Edit in Blocks";
+  if (role === "program" || role === "module") return "Edit in Programs";
+  return "Edit";
+}
+
+function canEditProjectAapsFile(file) {
+  return ["block", "skill", "program", "module"].includes(projectFileRole(file));
+}
+
+function projectFileRow(file, stateLabel, manifest) {
+  const editButton = canEditProjectAapsFile(file)
+    ? `<button class="project-file-edit" type="button" data-project-edit-file="${escapeAttr(file)}" title="${escapeAttr(projectFileEditLabel(file))}" aria-label="${escapeAttr(`${projectFileEditLabel(file)}: ${file}`)}">...</button>`
+    : "";
+  return `
+    <div class="project-file-row">
+      <button class="${escapeAttr(projectFileClasses(file, manifest))}" type="button" data-project-file="${escapeAttr(file)}" aria-pressed="${activeFileMatches(file, manifest) ? "true" : "false"}">
+        <span>${escapeHtml(file)}</span>
+        <span>${escapeHtml(stateLabel)}</span>
+      </button>
+      ${editButton}
+    </div>
+  `;
+}
+
 function renderProgramSelectors(manifest) {
   if (!programWorkflowSelectEl || !programBlockSelectEl) return;
   const workflows = [
@@ -1981,12 +2004,7 @@ function renderProjectBlockFiles() {
               <strong>${escapeHtml(group)}</strong>
               ${groupFiles
                 .map(
-                  (file) => `
-                    <button class="${escapeAttr(projectFileClasses(file, manifest))}" type="button" data-project-file="${escapeHtml(file)}" aria-pressed="${activeFileMatches(file, manifest) ? "true" : "false"}">
-                      <span>${escapeHtml(file)}</span>
-                      <span>${(currentProjectPayload.files || []).includes(file) ? "found" : "listed"}</span>
-                    </button>
-                  `
+                  (file) => projectFileRow(file, (currentProjectPayload.files || []).includes(file) ? "found" : "listed", manifest)
                 )
                 .join("")}
             </div>
@@ -2736,6 +2754,18 @@ async function loadProjectFile(file) {
   addMessage("assistant", `Loaded ${file}.`);
 }
 
+function editProjectFile(file) {
+  const role = projectFileRole(file);
+  loadProjectFile(file)
+    .then(() => {
+      if (role === "block" || role === "skill") activateTab("lab");
+      else if (role === "program" || role === "module") activateTab("program");
+    })
+    .catch((error) => {
+      addMessage("assistant", `Could not edit project file: ${error.message}`);
+    });
+}
+
 function setManifestActiveFile(file) {
   const manifest = getProjectManifest();
   if (manifest.error || !file) return null;
@@ -3168,6 +3198,12 @@ treeEl.addEventListener("dblclick", (event) => {
 });
 
 blockBrowserEl?.addEventListener("click", (event) => {
+  const editFileButton = event.target.closest("[data-project-edit-file]");
+  if (editFileButton) {
+    event.stopPropagation();
+    editProjectFile(editFileButton.dataset.projectEditFile);
+    return;
+  }
   const fileButton = event.target.closest("[data-project-file]");
   if (fileButton) {
     loadProjectFile(fileButton.dataset.projectFile).catch((error) => {
@@ -3304,8 +3340,13 @@ document.getElementById("download-btn").addEventListener("click", () => {
 });
 
 projectFilesEl.addEventListener("click", (event) => {
+  const editFileButton = event.target.closest("[data-project-edit-file]");
   const button = event.target.closest("[data-project-file]");
   const textButton = event.target.closest("[data-project-text-file]");
+  if (editFileButton) {
+    editProjectFile(editFileButton.dataset.projectEditFile);
+    return;
+  }
   if (button) {
     loadProjectFile(button.dataset.projectFile).catch((error) => {
       addMessage("assistant", `Could not load project file: ${error.message}`);
