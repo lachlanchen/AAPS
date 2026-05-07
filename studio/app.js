@@ -311,15 +311,20 @@ function renderProjectSelector(payload = currentProjects) {
   if (!projectSelectorEl) return;
   const current = projectPathEl.value || ".";
   const byPath = new Map();
-  (payload.items || []).forEach((item) => byPath.set(item.path, item));
+  const optionValue = (item) => item.absolutePath || item.absolute_path || item.path || ".";
+  (payload.items || []).forEach((item) => byPath.set(optionValue(item), item));
   recentProjectPaths().forEach((path) => {
-    if (!byPath.has(path)) byPath.set(path, { path, name: path, domain: "recent", source: "recent" });
+    if (!byPath.has(path)) byPath.set(path, { path, absolutePath: path, name: path, domain: "recent", source: "recent" });
   });
-  if (!byPath.has(current)) byPath.set(current, { path: current, name: current, domain: "current", source: "current" });
+  if (!byPath.has(current)) byPath.set(current, { path: current, absolutePath: current, name: current, domain: "current", source: "current" });
   projectSelectorEl.innerHTML = [...byPath.values()]
     .map(
-      (item) =>
-        `<option value="${escapeAttr(item.path)}"${item.path === current ? " selected" : ""}>${escapeHtml(item.name || item.path)} · ${escapeHtml(item.path)}${item.domain ? ` · ${escapeHtml(item.domain)}` : ""}</option>`
+      (item) => {
+        const value = optionValue(item);
+        const displayPath = item.absolutePath || item.absolute_path || item.path || value;
+        const shortPath = item.path && item.path !== displayPath ? ` · ${escapeHtml(item.path)}` : "";
+        return `<option value="${escapeAttr(value)}"${value === current ? " selected" : ""}>${escapeHtml(item.name || displayPath)} · ${escapeHtml(displayPath)}${shortPath}${item.domain ? ` · ${escapeHtml(item.domain)}` : ""}</option>`;
+      }
     )
     .join("");
 }
@@ -363,10 +368,10 @@ function renderProject(payload = currentProjectPayload) {
   localStorage.setItem("aaps.studio.selectedWorkflowFile", selectedWorkflowFile);
   localStorage.setItem("aaps.studio.selectedProgramFile", selectedProgramFile);
   localStorage.setItem("aaps.studio.selectedBlockFile", selectedBlockFile);
-  rememberProjectPath(payload.project_path || projectPathEl.value || ".");
+  rememberProjectPath(payload.absolute_path || payload.project_path || projectPathEl.value || ".");
 
   projectManifestEl.value = JSON.stringify(manifest, null, 2);
-  projectPathEl.value = payload.project_path || projectPathEl.value || ".";
+  projectPathEl.value = payload.absolute_path || payload.project_path || projectPathEl.value || ".";
   renderProjectSelector(currentProjects);
   renderProgramSelectors(manifest);
   projectStatusEl.textContent = errorCount
@@ -2483,9 +2488,9 @@ async function createStarterProject() {
   });
   if (!response.ok) throw new Error(`project create returned ${response.status}`);
   const payload = await response.json();
-  projectPathEl.value = payload.project_path || rawPath;
+  projectPathEl.value = payload.absolute_path || payload.project_path || rawPath;
   renderProject(payload);
-  rememberProjectPath(payload.project_path || rawPath);
+  rememberProjectPath(payload.absolute_path || payload.project_path || rawPath);
   loadProjectChoices().catch(() => {});
   const manifest = AAPS.normalizeProjectManifest(payload.manifest || {});
   if (manifest.activeFile || manifest.defaultMain) {
@@ -2502,7 +2507,7 @@ async function loadProject(path = projectPathEl.value || ".") {
   if (!response.ok) throw new Error(`project API returned ${response.status}`);
   const payload = await response.json();
   renderProject(payload);
-  rememberProjectPath(payload.project_path || path);
+  rememberProjectPath(payload.absolute_path || payload.project_path || path);
   loadProjectChoices().catch(() => {});
   loadArtifacts(path).catch((error) => {
     if (artifactListEl) artifactListEl.innerHTML = `<div class="message">${escapeHtml(error.message)}</div>`;

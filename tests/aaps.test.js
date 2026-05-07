@@ -1112,11 +1112,14 @@ try {
   assert.strictEqual(healthy, true, "studio server should start for requested project");
   const studioProjectPayload = httpJson(`${base}/api/aaps/project`);
   assert.strictEqual(studioProjectPayload.project_path, ".");
+  assert.strictEqual(studioProjectPayload.absolute_path, studioProject);
   assert.deepStrictEqual(studioProjectPayload.files, ["workflows/main.aaps"]);
   const studioProjects = httpJson(`${base}/api/aaps/projects`);
   assert.strictEqual(studioProjects.ok, true);
+  assert.strictEqual(studioProjects.absolute_project_root, studioProject);
   const currentStudioProject = studioProjects.items.find((item) => item.path === ".");
   assert(currentStudioProject, JSON.stringify(studioProjects));
+  assert.strictEqual(currentStudioProject.absolutePath, studioProject);
   assert.strictEqual(currentStudioProject.manifestExists, true);
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("data/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("outputs/")));

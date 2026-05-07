@@ -881,6 +881,7 @@ def read_project(project_dir: Path) -> dict:
         "manifest": manifest,
         "manifest_exists": manifest_path.exists(),
         "project_path": project_label(project_dir),
+        "absolute_path": str(project_dir.resolve()),
         "files": scan_aaps_files(project_dir),
         "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
         "environment_files": [
@@ -922,6 +923,7 @@ def list_studio_projects(base_dir: Path, limit: int = 120) -> dict:
             projects.append(
                 {
                     "path": label,
+                    "absolutePath": str(project_dir.resolve()),
                     "name": str(manifest.get("name") or project_dir.name or label),
                     "domain": str(manifest.get("domain") or ""),
                     "description": str(manifest.get("description") or ""),
@@ -951,7 +953,12 @@ def list_studio_projects(base_dir: Path, limit: int = 120) -> dict:
             if len(projects) >= limit:
                 break
     projects = sorted(projects, key=lambda item: (item["path"] != ".", item["path"]))
-    return {"ok": True, "project_root": project_label(PROJECT_ROOT), "items": projects[:limit]}
+    return {
+        "ok": True,
+        "project_root": project_label(PROJECT_ROOT),
+        "absolute_project_root": str(PROJECT_ROOT.resolve()),
+        "items": projects[:limit],
+    }
 
 
 def artifact_kind(path: Path) -> str:

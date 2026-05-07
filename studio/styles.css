@@ -977,6 +977,10 @@ main {
   grid-template-rows: auto auto 1fr;
 }
 
+.project-manifest-panel {
+  grid-column: 1 / -1;
+}
+
 .project-structure-panel {
   grid-template-rows: auto auto minmax(120px, 0.72fr) auto minmax(140px, 1fr);
 }
@@ -995,6 +999,7 @@ main {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+  min-width: 0;
 }
 
 .project-open-row,
@@ -1004,8 +1009,22 @@ main {
 }
 
 .project-open-row {
-  grid-template-columns: minmax(180px, 0.85fr) minmax(220px, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
+}
+
+.project-selector-field {
+  grid-column: 1 / -1;
+}
+
+.project-path-field {
+  grid-column: 1 / 2;
+}
+
+.project-open-row select,
+.project-open-row input {
+  width: 100%;
+  min-width: 0;
 }
 
 .icon-button {
