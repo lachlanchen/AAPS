@@ -710,6 +710,93 @@ const nestedContractRunJson = JSON.parse(nestedContractRun.stdout);
 assert.strictEqual(nestedContractRunJson.status, "succeeded");
 assert.strictEqual(fs.readFileSync(path.join(nestedContractRunJson.runDir, "artifacts", "nested.txt"), "utf8"), "hello inherited");
 
+const semanticValidationProject = path.join(__dirname, "..", ".aaps-work", "tests", "semantic-validation-project");
+fs.rmSync(semanticValidationProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(semanticValidationProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(semanticValidationProject, "aaps.project.json"),
+  JSON.stringify({ name: "semantic-validation-project", activeFile: "workflows/main.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(semanticValidationProject, "workflows", "main.aaps"),
+  `pipeline "Semantic Runtime Validation" {
+  task write_outputs {
+    output table: table = "${"${run.artifacts}"}/metrics.csv"
+    output manifest: json = "${"${run.artifacts}"}/manifest.json"
+    output mask: image = "${"${run.artifacts}"}/mask.pgm"
+    output report: artifact = "${"${run.artifacts}"}/report.md"
+    exec python_inline
+    code """
+from pathlib import Path
+root = Path("${"${run.artifacts}"}")
+root.mkdir(parents=True, exist_ok=True)
+(root / "metrics.csv").write_text("image_id,condition,object_count\\nimg1,low,2\\nimg2,high,3\\n", encoding="utf-8")
+(root / "manifest.json").write_text('{"processed_count": 2, "rows": [{"image_id": "img1"}]}\\n', encoding="utf-8")
+(root / "mask.pgm").write_text("P2\\n3 3\\n255\\n0 0 0\\n0 9 0\\n0 0 0\\n", encoding="utf-8")
+(root / "report.md").write_text("# Semantic validation report\\n", encoding="utf-8")
+"""
+    validate csv_min_rows "${"${output.table}"}" 2
+    validate csv_rows "${"${output.table}"}" == 2
+    validate csv_columns "${"${output.table}"}" "image_id,condition,object_count"
+    validate json_field "${"${output.manifest}"}" "processed_count"
+    validate mask_not_empty "${"${output.mask}"}"
+    validate file_size "${"${output.report}"}" >= 8
+  }
+}
+`,
+  "utf8"
+);
+const semanticValidationRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run",
+    "workflows/main.aaps",
+    "--project",
+    ".aaps-work/tests/semantic-validation-project",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "semantic-validation-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(semanticValidationRun.status, 0, semanticValidationRun.stderr || semanticValidationRun.stdout);
+const semanticValidationRunJson = JSON.parse(semanticValidationRun.stdout);
+assert.strictEqual(semanticValidationRunJson.status, "succeeded");
+assert(
+  semanticValidationRunJson.results[0].validations.some((item) => item.rule.includes("csv_columns") && item.status === "passed")
+);
+
+fs.writeFileSync(
+  path.join(semanticValidationProject, "workflows", "negative.aaps"),
+  fs.readFileSync(path.join(semanticValidationProject, "workflows", "main.aaps"), "utf8").replace(
+    'validate csv_min_rows "${output.table}" 2',
+    'validate csv_min_rows "${output.table}" 3'
+  ),
+  "utf8"
+);
+const semanticValidationNegativeRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run",
+    "workflows/negative.aaps",
+    "--project",
+    ".aaps-work/tests/semantic-validation-project",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "semantic-validation-negative-runtime",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.notStrictEqual(semanticValidationNegativeRun.status, 0, semanticValidationNegativeRun.stdout);
+assert.strictEqual(JSON.parse(semanticValidationNegativeRun.stdout).status, "failed");
+
 fs.writeFileSync(
   path.join(inlineAgentProject, "workflows", "pipefail.aaps"),
   `pipeline "Pipefail Runtime" {

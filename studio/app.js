@@ -552,6 +552,7 @@ function renderArtifacts(payload = currentArtifacts) {
       <div class="project-kpi"><strong>${counts.studio_runs || 0}</strong>run files</div>
       <div class="project-kpi"><strong>${counts.studio_artifacts || 0}</strong>chat artifacts</div>
       <div class="project-kpi"><strong>${kindCounts.image || 0}</strong>images</div>
+      <div class="project-kpi"><strong>${kindCounts.run || 0}</strong>runs</div>
     </div>
   `;
   artifactListEl.innerHTML = items.length
@@ -562,11 +563,16 @@ function renderArtifacts(payload = currentArtifacts) {
           const isSmallPreview = item.kind === "image" && item.path.startsWith("outputs/") && Number(item.size || 0) <= 2_500_000 && previewedImages < 12;
           if (isSmallPreview) previewedImages += 1;
           return `
-            <article class="artifact-item">
+            <article class="artifact-item${isSmallPreview ? "" : " artifact-item--compact"}">
               ${isSmallPreview ? `<img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />` : ""}
               <div>
                 <strong>${escapeHtml(item.path)}</strong>
                 <span>${escapeHtml(item.source)} · <span class="artifact-kind">${escapeHtml(item.kind)}</span> · ${formatBytes(item.size)}${item.kind === "image" && !isSmallPreview ? " · preview skipped for large image" : ""}</span>
+                ${
+                  item.runSummary
+                    ? `<span class="run-artifact-summary">${escapeHtml(item.runSummary.status)} · ${Number(item.runSummary.failedSteps || 0)} failed steps · ${Number(item.runSummary.validations || 0) - Number(item.runSummary.failedValidations || 0)}/${Number(item.runSummary.validations || 0)} validations passed · ${escapeHtml(item.runSummary.runId || "")}</span>`
+                    : ""
+                }
                 <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">Open</a>
               </div>
             </article>

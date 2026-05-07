@@ -1024,6 +1024,10 @@ main {
   background: #fffaf4;
 }
 
+.artifact-item--compact {
+  grid-template-columns: 1fr;
+}
+
 .artifact-item img {
   width: 88px;
   height: 62px;
@@ -1047,6 +1051,12 @@ main {
 .artifact-item span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.artifact-item .run-artifact-summary {
+  margin-top: 6px;
+  color: #215a43;
+  font-weight: 700;
 }
 
 .versions-list {

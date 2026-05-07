@@ -319,6 +319,146 @@ function unescapeRuntimeString(value) {
   return String(value || "").replace(/\\"/g, '"').replace(/\\'/g, "'");
 }
 
+function splitValidationArgs(text) {
+  const args = [];
+  const pattern = /"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|(\S+)/g;
+  let match;
+  while ((match = pattern.exec(String(text || "")))) {
+    args.push(unescapeRuntimeString(match[1] ?? match[2] ?? match[3] ?? ""));
+  }
+  return args;
+}
+
+function parseColumnList(values) {
+  return values
+    .join(" ")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function compareNumber(actual, comparator, expected) {
+  if (comparator === ">" || comparator === "gt") return actual > expected;
+  if (comparator === ">=" || comparator === "gte") return actual >= expected;
+  if (comparator === "<" || comparator === "lt") return actual < expected;
+  if (comparator === "<=" || comparator === "lte") return actual <= expected;
+  if (comparator === "=" || comparator === "==" || comparator === "eq") return actual === expected;
+  return false;
+}
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < String(line || "").length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current);
+  return cells.map((cell) => cell.trim());
+}
+
+function readCsvTable(file) {
+  const lines = fs
+    .readFileSync(file, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => line.trim());
+  if (!lines.length) return { headers: [], rows: [] };
+  const headers = parseCsvLine(lines[0]);
+  return { headers, rows: lines.slice(1).map(parseCsvLine) };
+}
+
+function readJsonField(value, field) {
+  if (!field) return { exists: true, value };
+  const parts = String(field)
+    .replace(/\[(\d+)\]/g, ".$1")
+    .split(".")
+    .filter(Boolean);
+  let current = value;
+  for (const part of parts) {
+    if (current === null || current === undefined || !Object.prototype.hasOwnProperty.call(Object(current), part)) {
+      return { exists: false, value: undefined };
+    }
+    current = current[part];
+  }
+  return { exists: current !== undefined && current !== null, value: current };
+}
+
+function checkPgmMaskNotEmpty(target) {
+  const text = fs.readFileSync(target, "utf8");
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/#.*/, "").trim())
+    .filter(Boolean);
+  const tokens = lines.join(" ").split(/\s+/).filter(Boolean);
+  const numeric = tokens.slice(4).map(Number).filter((value) => Number.isFinite(value));
+  return numeric.some((value) => value > 0);
+}
+
+function checkRasterMaskNotEmpty(target, projectDir) {
+  if (path.extname(target).toLowerCase() === ".pgm") {
+    return { ok: checkPgmMaskNotEmpty(target), message: "" };
+  }
+  const code = `
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+try:
+    import numpy as np
+except Exception as exc:
+    raise SystemExit(f"numpy unavailable for image validation: {exc}")
+arr = None
+errors = []
+for loader in ("matplotlib", "PIL", "imageio"):
+    try:
+        if loader == "matplotlib":
+            import matplotlib.image as mpimg
+            arr = mpimg.imread(path)
+        elif loader == "PIL":
+            from PIL import Image
+            arr = np.asarray(Image.open(path))
+        else:
+            import imageio.v3 as iio
+            arr = iio.imread(path)
+        break
+    except Exception as exc:
+        errors.append(f"{loader}: {exc}")
+if arr is None:
+    raise SystemExit("; ".join(errors))
+arr = np.asarray(arr)
+if arr.ndim == 3 and arr.shape[-1] >= 3:
+    arr = arr[..., :3]
+print("1" if arr.size and float(np.nanmax(arr)) > 0 else "0")
+`;
+  const result = spawnSync("python3", ["-c", code, target], {
+    cwd: projectDir,
+    encoding: "utf8",
+    timeout: 15000,
+  });
+  if (result.status !== 0) {
+    return { ok: false, message: result.stderr || result.stdout || "image validation failed" };
+  }
+  return {
+    ok: result.stdout.trim() === "1",
+    message: result.stdout.trim() === "1" ? "" : "image contains no positive foreground pixels",
+  };
+}
+
 function resolveRuntimePath(projectDir, value, context) {
   const expanded = expand(value, context);
   if (path.isAbsolute(expanded)) return expanded;
@@ -327,14 +467,33 @@ function resolveRuntimePath(projectDir, value, context) {
 
 function parseValidation(raw) {
   const text = String(raw || "").trim();
-  let match = text.match(/^(?:file\s+)?exists\s+(.+)$/i);
-  if (match) return { kind: "exists", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
-  match = text.match(/^nonempty\s+(.+)$/i);
-  if (match) return { kind: "nonempty", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
-  match = text.match(/^mask_not_empty\s+(.+)$/i);
-  if (match) return { kind: "mask_not_empty", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
-  match = text.match(/^(?:json|valid_json)\s+(.+)$/i);
-  if (match) return { kind: "json", path: AAPS.unquote ? AAPS.unquote(match[1]) : match[1].replace(/^["']|["']$/g, "") };
+  const tokens = splitValidationArgs(text);
+  const command = String(tokens[0] || "").toLowerCase();
+  const pathArg = command === "file" && String(tokens[1] || "").toLowerCase() === "exists" ? tokens[2] : tokens[1];
+  if ((command === "file" && String(tokens[1] || "").toLowerCase() === "exists") || command === "exists") {
+    return { kind: "exists", path: pathArg };
+  }
+  if (command === "nonempty") return { kind: "nonempty", path: pathArg };
+  if (command === "mask_not_empty" || command === "png_nonempty" || command === "image_nonempty") {
+    return { kind: "mask_not_empty", path: pathArg };
+  }
+  if (command === "json" || command === "valid_json") return { kind: "json", path: pathArg };
+  if (command === "json_field") return { kind: "json_field", path: pathArg, field: tokens[2] || "" };
+  if (command === "csv_min_rows" || command === "csv_rows" || command === "table_min_rows" || command === "table_rows") {
+    const hasComparator = /^[<>]=?|={1,2}$/.test(tokens[2] || "");
+    const comparator = hasComparator ? tokens[2] : ">=";
+    const expectedToken = hasComparator ? tokens[3] : tokens[2];
+    return { kind: "csv_rows", path: pathArg, comparator, expected: Number(expectedToken) };
+  }
+  if (command === "csv_columns" || command === "table_columns") {
+    return { kind: "csv_columns", path: pathArg, columns: parseColumnList(tokens.slice(2)) };
+  }
+  if (command === "file_size") {
+    const hasComparator = /^[<>]=?|={1,2}$/.test(tokens[2] || "");
+    const comparator = hasComparator ? tokens[2] : ">=";
+    const expectedToken = hasComparator ? tokens[3] : tokens[2];
+    return { kind: "file_size", path: pathArg, comparator, expected: Number(expectedToken) };
+  }
   return { kind: "manual", text };
 }
 
@@ -359,15 +518,75 @@ function checkValidation(rule, projectDir, context) {
       return { ok: false, status: "failed", rule, path: target, message: error.message };
     }
   }
+  if (parsed.kind === "json_field") {
+    try {
+      const json = JSON.parse(fs.readFileSync(target, "utf8"));
+      const field = readJsonField(json, parsed.field);
+      return {
+        ok: field.exists,
+        status: field.exists ? "passed" : "failed",
+        rule,
+        path: target,
+        observed: field.exists ? JSON.stringify(field.value).slice(0, 240) : "",
+        expected: parsed.field,
+      };
+    } catch (error) {
+      return { ok: false, status: "failed", rule, path: target, message: error.message };
+    }
+  }
+  if (parsed.kind === "csv_rows") {
+    try {
+      const table = readCsvTable(target);
+      const ok = Number.isFinite(parsed.expected) && compareNumber(table.rows.length, parsed.comparator, parsed.expected);
+      return {
+        ok,
+        status: ok ? "passed" : "failed",
+        rule,
+        path: target,
+        observed: table.rows.length,
+        expected: `${parsed.comparator} ${parsed.expected}`,
+      };
+    } catch (error) {
+      return { ok: false, status: "failed", rule, path: target, message: error.message };
+    }
+  }
+  if (parsed.kind === "csv_columns") {
+    try {
+      const table = readCsvTable(target);
+      const missing = parsed.columns.filter((column) => !table.headers.includes(column));
+      return {
+        ok: missing.length === 0,
+        status: missing.length === 0 ? "passed" : "failed",
+        rule,
+        path: target,
+        observed: table.headers.join(","),
+        expected: parsed.columns.join(","),
+        message: missing.length ? `missing columns: ${missing.join(", ")}` : "",
+      };
+    } catch (error) {
+      return { ok: false, status: "failed", rule, path: target, message: error.message };
+    }
+  }
+  if (parsed.kind === "file_size") {
+    try {
+      const actual = fs.statSync(target).size;
+      const ok = Number.isFinite(parsed.expected) && compareNumber(actual, parsed.comparator, parsed.expected);
+      return {
+        ok,
+        status: ok ? "passed" : "failed",
+        rule,
+        path: target,
+        observed: actual,
+        expected: `${parsed.comparator} ${parsed.expected}`,
+      };
+    } catch (error) {
+      return { ok: false, status: "failed", rule, path: target, message: error.message };
+    }
+  }
   if (parsed.kind === "mask_not_empty") {
     try {
-      const text = fs.readFileSync(target, "utf8");
-      const tokens = text
-        .split(/\s+/)
-        .filter((token) => token && !token.startsWith("#"));
-      const numeric = tokens.slice(4).map(Number).filter((value) => Number.isFinite(value));
-      const ok = numeric.some((value) => value > 0);
-      return { ok, status: ok ? "passed" : "failed", rule, path: target };
+      const checked = checkRasterMaskNotEmpty(target, projectDir);
+      return { ok: checked.ok, status: checked.ok ? "passed" : "failed", rule, path: target, message: checked.message };
     } catch (error) {
       return { ok: false, status: "failed", rule, path: target, message: error.message };
     }

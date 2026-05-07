@@ -917,6 +917,34 @@ def artifact_kind(path: Path) -> str:
     return "file"
 
 
+def summarize_aaps_run_file(path: Path) -> dict | None:
+    if path.name != "run.json":
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    results = data.get("results") if isinstance(data.get("results"), list) else []
+    validations: list[dict] = []
+    for result in results:
+        if isinstance(result, dict) and isinstance(result.get("validations"), list):
+            validations.extend(item for item in result["validations"] if isinstance(item, dict))
+    failed_steps = [item for item in results if isinstance(item, dict) and item.get("status") == "failed"]
+    failed_validations = [item for item in validations if item.get("ok") is False or item.get("status") == "failed"]
+    return {
+        "status": data.get("status") or "unknown",
+        "runId": data.get("runId") or "",
+        "file": data.get("file") or "",
+        "runDir": data.get("runDir") or "",
+        "startedAt": data.get("startedAt") or "",
+        "finishedAt": data.get("finishedAt") or "",
+        "steps": len(results),
+        "failedSteps": len(failed_steps),
+        "validations": len(validations),
+        "failedValidations": len(failed_validations),
+    }
+
+
 def list_files_under(project_dir: Path, root: Path, source: str, limit: int) -> list[dict]:
     items: list[dict] = []
     if not root.exists():
@@ -930,15 +958,18 @@ def list_files_under(project_dir: Path, root: Path, source: str, limit: int) -> 
                 rel = path.relative_to(project_dir).as_posix()
             except (OSError, ValueError):
                 continue
-            items.append(
-                {
-                    "source": source,
-                    "path": rel,
-                    "kind": artifact_kind(path),
-                    "size": stat.st_size,
-                    "mtime": int(stat.st_mtime),
-                }
-            )
+            item = {
+                "source": source,
+                "path": rel,
+                "kind": artifact_kind(path),
+                "size": stat.st_size,
+                "mtime": int(stat.st_mtime),
+            }
+            run_summary = summarize_aaps_run_file(path)
+            if run_summary:
+                item["runSummary"] = run_summary
+                item["kind"] = "run"
+            items.append(item)
     return sorted(items, key=lambda item: (item["mtime"], item["path"]), reverse=True)[:limit]
 
 
