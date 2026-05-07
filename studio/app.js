@@ -36,6 +36,7 @@ const refreshVersionsBtnEl = document.getElementById("refresh-versions-btn");
 const blockChatInputEl = document.getElementById("block-chat-input");
 const blockLogEl = document.getElementById("block-log");
 const blockReadinessEl = document.getElementById("block-readiness");
+const blockCanvasEl = document.getElementById("block-canvas");
 const projectFileTargetEl = document.getElementById("project-file-target");
 const compileSummaryEl = document.getElementById("compile-summary");
 const compileLogEl = document.getElementById("compile-log");
@@ -46,7 +47,12 @@ const codexModelEl = document.getElementById("codex-model");
 const codexReasoningEl = document.getElementById("codex-reasoning");
 const deepseekModelEl = document.getElementById("deepseek-model");
 const deepseekBaseUrlEl = document.getElementById("deepseek-base-url");
+const agintiProviderEl = document.getElementById("aginti-provider");
+const agintiSafetyEl = document.getElementById("aginti-safety");
+const agintiSessionIdEl = document.getElementById("aginti-session-id");
 const autoCompileAfterChatEl = document.getElementById("auto-compile-after-chat");
+const agentContextPackEl = document.getElementById("agent-context-pack");
+const autoSaveAgentEditsEl = document.getElementById("auto-save-agent-edits");
 const saveSettingsBtnEl = document.getElementById("save-settings-btn");
 const settingsStatusEl = document.getElementById("settings-status");
 const settingsAvailabilityEl = document.getElementById("settings-availability");
@@ -93,6 +99,9 @@ let activeRunId = "";
 let activeCompileId = "";
 let chatMessageCount = 0;
 let activeTab = localStorage.getItem("aaps.studio.activeTab") || "project";
+let selectedWorkflowFile = localStorage.getItem("aaps.studio.selectedWorkflowFile") || "";
+let selectedProgramFile = localStorage.getItem("aaps.studio.selectedProgramFile") || "";
+let selectedBlockFile = localStorage.getItem("aaps.studio.selectedBlockFile") || "";
 let lastRuntimeResult = null;
 let lastCompileResult = null;
 let currentArtifacts = { items: [], counts: {}, kindCounts: {} };
@@ -103,7 +112,12 @@ let currentSettings = {
   codexReasoning: "medium",
   deepseekBaseUrl: "https://api.deepseek.com",
   deepseekModel: "deepseek-v4-pro",
+  agintiProvider: "deepseek",
+  agintiSafety: "normal",
+  agintiSessionId: "",
+  agentContextPack: true,
   autoCompileAfterChat: true,
+  autoSaveAgentEdits: true,
 };
 
 const STUDIO_I18N = {
@@ -275,6 +289,17 @@ function renderProject(payload = currentProjectPayload) {
   const counts = projectCounts(manifest, payload);
   const errorCount = diagnostics.filter((item) => item.severity === "error").length;
   const warningCount = diagnostics.filter((item) => item.severity === "warning").length;
+  const knownFiles = new Set(files);
+  if (selectedWorkflowFile && !knownFiles.has(selectedWorkflowFile)) selectedWorkflowFile = "";
+  if (selectedProgramFile && !knownFiles.has(selectedProgramFile)) selectedProgramFile = "";
+  if (selectedBlockFile && !knownFiles.has(selectedBlockFile)) selectedBlockFile = "";
+  if (!selectedWorkflowFile && manifest.defaultMain) selectedWorkflowFile = manifest.defaultMain;
+  if (!selectedProgramFile && manifest.activeFile && projectFileRole(manifest.activeFile) === "program") {
+    selectedProgramFile = manifest.activeFile;
+  }
+  localStorage.setItem("aaps.studio.selectedWorkflowFile", selectedWorkflowFile);
+  localStorage.setItem("aaps.studio.selectedProgramFile", selectedProgramFile);
+  localStorage.setItem("aaps.studio.selectedBlockFile", selectedBlockFile);
 
   projectManifestEl.value = JSON.stringify(manifest, null, 2);
   projectPathEl.value = payload.project_path || projectPathEl.value || ".";
@@ -293,6 +318,8 @@ function renderProject(payload = currentProjectPayload) {
       <span>${escapeHtml(manifest.domain)} project</span>
       <span>active: ${escapeHtml(manifest.activeFile || manifest.defaultMain || "(none)")}</span>
       <span>main: ${escapeHtml(manifest.defaultMain || "(none)")}</span>
+      <span>workflow: ${escapeHtml(selectedWorkflowFile || manifest.defaultMain || "(none)")}</span>
+      <span>block: ${escapeHtml(selectedBlockFile || "(none)")}</span>
     </div>
     <div>${escapeHtml(manifest.description || "Use this workspace for one topic, then keep many pipelines and reusable capabilities inside it.")}</div>
     <div class="project-kpis">
@@ -449,6 +476,67 @@ function formatBytes(size) {
   return `${value} B`;
 }
 
+function artifactFileUrl(file, projectPath = projectPathEl.value || ".") {
+  return `/api/aaps/artifact-file?path=${encodeURIComponent(projectPath)}&file=${encodeURIComponent(file)}`;
+}
+
+function renderBlockCanvas(payload = null) {
+  if (!blockCanvasEl) return;
+  const items = payload?.canvasItems || payload?.previewRun?.canvasItems || [];
+  const preview = payload?.previewRun || {};
+  if (!payload) {
+    blockCanvasEl.innerHTML = `
+      <strong>Block Artifact Canvas</strong>
+      <span>Ask block chat to create or refine a segmentation block. AAPS will run a small preview when possible and show masks, overlays, tables, and reports here.</span>
+    `;
+    return;
+  }
+  const imageItems = items.filter((item) => item.kind === "image");
+  const dataItems = items.filter((item) => item.kind !== "image").slice(0, 8);
+  blockCanvasEl.innerHTML = `
+    <div class="block-canvas-head">
+      <div>
+        <strong>Block Artifact Canvas</strong>
+        <span>${escapeHtml(preview.status || "prepared")} · ${escapeHtml(preview.previewRoot || payload.canvasPath || "")}</span>
+      </div>
+      <div class="block-canvas-kpis">
+        <span>${items.length} artifacts</span>
+        <span>${imageItems.length} images</span>
+        <span>${formatBytes(items.reduce((sum, item) => sum + Number(item.size || 0), 0))}</span>
+      </div>
+    </div>
+    ${
+      imageItems.length
+        ? `<div class="block-canvas-grid">${imageItems
+            .slice(0, 12)
+            .map(
+              (item) => `
+                <figure class="block-canvas-item">
+                  <img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.title || item.path)}" loading="lazy" />
+                  <figcaption>${escapeHtml(item.path)}</figcaption>
+                </figure>
+              `
+            )
+            .join("")}</div>`
+        : '<div class="message">No preview images were produced. Check stdout/stderr in the block log.</div>'
+    }
+    ${
+      dataItems.length
+        ? `<div class="block-canvas-files">${dataItems
+            .map(
+              (item) => `
+                <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">
+                  <strong>${escapeHtml(item.kind)}</strong>
+                  <span>${escapeHtml(item.path)} · ${formatBytes(item.size)}</span>
+                </a>
+              `
+            )
+            .join("")}</div>`
+        : ""
+    }
+  `;
+}
+
 function renderArtifacts(payload = currentArtifacts) {
   currentArtifacts = payload || { items: [], counts: {}, kindCounts: {} };
   const items = currentArtifacts.items || [];
@@ -472,7 +560,7 @@ function renderArtifacts(payload = currentArtifacts) {
           const isPreview = item.kind === "image" && item.path.startsWith("outputs/");
           return `
             <article class="artifact-item">
-              ${isPreview ? `<img src="${escapeHtml(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />` : ""}
+              ${isPreview ? `<img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />` : ""}
               <div>
                 <strong>${escapeHtml(item.path)}</strong>
                 <span>${escapeHtml(item.source)} · ${escapeHtml(item.kind)} · ${formatBytes(item.size)}</span>
@@ -557,16 +645,29 @@ function renderSettings(settings = currentSettings) {
   if (codexReasoningEl) codexReasoningEl.value = currentSettings.codexReasoning || "medium";
   if (deepseekModelEl) deepseekModelEl.value = currentSettings.deepseekModel || "deepseek-v4-pro";
   if (deepseekBaseUrlEl) deepseekBaseUrlEl.value = currentSettings.deepseekBaseUrl || "https://api.deepseek.com";
+  if (agintiProviderEl) agintiProviderEl.value = currentSettings.agintiProvider || "deepseek";
+  if (agintiSafetyEl) agintiSafetyEl.value = currentSettings.agintiSafety || "normal";
+  if (agintiSessionIdEl) agintiSessionIdEl.value = currentSettings.agintiSessionId || "";
   if (autoCompileAfterChatEl) autoCompileAfterChatEl.checked = currentSettings.autoCompileAfterChat !== false;
+  if (agentContextPackEl) agentContextPackEl.checked = currentSettings.agentContextPack !== false;
+  if (autoSaveAgentEditsEl) autoSaveAgentEditsEl.checked = currentSettings.autoSaveAgentEdits !== false;
   if (settingsStatusEl) {
-    settingsStatusEl.textContent = `${currentSettings.agentProvider || "codex"} · ${currentSettings.agentProvider === "deepseek" ? currentSettings.deepseekModel : currentSettings.codexModel}`;
+    const provider = currentSettings.agentProvider || "codex";
+    const label = provider === "deepseek"
+      ? currentSettings.deepseekModel
+      : provider === "aginti"
+        ? `${currentSettings.agintiProvider || "deepseek"} · ${currentSettings.agintiSessionId || "new persistent session"}`
+        : currentSettings.codexModel;
+    settingsStatusEl.textContent = `${provider} · ${label}`;
   }
   if (settingsAvailabilityEl) {
     const availability = [
       ["Codex CLI", currentSettings.codexAvailable],
       ["DeepSeek key", currentSettings.deepseekKeyAvailable],
       ["OpenAI key", currentSettings.openaiKeyAvailable],
-      ["AgInTiFlow", currentSettings.agintiflowAvailable],
+      ["AgInTiFlow CLI", currentSettings.agintiflowAvailable],
+      ["Context pack", currentSettings.agentContextPack !== false],
+      ["Versioned agent edits", currentSettings.autoSaveAgentEdits !== false],
     ];
     settingsAvailabilityEl.innerHTML = availability
       .map(([label, ok]) => `<span class="${ok ? "ok" : "warn"}">${escapeHtml(label)}: ${ok ? "available" : "missing"}</span>`)
@@ -581,7 +682,12 @@ function collectSettings() {
     codexReasoning: codexReasoningEl?.value || "medium",
     deepseekModel: deepseekModelEl?.value || "deepseek-v4-pro",
     deepseekBaseUrl: deepseekBaseUrlEl?.value.trim() || "https://api.deepseek.com",
+    agintiProvider: agintiProviderEl?.value || "deepseek",
+    agintiSafety: agintiSafetyEl?.value || "normal",
+    agintiSessionId: agintiSessionIdEl?.value.trim() || "",
+    agentContextPack: Boolean(agentContextPackEl?.checked),
     autoCompileAfterChat: Boolean(autoCompileAfterChatEl?.checked),
+    autoSaveAgentEdits: Boolean(autoSaveAgentEditsEl?.checked),
   };
 }
 
@@ -784,6 +890,62 @@ function tabLabel(tab) {
   }[tab] || "Studio";
 }
 
+function projectFileRole(file) {
+  const value = String(file || "").trim();
+  if (value.startsWith("blocks/")) return "block";
+  if (value.startsWith("skills/")) return "skill";
+  if (value.startsWith("modules/")) return "module";
+  if (value.startsWith("subworkflows/") || value.startsWith("workflows/")) return "program";
+  if (value.startsWith("drafts/")) return "draft";
+  return value.endsWith(".aaps") ? "program" : "file";
+}
+
+function rememberSelectedProjectFile(file) {
+  const value = String(file || "").trim();
+  if (!value) return;
+  const role = projectFileRole(value);
+  if (role === "block") {
+    selectedBlockFile = value;
+    localStorage.setItem("aaps.studio.selectedBlockFile", value);
+    return;
+  }
+  if (role === "program") {
+    selectedProgramFile = value;
+    selectedWorkflowFile = value;
+    localStorage.setItem("aaps.studio.selectedProgramFile", value);
+    localStorage.setItem("aaps.studio.selectedWorkflowFile", value);
+  }
+}
+
+function selectedAapsScope() {
+  const manifest = getProjectManifest();
+  const activeFile = manifest.activeFile || manifest.defaultMain || "";
+  if (activeFile) rememberSelectedProjectFile(activeFile);
+  const workingFile = activeFile || selectedBlockFile || selectedProgramFile || selectedWorkflowFile || "";
+  return {
+    activeFile,
+    workingFile,
+    workingRole: projectFileRole(workingFile),
+    selectedWorkflowFile: selectedWorkflowFile || manifest.defaultMain || "",
+    selectedProgramFile: selectedProgramFile || manifest.defaultMain || "",
+    selectedBlockFile,
+  };
+}
+
+function selectedScopeLabel() {
+  const scope = selectedAapsScope();
+  const parts = [];
+  if (scope.selectedWorkflowFile) parts.push(`workflow ${scope.selectedWorkflowFile}`);
+  if (scope.selectedProgramFile && scope.selectedProgramFile !== scope.selectedWorkflowFile) {
+    parts.push(`program ${scope.selectedProgramFile}`);
+  }
+  if (scope.selectedBlockFile) parts.push(`block ${scope.selectedBlockFile}`);
+  if (scope.workingFile && !parts.some((part) => part.includes(scope.workingFile))) {
+    parts.push(`editing ${scope.workingFile}`);
+  }
+  return parts.join(" · ");
+}
+
 function setChatStatus(text) {
   chatStatusEl.textContent = text;
 }
@@ -791,7 +953,8 @@ function setChatStatus(text) {
 function updateChatContext() {
   const selected = nodeRefs.get(selectedRef);
   const suffix = selected ? ` · ${selected.kind} ${selected.id}` : "";
-  chatContextEl.textContent = `${tabLabel(activeTab)}${suffix}`;
+  const scope = selectedScopeLabel();
+  chatContextEl.textContent = `${tabLabel(activeTab)}${scope ? ` · ${scope}` : ""}${suffix}`;
 }
 
 function activateTab(tab, persist = true) {
@@ -976,6 +1139,7 @@ function fillInspector(node) {
       field.disabled = field === fields.kind;
     });
     renderSelectedReadiness(lastRuntimeResult);
+    renderBlockCanvas(null);
     return;
   }
   selectedLabelEl.textContent = `${node.kind} ${node.id}`;
@@ -1350,6 +1514,7 @@ function localChatEdit(text) {
 
 async function requestChatEdit(instruction) {
   const previousSource = sourceEl.value;
+  const scope = selectedAapsScope();
   const response = await fetch("/api/aaps/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1359,6 +1524,12 @@ async function requestChatEdit(instruction) {
       context: {
         tab: activeTab,
         projectPath: projectPathEl.value || ".",
+        activeFile: scope.activeFile,
+        workingFile: scope.workingFile,
+        workingRole: scope.workingRole,
+        selectedWorkflowFile: scope.selectedWorkflowFile,
+        selectedProgramFile: scope.selectedProgramFile,
+        selectedBlockFile: scope.selectedBlockFile,
         selectedBlock: nodeRefs.get(selectedRef) || null,
         activeRunId,
         diagnostics: getIr().diagnostics,
@@ -1371,14 +1542,19 @@ async function requestChatEdit(instruction) {
   const result = payload.result || payload;
   if (result.source) {
     sourceEl.value = result.source;
+    if (result.savedFile) rememberSelectedProjectFile(result.savedFile);
     render();
+  }
+  if (result.savedFile || result.previousSnapshot) {
+    loadVersions(projectPathEl.value || ".").catch(() => {});
   }
   if (result.source && result.source !== previousSource && currentSettings.autoCompileAfterChat) {
     startCompile("check").catch((error) => {
       compileLogEl.textContent = error.message;
     });
   }
-  return result.message || result.summary || "Applied routed edit.";
+  const versionNote = result.savedFile ? ` Saved versioned edit to ${result.savedFile}.` : "";
+  return `${result.message || result.summary || "Applied routed edit."}${versionNote}`;
 }
 
 async function createStarterProject() {
@@ -1448,6 +1624,7 @@ async function loadProjectFile(file) {
   sourceEl.value = payload.source;
   const manifest = getProjectManifest();
   if (!manifest.error) {
+    rememberSelectedProjectFile(file);
     manifest.activeFile = file;
     renderProject({ ...currentProjectPayload, manifest });
   }
@@ -1691,6 +1868,9 @@ async function applyBlockChat() {
       source: sourceEl.value,
       materialize: true,
       blockFile: `blocks/${AAPS.slug(node.id)}.aaps`,
+      runPreview: true,
+      previewMaxImages: 3,
+      previewMaxDimension: 768,
     }),
   });
   if (!response.ok) throw new Error(`block chat returned ${response.status}`);
@@ -1734,6 +1914,7 @@ async function applyBlockChat() {
   });
   blockChatInputEl.value = "";
   blockLogEl.textContent = JSON.stringify(payload, null, 2);
+  renderBlockCanvas(payload);
   addMessage(
     "assistant",
     `${payload.summary || "Applied block chat action."}${payload.blockFile ? ` Block: ${payload.blockFile}.` : ""}${payload.historyPath ? ` History: ${payload.historyPath}.` : ""}${payload.artifactPath ? ` Artifact: ${payload.artifactPath}.` : ""}`
@@ -1878,7 +2059,7 @@ chatFormEl.addEventListener("submit", (event) => {
   if (!text) return;
   addMessage("user", text);
   chatInputEl.value = "";
-  setChatStatus("routing through Codex wrapper");
+  setChatStatus(`routing through ${currentSettings.agentProvider || "backend"} agent`);
   requestChatEdit(text)
     .then((message) => {
       addMessage("assistant", message);

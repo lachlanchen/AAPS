@@ -1,6 +1,6 @@
 # Codex Wrapper And Agent Settings
 
-AAPS Studio can run as a static app, but the local backend gives it a Codex-first edit API plus an optional DeepSeek OpenAI-compatible provider.
+AAPS Studio can run as a static app, but the local backend gives it an agent-backed edit API. Codex is the default backend, DeepSeek can be used through its OpenAI-compatible API, and AgInTiFlow can be selected as a persistent project-aware backend session.
 
 ## Start
 
@@ -21,14 +21,20 @@ http://127.0.0.1:8796
 | `AAPS_CODEX_MODEL` | `gpt-5.3-codex` | Model passed to `codex exec`. |
 | `AAPS_CODEX_REASONING` | `medium` | Reasoning effort config. |
 | `AAPS_CODEX_TIMEOUT` | `240` | Synchronous wrapper timeout in seconds. |
-| `AAPS_AGENT_PROVIDER` | `codex` | Default backend provider. Use `deepseek` only when explicitly selected. |
+| `AAPS_AGENT_PROVIDER` | `codex` | Default backend provider. Supported values: `codex`, `deepseek`, `aginti`. |
 | `AAPS_DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek OpenAI-compatible base URL. |
 | `AAPS_DEEPSEEK_MODEL` | `deepseek-v4-pro` | Preferred DeepSeek model for the current stage. |
 | `AAPS_DEEPSEEK_API_KEY` | unset | Local DeepSeek API key. Never commit it. |
+| `AAPS_AGINTI_PROVIDER` | `deepseek` | Provider passed to `aginti` when AgInTiFlow is selected. |
+| `AAPS_AGINTI_SAFETY` | `normal` | AgInTiFlow safety mode: `safe`, `normal`, or `danger`. |
+| `AAPS_AGINTI_SESSION_ID` | unset | Optional persistent AgInTiFlow session id to resume. |
+| `AAPS_AGINTI_TIMEOUT` | `900` | Synchronous AgInTiFlow wrapper timeout in seconds. |
 | `AAPS_MOCK_CODEX` | unset | Set to `1` for wrapper smoke tests without model calls. |
 | `AAPS_CODEX_BYPASS_SANDBOX` | unset | Set to `1` only for trusted local automation. |
 
-Copy `.env.example` to `.env` for local configuration. The Studio Project tab has a Backend Agent Settings panel that persists non-secret choices in `.aaps-work/aaps-settings.json`. Codex remains the default because it is the stronger agentic backend today; DeepSeek v4 pro is available for prompt-compatible routing when configured.
+Copy `.env.example` to `.env` for local configuration. The Studio Project tab has a Backend Agent Settings panel that persists non-secret choices in `.aaps-work/aaps-settings.json`. Backend selection is an adapter choice, not an AAPS semantics change: the selected workflow, selected block, selected program, and current source remain stable when switching between Codex, DeepSeek, and AgInTiFlow.
+
+When `Send full AAPS grammar/project context to backend agents` is enabled, Studio sends a compact context pack with language/compiler/runtime excerpts, project manifest, selected source, selected workflow/program/block, diagnostics, recent history, and current artifacts. When `Version and save agent edits automatically` is enabled, accepted backend edits are written back to the selected `.aaps` file through the versioned project-file save path.
 
 ## API
 
@@ -37,6 +43,11 @@ GET  /api/health
 GET  /api/aaps/settings
 POST /api/aaps/settings
 POST /api/aaps/edit
+POST /api/aaps/chat
+GET  /api/aaps/artifacts
+GET  /api/aaps/artifact-file?path=<project>&file=<artifact>
+GET  /api/aaps/versions
+POST /api/aaps/versions/restore
 POST /api/aaps/project/create
 POST /api/codex/respond
 POST /api/codex/jobs
@@ -63,4 +74,6 @@ The response matches `schemas/aaps_edit.schema.json`.
 
 ## Backend Direction
 
-`vendor/AgInTiFlow` is included as the future browser and tool-use backend candidate. The current wrapper stays Codex-first so AAPS Studio has a simple local path today while the AgInTiFlow integration matures.
+Codex and AgInTiFlow are both backend adapters. AAPS remains the language, project, block, and program layer. The backend receives the selected AAPS scope and returns schema-shaped JSON such as an updated `.aaps` source or a bounded reply.
+
+For AgInTiFlow, Studio writes the full context into `.aaps-work/studio-codex-jobs/<job>/aginti-handoff.md`, invokes `aginti` with a short prompt that points to the handoff, and expects output JSON at `.aaps-work/studio-codex-jobs/<job>/output.json`. This avoids huge command-line prompts and lets AgInTiFlow keep a persistent session while AAPS keeps its backend boundary explicit.

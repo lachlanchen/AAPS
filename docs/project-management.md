@@ -144,6 +144,9 @@ The tab supports:
 - creating, duplicating, and archiving `.aaps` files
 - running or dry-running the active workflow
 - checking readiness, running, or dry-running the selected block from the block inspector
-- configuring the local backend agent provider. Codex is the default; DeepSeek v4 pro is available when `AAPS_DEEPSEEK_API_KEY` is present in the ignored `.env` or shell.
+- configuring the local backend agent provider. Codex is the default; DeepSeek v4 pro is available when `AAPS_DEEPSEEK_API_KEY` is present in the ignored `.env` or shell; AgInTiFlow can be selected as a persistent backend session when `aginti` is on `PATH`
+- preserving selected workflow, selected program, selected block, and working file when switching backend providers
+- saving backend-agent edits through the versioned project file path when automatic versioned edits are enabled
+- previewing block-chat artifacts such as masks, overlays, metric tables, reports, and JSON manifests through the artifact canvas
 
 Static deployment can edit and export manifests in the browser. Local Studio adds filesystem-backed load/save APIs.

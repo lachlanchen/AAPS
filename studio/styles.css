@@ -570,6 +570,105 @@ main {
   color: #b91c1c;
 }
 
+.block-canvas {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #bdeff4;
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(0, 188, 212, 0.10), transparent 48%),
+    #f8feff;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.block-canvas > strong,
+.block-canvas-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.block-canvas-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.block-canvas-head span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.block-canvas-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 6px;
+}
+
+.block-canvas-kpis span {
+  padding: 4px 7px;
+  border: 1px solid #bdeff4;
+  border-radius: 999px;
+  color: #13515b;
+  background: #fff;
+  font-weight: 900;
+}
+
+.block-canvas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+}
+
+.block-canvas-item {
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.block-canvas-item img {
+  display: block;
+  width: 100%;
+  height: 112px;
+  object-fit: cover;
+  background: #171321;
+}
+
+.block-canvas-item figcaption {
+  padding: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.block-canvas-files {
+  display: grid;
+  gap: 6px;
+}
+
+.block-canvas-files a {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: inherit;
+  background: #fff;
+  text-decoration: none;
+}
+
+.block-canvas-files strong {
+  color: var(--ink);
+  text-transform: uppercase;
+}
+
 #delete-block {
   color: #b91c1c;
 }

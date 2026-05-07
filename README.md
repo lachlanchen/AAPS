@@ -169,12 +169,14 @@ The package is published as `@lazyingart/aaps`. Future releases use GitHub Actio
 
 Studio tabs:
 
-- **Bottom Chat Dock**: available on every tab. It routes messages through the Codex wrapper when available and keeps the transcript behind the History button.
-- **Project**: first tab. Create a starter topic workspace, edit `aaps.project.json`, browse `.aaps` and script files, configure Codex/DeepSeek backend settings, run compile checks, copy a tmux command, and dry-run or run the active workflow.
-- **Blocks**: create reusable blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions.
+- **Bottom Chat Dock**: available on every tab. It routes messages through the selected backend agent and keeps the transcript behind the History button.
+- **Project**: first tab. Create a starter topic workspace, edit `aaps.project.json`, browse `.aaps` and script files, configure Codex/DeepSeek/AgInTiFlow backend settings, run compile checks, copy a tmux command, and dry-run or run the active workflow.
+- **Blocks**: create reusable blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions with preview artifacts.
 - **Programs**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
 
-Local backend settings live in `.env` and `.aaps-work/aaps-settings.json`. Copy `.env.example` to `.env`; keep secrets uncommitted. Codex is the default backend agent. The Studio settings panel can switch to DeepSeek's OpenAI-compatible API with `deepseek-v4-pro` or `deepseek-v4-flash` when `AAPS_DEEPSEEK_API_KEY` is configured.
+Local backend settings live in `.env` and `.aaps-work/aaps-settings.json`. Copy `.env.example` to `.env`; keep secrets uncommitted. Codex is the default backend agent. The Studio settings panel can switch to DeepSeek's OpenAI-compatible API or to a persistent AgInTiFlow backend session. Backend switching does not change the selected AAPS workflow, block, or program; Studio sends the same selected source plus a project context pack to the chosen backend.
+
+Agent-backed edits are versioned when `Version and save agent edits automatically` is enabled. The context pack includes AAPS grammar/compiler/runtime excerpts, the project manifest, current artifacts, recent Studio history, selected workflow/program/block, diagnostics, and backend settings so Codex or AgInTiFlow can write compile-ready `.aaps` instead of generic prose.
 
 For wrapper smoke tests without model calls:
 
@@ -255,6 +257,10 @@ POST /api/aaps/project/file
 GET  /api/aaps/project/text-file
 POST /api/aaps/project/text-file
 POST /api/aaps/project/file-action
+GET  /api/aaps/artifacts
+GET  /api/aaps/artifact-file?path=<project>&file=<artifact>
+GET  /api/aaps/versions
+POST /api/aaps/versions/restore
 POST /api/aaps/block/chat
 POST /api/aaps/compile
 GET  /api/aaps/compile?id=<compile-id>
@@ -266,7 +272,7 @@ GET  /api/codex/job?id=<job-id>
 GET  /api/codex/result?id=<job-id>
 ```
 
-AgInTiFlow is included as a submodule because it is the planned backend candidate for browser automation, tool use, and resumable agent sessions.
+AgInTiFlow can also be selected as the local persistent backend agent. AAPS writes a durable handoff/context file, invokes `aginti`, and expects a schema-shaped JSON response. This keeps AAPS independent from the backend while still letting AgInTiFlow implement, repair, or refine AAPS blocks and programs with project context.
 
 ## Reference Pipelines
 

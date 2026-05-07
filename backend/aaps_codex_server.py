@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -55,6 +56,23 @@ SKIP_SCAN_DIRS = {
 TEXT_FILE_EXTENSIONS = {".aaps", ".py", ".sh", ".js", ".mjs", ".cjs", ".json", ".md", ".txt", ".yaml", ".yml", ".toml"}
 SCRIPT_FILE_EXTENSIONS = {".py", ".sh", ".js", ".mjs", ".cjs"}
 ENVIRONMENT_FILE_EXTENSIONS = {".txt", ".json", ".yaml", ".yml"}
+ARTIFACT_FILE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".webp",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".txt",
+    ".log",
+    ".html",
+    ".pdf",
+}
 PROJECT_FILE_CATEGORIES = [
     "blocks",
     "skills",
@@ -78,7 +96,13 @@ DEFAULT_SETTINGS = {
     "deepseekBaseUrl": "https://api.deepseek.com",
     "deepseekModel": "deepseek-v4-pro",
     "deepseekTimeout": 180,
+    "agintiProvider": "deepseek",
+    "agintiSafety": "normal",
+    "agintiSessionId": "",
+    "agintiTimeout": 900,
+    "agentContextPack": True,
     "autoCompileAfterChat": True,
+    "autoSaveAgentEdits": True,
 }
 
 
@@ -116,6 +140,9 @@ def read_settings() -> dict:
         "codexReasoning": os.environ.get("AAPS_CODEX_REASONING"),
         "deepseekBaseUrl": os.environ.get("AAPS_DEEPSEEK_BASE_URL"),
         "deepseekModel": os.environ.get("AAPS_DEEPSEEK_MODEL"),
+        "agintiProvider": os.environ.get("AAPS_AGINTI_PROVIDER"),
+        "agintiSafety": os.environ.get("AAPS_AGINTI_SAFETY"),
+        "agintiSessionId": os.environ.get("AAPS_AGINTI_SESSION_ID"),
     }
     settings.update({key: value for key, value in env_defaults.items() if value})
     if SETTINGS_PATH.exists():
@@ -125,10 +152,12 @@ def read_settings() -> dict:
                 settings.update({key: value for key, value in loaded.items() if key in DEFAULT_SETTINGS})
         except json.JSONDecodeError:
             pass
-    if settings.get("agentProvider") not in {"codex", "deepseek"}:
+    if settings.get("agentProvider") not in {"codex", "deepseek", "aginti"}:
         settings["agentProvider"] = "codex"
     if settings.get("codexReasoning") not in {"low", "medium", "high", "xhigh"}:
         settings["codexReasoning"] = "medium"
+    if settings.get("agintiSafety") not in {"safe", "normal", "danger"}:
+        settings["agintiSafety"] = "normal"
     return settings
 
 
@@ -137,14 +166,22 @@ def public_settings() -> dict:
     settings["codexAvailable"] = bool(shutil.which("codex"))
     settings["deepseekKeyAvailable"] = bool(os.environ.get("AAPS_DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_API_KEY"))
     settings["openaiKeyAvailable"] = bool(os.environ.get("OPENAI_API_KEY"))
-    settings["agintiflowAvailable"] = (ROOT / "vendor" / "AgInTiFlow").exists()
+    settings["agintiflowAvailable"] = bool(shutil.which("aginti")) or (ROOT / "vendor" / "AgInTiFlow").exists()
     return settings
 
 
 def write_settings(payload: dict) -> dict:
     settings = read_settings()
-    allowed_provider = {"codex", "deepseek"}
-    text_fields = ["codexModel", "codexReasoning", "deepseekBaseUrl", "deepseekModel"]
+    allowed_provider = {"codex", "deepseek", "aginti"}
+    text_fields = [
+        "codexModel",
+        "codexReasoning",
+        "deepseekBaseUrl",
+        "deepseekModel",
+        "agintiProvider",
+        "agintiSafety",
+        "agintiSessionId",
+    ]
     for key in text_fields:
         if key in payload:
             settings[key] = str(payload.get(key) or DEFAULT_SETTINGS[key]).strip() or DEFAULT_SETTINGS[key]
@@ -153,7 +190,13 @@ def write_settings(payload: dict) -> dict:
         settings["agentProvider"] = provider if provider in allowed_provider else "codex"
     if "autoCompileAfterChat" in payload:
         settings["autoCompileAfterChat"] = bool(payload.get("autoCompileAfterChat"))
-    for key in ["codexTimeout", "deepseekTimeout"]:
+    if "autoSaveAgentEdits" in payload:
+        settings["autoSaveAgentEdits"] = bool(payload.get("autoSaveAgentEdits"))
+    if "agentContextPack" in payload:
+        settings["agentContextPack"] = bool(payload.get("agentContextPack"))
+    if settings.get("agintiSafety") not in {"safe", "normal", "danger"}:
+        settings["agintiSafety"] = "normal"
+    for key in ["codexTimeout", "deepseekTimeout", "agintiTimeout"]:
         if key in payload:
             try:
                 settings[key] = max(10, int(payload.get(key)))
@@ -162,6 +205,15 @@ def write_settings(payload: dict) -> dict:
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps({key: settings[key] for key in DEFAULT_SETTINGS}, indent=2) + "\n", encoding="utf-8")
     return public_settings()
+
+
+def persist_runtime_settings(updates: dict) -> None:
+    settings = read_settings()
+    for key, value in updates.items():
+        if key in DEFAULT_SETTINGS:
+            settings[key] = value
+    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_PATH.write_text(json.dumps({key: settings[key] for key in DEFAULT_SETTINGS}, indent=2) + "\n", encoding="utf-8")
 
 
 def read_json(handler: SimpleHTTPRequestHandler) -> dict:
@@ -207,6 +259,14 @@ def relative_to_project(project_dir: Path, file_name: str) -> Path:
     resolved = (project_dir / candidate).resolve()
     resolved.relative_to(project_dir.resolve())
     return resolved
+
+
+def is_relative_to(path_value: Path, root: Path) -> bool:
+    try:
+        path_value.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def scan_aaps_files(project_dir: Path) -> list[str]:
@@ -922,6 +982,77 @@ def list_studio_artifacts(project_dir: Path, limit: int = 240) -> dict:
     }
 
 
+def artifact_roots(project_dir: Path) -> list[Path]:
+    manifest = read_project(project_dir)["manifest"]
+    artifact_root = str(manifest.get("artifactRoot") or "outputs")
+    roots: list[Path] = []
+    for rel in [
+        artifact_root,
+        ".aaps-work/studio-artifacts",
+        ".aaps-work/studio-history",
+        ".aaps-work/studio-aaps-runs",
+        ".aaps-work/studio-aaps-compiles",
+        ".aaps-work/versions",
+    ]:
+        try:
+            roots.append(relative_to_project(project_dir, rel))
+        except ValueError:
+            continue
+    return roots
+
+
+def artifact_public_item(project_dir: Path, file_path: Path, source: str = "block_preview", title: str = "") -> dict:
+    stat = file_path.stat()
+    rel = file_path.relative_to(project_dir).as_posix()
+    return {
+        "source": source,
+        "path": rel,
+        "title": title or file_path.name,
+        "kind": artifact_kind(file_path),
+        "size": stat.st_size,
+        "mtime": int(stat.st_mtime),
+    }
+
+
+def collect_canvas_items(project_dir: Path, root_rel: str, source: str = "block_preview", limit: int = 24) -> list[dict]:
+    try:
+        root = relative_to_project(project_dir, root_rel)
+    except ValueError:
+        return []
+    if not root.exists():
+        return []
+    priority = {"image": 0, "json": 1, "table": 2, "text": 3, "jsonl": 4, "source": 5, "file": 6}
+    items = list_files_under(project_dir, root, source, max(limit * 6, 48))
+    items.sort(key=lambda item: (priority.get(item["kind"], 9), -int(item.get("mtime") or 0), item["path"]))
+    return items[:limit]
+
+
+def write_project_artifact_file(handler: SimpleHTTPRequestHandler, project_dir: Path, file_name: str) -> None:
+    file_path = relative_to_project(project_dir, file_name)
+    if not file_path.exists() or not file_path.is_file():
+        write_json(handler, {"error": "artifact file not found"}, 404)
+        return
+    if file_path.suffix.lower() not in ARTIFACT_FILE_EXTENSIONS:
+        write_json(handler, {"error": f"artifact extension is not previewable: {file_path.suffix}"}, 400)
+        return
+    if not any(is_relative_to(file_path, root) for root in artifact_roots(project_dir)):
+        write_json(handler, {"error": "artifact file must live under outputs or AAPS Studio artifact folders"}, 403)
+        return
+    size = file_path.stat().st_size
+    if size > 50 * 1024 * 1024:
+        write_json(handler, {"error": "artifact file is too large to preview through Studio"}, 413)
+        return
+    mime = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Content-Type", mime)
+    handler.send_header("Content-Length", str(size))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    with file_path.open("rb") as handle:
+        shutil.copyfileobj(handle, handler.wfile)
+
+
 def list_version_snapshots(project_dir: Path, limit: int = 120) -> dict:
     index_path = STUDIO_VERSION_DIR / "index.jsonl"
     records: list[dict] = []
@@ -1087,7 +1218,135 @@ def codex_command(schema: str, output_path: Path, settings: dict | None = None) 
     return command
 
 
-def build_edit_prompt(source: str, instruction: str) -> str:
+def read_text_excerpt(path: Path, max_chars: int = 4000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n...[truncated]...\n"
+
+
+def recent_studio_history(project_dir: Path, scope: str, scope_id: str, limit: int = 12) -> list[dict]:
+    history_file = studio_scope_path(STUDIO_HISTORY_DIR, scope, scope_id)
+    if not history_file.exists():
+        return []
+    rows: list[dict] = []
+    for raw in history_file.read_text(encoding="utf-8").splitlines()[-limit:]:
+        if not raw.strip():
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        rows.append(
+            {
+                "time": event.get("time"),
+                "scope": event.get("scope"),
+                "scope_id": event.get("scope_id"),
+                "message": str(event.get("message") or "")[:1200],
+                "response_summary": str((event.get("response") or {}).get("message") or (event.get("response") or {}).get("summary") or "")[:1200]
+                if isinstance(event.get("response"), dict)
+                else "",
+            }
+        )
+    return rows
+
+
+def build_agent_context_pack(source: str, message: str, context: dict | None = None) -> str:
+    active_settings = read_settings()
+    if not active_settings.get("agentContextPack", True):
+        return ""
+    context_payload = context or {}
+    project_dir = safe_repo_path(str(context_payload.get("projectPath") or "."))
+    scope = str(context_payload.get("tab") or "program")
+    selected_block = context_payload.get("selectedBlock") if isinstance(context_payload.get("selectedBlock"), dict) else {}
+    working_file = str(context_payload.get("workingFile") or context_payload.get("activeFile") or "").strip()
+    selected_workflow = str(context_payload.get("selectedWorkflowFile") or "").strip()
+    selected_program = str(context_payload.get("selectedProgramFile") or "").strip()
+    selected_block_file = str(context_payload.get("selectedBlockFile") or "").strip()
+    scope_id = working_file or str(selected_block.get("id") or "active")
+    try:
+        project = read_project(project_dir)
+        manifest = project.get("manifest", {})
+    except Exception as exc:  # noqa: BLE001
+        project = {"error": str(exc)}
+        manifest = {}
+    docs = {
+        "language_spec_excerpt": read_text_excerpt(ROOT / "docs" / "language-spec.md", 5500),
+        "compiler_excerpt": read_text_excerpt(ROOT / "docs" / "compiler.md", 4200),
+        "runtime_excerpt": read_text_excerpt(ROOT / "docs" / "runtime.md", 4200),
+    }
+    latest_artifacts = []
+    try:
+        latest_artifacts = list_studio_artifacts(project_dir, 40).get("items", [])
+    except Exception:  # noqa: BLE001
+        latest_artifacts = []
+    pack = {
+        "contract": {
+            "product": "AAPS Studio",
+            "role": "AAPS is a project-oriented, prompt-native programming language and visual studio.",
+            "goal": "Maintain project blocks and programs that parse, compile, execute, self-debug generated scripts, and produce durable verified artifacts.",
+            "strict_rules": [
+                "Return JSON only when the endpoint schema requires JSON.",
+                "The selected workflow, block, and program are stable AAPS objects. Switching backend provider must not switch the object being edited.",
+                "Edit only the selected/working AAPS source unless the user explicitly asks to create or switch to another file.",
+                "Do not claim a block or program works unless the .aaps source declares outputs and validations that can prove it.",
+                "Every block should include redundant context: biological purpose, data roots, typed inputs, declared outputs, executable action contract, validations, recovery/review notes, and expected artifacts.",
+                "Generated scripts must be self-debuggable: include clear CLI args, dependency errors, output manifest, logs, deterministic small-preview mode, and validation-friendly outputs.",
+                "For segmentation blocks, declare masks, overlays, per-image metrics, summary metrics, figures, reports, and QC review expectations.",
+                "A program may use placeholder blocks, but compilation must resolve every referenced block into editable project block files before real execution.",
+                "Prefer project-local files under blocks/, workflows/, scripts/, environments/, tools/, outputs/, and reports/.",
+                "AAPS syntax is not YAML. Preserve braces and AAPS grammar from the examples/spec.",
+            ],
+        },
+        "project": {
+            "path": project_label(project_dir),
+            "manifest": manifest,
+            "aaps_files": project.get("files", []) if isinstance(project, dict) else [],
+            "script_files": project.get("script_files", []) if isinstance(project, dict) else [],
+            "text_files": project.get("text_files", [])[:80] if isinstance(project, dict) else [],
+            "latest_artifacts": latest_artifacts[:40],
+        },
+        "studio_context": {
+            "scope": scope,
+            "scope_id": scope_id,
+            "working_file": working_file,
+            "working_role": context_payload.get("workingRole"),
+            "selected_workflow_file": selected_workflow,
+            "selected_program_file": selected_program,
+            "selected_block_file": selected_block_file,
+            "selected_block": context_payload.get("selectedBlock"),
+            "active_run_id": context_payload.get("activeRunId"),
+            "diagnostics": context_payload.get("diagnostics", []),
+            "settings": {
+                key: value
+                for key, value in active_settings.items()
+                if key
+                in {
+                    "agentProvider",
+                    "codexModel",
+                    "codexReasoning",
+                    "deepseekModel",
+                    "agintiProvider",
+                    "agintiSafety",
+                    "agintiSessionId",
+                    "autoCompileAfterChat",
+                    "autoSaveAgentEdits",
+                }
+            },
+            "recent_history": recent_studio_history(project_dir, scope, scope_id),
+        },
+        "docs": docs,
+        "current_source_preview": source[:12000],
+        "user_message": message,
+    }
+    return json.dumps(pack, ensure_ascii=False, indent=2)
+
+
+def build_edit_prompt(source: str, instruction: str, context: dict | None = None) -> str:
+    context_pack = build_agent_context_pack(source, instruction, context)
     return f"""You are the AAPS Studio editing engine.
 
 AAPS is Autonomous Agentic Pipeline Script. Edit only the AAPS source requested by the user.
@@ -1097,12 +1356,21 @@ Return JSON matching the schema with:
 - diagnostics: actionable issues, or an empty list
 
 Rules:
-- Preserve valid AAPS syntax.
+- Preserve valid AAPS syntax; AAPS is not YAML.
 - Keep prompts first-class, but require explicit inputs, outputs, verification, and artifacts for useful work.
 - Prefer named agents, skills, tasks, stages, actions, methods, guards, if/else branches, and for_each loops.
 - Use typed ports such as `input image: image = "path"` and `output mask: image = "runtime/mask.png"`.
 - For segmentation/QC workflows, route through inspect -> choose method -> method action -> guard/QC -> quantify.
+- Preserve the selected Studio scope: backend selection is only an execution adapter, not a reason to switch workflow/block/program.
+- Programs should call or reference reusable blocks, and any required block must be discoverable and editable as a project block file.
+- Blocks must be compile-ready: include enough biological/project context, executable action requirements, validations, recovery/review expectations, and declared artifacts for a later compiler or backend agent to implement and self-debug the scripts.
+- When generating or requesting scripts, require a small-preview/test mode, explicit CLI arguments, an output manifest, logs, and validation-friendly CSV/JSON/figure/report outputs.
 - Do not claim to commit, push, deploy, or execute commands.
+
+Agent context pack:
+```json
+{context_pack}
+```
 
 Current AAPS source:
 ```aaps
@@ -1116,6 +1384,7 @@ User instruction:
 
 def build_chat_prompt(source: str, message: str, context: dict | None = None) -> str:
     context_payload = context or {}
+    context_pack = build_agent_context_pack(source, message, context_payload)
     return f"""You are the AAPS Studio chat router.
 
 Follow the LazyBlog Studio rule: chat may explain and remember, but source mutation must be an explicit bounded edit.
@@ -1135,10 +1404,20 @@ AAPS v0.2 supports:
 - runtime recovery with `retry`, `fallback`, `repair true`, `recover`, and `review`
 - project-root relative `include` statements
 - AAPS projects with `aaps.project.json` for blocks, skills, modules, subworkflows, workflows, drafts, archives, artifacts, and runs
+- Blocks are the reusable working parts. They should be editable, versioned, richly documented, and compile-ready.
+- The selected workflow, block, and program are persistent Studio scope. Backend changes between Codex, DeepSeek, and AgInTiFlow must preserve the same AAPS source unless the user explicitly switches files.
+- Programs should reference reusable blocks; every referenced block must be discoverable in the project manifest and editable from Blocks.
+- For backend-agent generated blocks/scripts, include self-debug instructions: run a small representative preview, inspect logs, verify declared outputs, and refine until masks/metrics/artifacts are meaningful.
+- For biology segmentation, prefer a clear method route such as Cellpose/multiscale Cellpose when available, and deterministic threshold/morphology fallback when unavailable. Always declare how the compiler/runtime proves the result.
 
 Current source:
 ```aaps
 {source}
+```
+
+AAPS context pack for the backend agent:
+```json
+{context_pack}
 ```
 
 Studio context:
@@ -1805,12 +2084,68 @@ if __name__ == "__main__":
 '''
 
 
+def deo_block_study_details(study: str) -> dict:
+    if study == "app65":
+        return {
+            "label": "APP65 DEO + Alginate",
+            "groups": "date, alginate condition, magnification, biological replicate when visible from filenames",
+            "method": "Segment TIFF brightfield/organoid fields with deterministic Otsu polarity selection, morphological cleanup, connected components, and watershed fallback when SciPy/skimage distance tools are available.",
+            "metrics": [
+                "object count",
+                "total organoid area",
+                "average area",
+                "average perimeter",
+                "foreground fraction",
+                "roundness",
+                "roundness deviation",
+                "curvature",
+                "edge intensity",
+                "alginate-condition grouped summary",
+            ],
+        }
+    if study == "app81":
+        return {
+            "label": "APP81 DEO Density",
+            "groups": "date, low/middle/high density, 10x magnification; skip transfer folders",
+            "method": "Segment 10x TIFF density images with Otsu dark/bright polarity selection, morphological cleanup, connected components, watershed fallback, and preview overlays for human QC.",
+            "metrics": [
+                "object count",
+                "total organoid area",
+                "average perimeter",
+                "curvature",
+                "roundness deviation",
+                "edge intensity",
+                "normalized edge over count-curvature",
+                "density grouped summary",
+            ],
+        }
+    return {
+        "label": "APP80 DEO Y-27632",
+        "groups": "date, Y-27632 concentration, 10x magnification, biological replicate when visible from folders",
+        "method": "Segment 10x TIFF Y-27632 images with multiscale-compatible Otsu/watershed fallback, retaining masks, overlays, per-image JSON metrics, grouped tables, and summary figures.",
+        "metrics": [
+            "object count",
+            "total organoid area",
+            "foreground fraction",
+            "largest object fraction",
+            "fusion visual score",
+            "fusion objective score",
+            "combined fusion score",
+            "edge intensity",
+            "Y-27632 grouped response summary",
+        ],
+    }
+
+
 def block_source_from_chat_payload(block_id: str, message: str, action: dict, validations: list[str]) -> str:
     title = block_id.replace("_", " ").title()
     action_type = str(action.get("type") or "noop")
     command = str(action.get("command") or action.get("entry") or "noop")
     args = action.get("args") if isinstance(action.get("args"), dict) else {}
     prompt = message.strip() or f"Reusable block {block_id}."
+    study = str(args.get("study") or "")
+    output_root = str(args.get("output_root") or f"outputs/blocks/{block_id}")
+    details = deo_block_study_details(study) if study else {}
     lines = [
         f'pipeline "{title} Block" {{',
         '  subtitle "Prompt Is All You Need"',
@@ -1838,6 +2173,44 @@ def block_source_from_chat_payload(block_id: str, message: str, action: dict, va
         lines.append(f'    output report_json: json = "{args["report_json"]}"')
     if "result_json" in args:
         lines.append(f'    output result_json: json = "{args["result_json"]}"')
+    if study:
+        lines.extend(
+            [
+                f'    artifact masks: image = "{output_root}/masks"',
+                f'    artifact overlays: image = "{output_root}/overlays"',
+                f'    artifact per_image_metrics: table = "{output_root}/databases/per_image_metrics.csv"',
+                f'    artifact summary_table: table = "{output_root}/databases/summary.csv"',
+                f'    artifact summary_figure: image = "{output_root}/figures/{study}_aaps_summary.png"',
+                f'    artifact report: markdown = "{output_root}/report.md"',
+                f'    metric grouping = "{details["groups"]}"',
+            ]
+        )
+        for metric in details["metrics"]:
+            lines.append(f'    metric {slug(metric)} = "{metric}"')
+        lines.extend(
+            [
+                '    note "This block is intended to be edited and refined through AAPS Studio block chat, then reused by workflow programs."',
+                f'    note "Study contract: {details["label"]}; data root {args.get("data_root", deo_data_root(study))}; output root {output_root}."',
+                "",
+                "    stage inspect_dataset {",
+                f'      prompt "Inspect the dataset organization and verify grouping: {details["groups"]}. Confirm that sample TIFFs exist before running segmentation."',
+                '      verify "Representative TIFF paths are discovered, and excluded folders/images are intentional."',
+                "    }",
+                "",
+                "    method deterministic_fallback_segmentation {",
+                f'      prompt "{details["method"]}"',
+                '      verify "Preview masks and overlays are produced for sample images, not only CSV files."',
+                "    }",
+                "",
+                "    guard biology_qc {",
+                '      prompt "A biology user reviews overlays, masks, metric distributions, and grouped plots before trusting the full analysis."',
+                f'      validate "exists {output_root}/databases/per_image_metrics.csv"',
+                f'      validate "exists {output_root}/databases/summary.csv"',
+                f'      validate "exists {output_root}/report.md"',
+                '      review "If masks are empty, overly merged, or biologically implausible, refine the block prompt and rerun the preview before full execution."',
+                "    }",
+            ]
+        )
     lines.append(f'    exec {action_type} "{command}"')
     for key, value in args.items():
         lines.append(f'    arg {key} = "{value}"')
@@ -1875,6 +2248,84 @@ def append_provenance(project_dir: Path, payload: dict) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def run_block_preview(project_dir: Path, block_id: str, action: dict, body: dict) -> dict:
+    args = action.get("args") if isinstance(action.get("args"), dict) else {}
+    study = str(args.get("study") or "")
+    entry = str(action.get("entry") or "")
+    if action.get("type") != "python_script" or not entry or not study:
+        return {
+            "ok": False,
+            "status": "skipped",
+            "reason": "Preview runs are currently available for generated DEO Python script blocks.",
+            "canvasItems": [],
+        }
+    script_path = relative_to_project(project_dir, entry)
+    if not script_path.exists():
+        return {"ok": False, "status": "failed", "reason": f"script missing: {entry}", "canvasItems": []}
+    max_images = int(body.get("previewMaxImages") or body.get("preview_max_images") or 3)
+    max_images = max(1, min(12, max_images))
+    preview_root = str(
+        body.get("previewOutputRoot")
+        or body.get("preview_output_root")
+        or f"outputs/blocks/{block_id}/preview/{stamp()}"
+    )
+    result_json = f"{preview_root}/run_manifest.json"
+    command = [
+        "python3",
+        entry,
+        "--study",
+        study,
+        "--data-root",
+        str(args.get("data_root") or deo_data_root(study)),
+        "--output-root",
+        preview_root,
+        "--mode",
+        "all",
+        "--max-images",
+        str(max_images),
+        "--max-dimension",
+        str(body.get("previewMaxDimension") or body.get("preview_max_dimension") or 768),
+        "--preview-limit",
+        str(max_images),
+        "--result-json",
+        result_json,
+    ]
+    started = now_iso()
+    process = subprocess.run(
+        command,
+        cwd=project_dir,
+        text=True,
+        capture_output=True,
+        timeout=int(body.get("previewTimeout") or body.get("preview_timeout") or 180),
+        check=False,
+    )
+    preview_dir = relative_to_project(project_dir, preview_root)
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    (preview_dir / "preview-stdout.log").write_text(process.stdout or "", encoding="utf-8")
+    (preview_dir / "preview-stderr.log").write_text(process.stderr or "", encoding="utf-8")
+    canvas_items = collect_canvas_items(project_dir, preview_root, "block_preview", 36)
+    manifest = {
+        "ok": process.returncode == 0,
+        "status": "succeeded" if process.returncode == 0 else "failed",
+        "blockId": block_id,
+        "study": study,
+        "command": command,
+        "startedAt": started,
+        "finishedAt": now_iso(),
+        "previewRoot": preview_root,
+        "resultJson": result_json,
+        "returnCode": process.returncode,
+        "stdoutPreview": (process.stdout or "")[-4000:],
+        "stderrPreview": (process.stderr or "")[-4000:],
+        "canvasItems": canvas_items,
+    }
+    canvas_path = STUDIO_ARTIFACT_DIR / "block" / block_id / f"{stamp()}-preview-canvas.json"
+    canvas_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    manifest["canvasPath"] = canvas_path.relative_to(project_dir).as_posix()
+    return manifest
 
 
 def build_block_chat_response(body: dict) -> dict:
@@ -2053,6 +2504,11 @@ def build_block_chat_response(body: dict) -> dict:
     }
     if body.get("materialize"):
         payload = materialize_block_chat(project_dir, block_id, message, payload, body)
+    if body.get("runPreview") or body.get("run_preview"):
+        preview = run_block_preview(project_dir, block_id, action, body)
+        payload["previewRun"] = preview
+        payload["canvasItems"] = preview.get("canvasItems") or []
+        payload["canvasPath"] = preview.get("canvasPath", "")
     history_path, artifact_path = write_studio_chat_event(project_dir, "block", block_id, message, payload)
     payload["historyPath"] = history_path
     payload["artifactPath"] = artifact_path
@@ -2157,8 +2613,146 @@ def run_deepseek(job_id: str, prompt: str, schema: str = "response", settings: d
         return {"status": "failed", "error": str(exc)}
 
 
+def extract_json_object(text: str) -> dict | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    try:
+        loaded = json.loads(stripped)
+        if isinstance(loaded, dict):
+            return loaded
+    except json.JSONDecodeError:
+        pass
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            loaded = json.loads(stripped[start : end + 1])
+            if isinstance(loaded, dict):
+                return loaded
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def parse_aginti_session_id(text: str) -> str:
+    match = re.search(r"\b(?:session(?:_id)?\s*[=:]\s*)?(web-agent-[0-9A-Za-z-]+)\b", text)
+    return match.group(1) if match else ""
+
+
+def run_aginti(job_id: str, prompt: str, schema: str = "response", settings: dict | None = None) -> dict:
+    active = settings or read_settings()
+    folder = job_dir(job_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    output_path = folder / "output.json"
+    stdout_path = folder / "stdout.log"
+    stderr_path = folder / "stderr.log"
+    prompt_path = folder / "prompt.txt"
+    handoff_path = folder / "aginti-handoff.md"
+    project_output_rel = output_path.relative_to(PROJECT_ROOT).as_posix() if is_relative_to(output_path, PROJECT_ROOT) else output_path.as_posix()
+    project_handoff_rel = handoff_path.relative_to(PROJECT_ROOT).as_posix() if is_relative_to(handoff_path, PROJECT_ROOT) else handoff_path.as_posix()
+    prompt_path.write_text(prompt, encoding="utf-8")
+
+    if not shutil.which("aginti"):
+        return {"status": "failed", "error": "AgInTiFlow CLI (`aginti`) was not found on PATH."}
+
+    schema_text = schema_instruction(schema)
+    aginti_prompt = f"""You are the persistent AgInTiFlow backend agent for AAPS Studio.
+
+The AAPS Studio server has already prepared a complete context pack below. Use it to write high-quality AAPS source and preserve project logic.
+
+Required output contract:
+- Write a JSON object to `{project_output_rel}`.
+- The JSON must match this schema:
+{schema_text}
+- If you edit `.aaps` source, include the complete updated source in the `source` field.
+- Do not write secrets into the JSON.
+- If implementation would require a long run, still return the best bounded edit plus diagnostics.
+
+Backend task:
+{prompt}
+"""
+    handoff_path.write_text(aginti_prompt, encoding="utf-8")
+    short_prompt = (
+        "You are the persistent AgInTiFlow backend agent for AAPS Studio. "
+        f"Read the full handoff at `{project_handoff_rel}`, follow it exactly, "
+        f"write the required JSON response to `{project_output_rel}`, and stop. "
+        "Do not print secrets or modify unrelated files."
+    )
+    session_id = str(active.get("agintiSessionId") or "").strip()
+    timeout = int(active.get("agintiTimeout") or 900)
+    if session_id:
+        command = ["aginti", "--no-auto-update", "resume", session_id, short_prompt]
+    else:
+        command = [
+            "aginti",
+            "--no-auto-update",
+            "-s",
+            str(active.get("agintiSafety") or "normal"),
+            "--provider",
+            str(active.get("agintiProvider") or "deepseek"),
+            "--sandbox-mode",
+            "docker-workspace",
+            "--package-install-policy",
+            "allow",
+            "--approve-package-installs",
+            "--allow-shell",
+            "--allow-file-tools",
+            short_prompt,
+        ]
+    try:
+        process = subprocess.run(
+            command,
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+        stdout_path.write_text(process.stdout or "", encoding="utf-8")
+        stderr_path.write_text(process.stderr or "", encoding="utf-8")
+        discovered = parse_aginti_session_id((process.stdout or "") + "\n" + (process.stderr or ""))
+        if discovered and discovered != session_id:
+            persist_runtime_settings({"agintiSessionId": discovered})
+        result: dict | None = None
+        if output_path.exists():
+            try:
+                loaded = json.loads(output_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    result = loaded
+            except json.JSONDecodeError:
+                result = None
+        if result is None:
+            result = extract_json_object(process.stdout or "")
+        if result is None:
+            result = {
+                "mode": "reply" if schema == "aaps_chat" else "error",
+                "route": "aginti_backend",
+                "message": (process.stdout or process.stderr or "").strip()[-4000:],
+                "source": "",
+                "diagnostics": ["AgInTiFlow backend did not produce a parseable JSON output file."],
+            }
+        if process.returncode != 0:
+            return {
+                "status": "failed",
+                "error": process.stderr.strip() or f"aginti exited with {process.returncode}",
+                "result": result,
+            }
+        return {
+            "status": "succeeded",
+            "result": result,
+            "backend": "aginti",
+            "agintiSessionId": discovered or session_id,
+        }
+    except Exception as exc:  # noqa: BLE001
+        stderr_path.write_text(str(exc), encoding="utf-8")
+        return {"status": "failed", "error": str(exc)}
+
+
 def run_codex(job_id: str, prompt: str, schema: str = "response") -> dict:
     settings = read_settings()
+    if settings.get("agentProvider") == "aginti" and os.environ.get("AAPS_MOCK_CODEX") != "1":
+        return run_aginti(job_id, prompt, schema, settings)
     if settings.get("agentProvider") == "deepseek" and os.environ.get("AAPS_MOCK_CODEX") != "1":
         return run_deepseek(job_id, prompt, schema, settings)
 
@@ -2432,6 +3026,31 @@ def start_aaps_compile(body: dict) -> dict:
     return record
 
 
+def persist_agent_chat_edit(project_dir: Path, body: dict, result: dict, previous_source: str, provider: str, job_id: str) -> dict:
+    if not isinstance(result, dict):
+        return result
+    new_source = result.get("source")
+    if not isinstance(new_source, str) or not new_source or new_source == previous_source:
+        return result
+    settings = read_settings()
+    if not settings.get("autoSaveAgentEdits", True):
+        result["versioned"] = False
+        result["versionNote"] = "autoSaveAgentEdits is disabled; source is only staged in the Studio editor."
+        return result
+    context = body.get("context") if isinstance(body.get("context"), dict) else {}
+    file_name = str(context.get("workingFile") or context.get("activeFile") or body.get("file") or "").strip()
+    if not file_name or not file_name.endswith(".aaps"):
+        result["versioned"] = False
+        result["versionNote"] = "No active .aaps file was provided for automatic versioned save."
+        return result
+    file_path = relative_to_project(project_dir, file_name)
+    snapshot = write_project_text(project_dir, file_path, new_source, f"agent_chat_edit:{provider}:{job_id}")
+    result["versioned"] = True
+    result["savedFile"] = file_path.relative_to(project_dir).as_posix()
+    result["previousSnapshot"] = snapshot
+    return result
+
+
 class AAPSHandler(SimpleHTTPRequestHandler):
     server_version = "AAPSStudio/0.1"
 
@@ -2510,6 +3129,14 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 project_dir = safe_repo_path(query.get("path", ["."])[0])
                 limit = max(1, min(1000, int(query.get("limit", ["240"])[0] or "240")))
                 write_json(self, list_studio_artifacts(project_dir, limit))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+        if parsed.path == "/api/aaps/artifact-file":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                write_project_artifact_file(self, project_dir, query.get("file", [""])[0])
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
@@ -2600,6 +3227,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/aaps/edit":
             source = str(body.get("source") or "")
             instruction = str(body.get("instruction") or "").strip()
+            context = body.get("context") if isinstance(body.get("context"), dict) else {}
             if not instruction:
                 write_json(self, {"error": "instruction is required"}, 400)
                 return
@@ -2618,7 +3246,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 )
                 return
             job_id = uuid.uuid4().hex[:16]
-            prompt = build_edit_prompt(source, instruction)
+            prompt = build_edit_prompt(source, instruction, context)
             outcome = run_codex(job_id, prompt, "aaps_edit")
             status = 200 if outcome["status"] == "succeeded" else 500
             write_json(self, {"id": job_id, **outcome}, status)
@@ -2643,7 +3271,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 history_path, artifact_path = write_studio_chat_event(
                     project_dir,
                     str(context.get("tab") or "program"),
-                    str(context.get("activeFile") or body.get("file") or "active"),
+                    str(context.get("workingFile") or context.get("activeFile") or body.get("file") or "active"),
                     message,
                     result,
                     {"context": context},
@@ -2664,13 +3292,27 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             try:
                 project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
                 result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
+                if isinstance(result, dict):
+                    persist_agent_chat_edit(
+                        project_dir,
+                        body,
+                        result,
+                        source,
+                        str(read_settings().get("agentProvider") or "codex"),
+                        job_id,
+                    )
                 history_path, artifact_path = write_studio_chat_event(
                     project_dir,
                     str(context.get("tab") or "program"),
-                    str(context.get("activeFile") or body.get("file") or "active"),
+                    str(context.get("workingFile") or context.get("activeFile") or body.get("file") or "active"),
                     message,
                     result,
-                    {"context": context, "job_id": job_id},
+                    {
+                        "context": context,
+                        "job_id": job_id,
+                        "backend": str(read_settings().get("agentProvider") or "codex"),
+                        "agintiSessionId": outcome.get("agintiSessionId", ""),
+                    },
                 )
                 if isinstance(outcome.get("result"), dict):
                     outcome["result"]["historyPath"] = history_path

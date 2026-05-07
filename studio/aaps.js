@@ -455,6 +455,12 @@
         return;
       }
 
+      match = line.match(/^execution_mode\s+(.+)$/i);
+      if (match && target !== ir.pipeline) {
+        target.executionMode = unquote(match[1]);
+        return;
+      }
+
       match = line.match(/^tags\s+(.+)$/i);
       if (match && target === ir.pipeline) {
         ir.pipeline.tags = parseList(unquote(match[1]));
@@ -805,6 +811,7 @@
     if (environment.files && environment.files.length) lines.push(`${childIndent}environment files = ${quote(environment.files.join(", "))}`);
     (environment.setup || []).forEach((command) => lines.push(`${childIndent}environment setup = ${quote(command)}`));
     Object.entries(environment.env || {}).forEach(([key, value]) => lines.push(`${childIndent}env ${key} = ${quote(value)}`));
+    if (node.executionMode) lines.push(`${childIndent}execution_mode ${quote(node.executionMode)}`);
     if (node.compile && node.compile.agent) lines.push(`${childIndent}compile_agent ${quote(node.compile.agent)}`);
     if (node.compile && node.compile.prompt) lines.push(`${childIndent}compile_prompt ${quote(node.compile.prompt)}`);
     if (node.compile && node.compile.onMissing && node.compile.onMissing !== "prompt") lines.push(`${childIndent}compile_on_missing ${quote(node.compile.onMissing)}`);

@@ -160,6 +160,17 @@ assert.strictEqual(executionPlan.version, "aaps_plan/0.1");
 assert.strictEqual(executionPlan.executableSteps, 1);
 assert(executionPlan.steps.some((step) => step.repair === true));
 
+const nodeExecutionMode = AAPS.parseAAPS(`pipeline "Node Execution Mode" {
+  block segment {
+    execution_mode "local_deterministic"
+    compile_agent "codex_repair_agent"
+  }
+}
+`);
+assert.deepStrictEqual(nodeExecutionMode.diagnostics, []);
+assert.strictEqual(nodeExecutionMode.pipeline.blocks[0].executionMode, "local_deterministic");
+assert(AAPS.serializeAAPS(nodeExecutionMode).includes('execution_mode "local_deterministic"'));
+
 const folderWorkflow = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "executable_folder_segmentation.aaps"));
 assert.strictEqual(folderWorkflow.diagnostics.length, 0, JSON.stringify(folderWorkflow.diagnostics));
 assert(folderWorkflow.pipeline.requiredAgents.includes("codex_repair_agent"));
@@ -781,6 +792,12 @@ function httpJson(url, payload) {
   return JSON.parse(result.stdout);
 }
 
+function httpStatus(url) {
+  const result = childProcess.spawnSync("curl", ["-sS", "-o", "/tmp/aaps-http-status.out", "-w", "%{http_code}", url], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+  return result.stdout.trim();
+}
+
 const studioProject = path.join(__dirname, "..", ".aaps-work", "tests", "studio-project");
 fs.rmSync(studioProject, { recursive: true, force: true });
 fs.mkdirSync(path.join(studioProject, "workflows"), { recursive: true });
@@ -812,6 +829,7 @@ fs.writeFileSync(
 );
 fs.writeFileSync(path.join(studioProject, "data", "secret-ish.json"), '{"raw": true}\n', "utf8");
 fs.writeFileSync(path.join(studioProject, "outputs", "runs", "large.json"), '{"generated": true}\n', "utf8");
+fs.writeFileSync(path.join(studioProject, "outputs", "runs", "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"));
 fs.writeFileSync(path.join(studioProject, ".aginti-sessions", "session.json"), '{"private": true}\n', "utf8");
 
 const studioPort = "8898";
@@ -839,6 +857,26 @@ try {
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("data/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("outputs/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith(".aginti")));
+  const artifactFileStatus = httpStatus(`${base}/api/aaps/artifact-file?path=.&file=${encodeURIComponent("outputs/runs/pixel.png")}`);
+  assert.strictEqual(artifactFileStatus, "200");
+  const secretFileStatus = httpStatus(`${base}/api/aaps/artifact-file?path=.&file=${encodeURIComponent("data/secret-ish.json")}`);
+  assert.strictEqual(secretFileStatus, "403");
+  const agintiSettings = httpJson(`${base}/api/aaps/settings`, {
+    agentProvider: "aginti",
+    agintiProvider: "deepseek",
+    agintiSafety: "normal",
+    agintiSessionId: "web-agent-test-session",
+    agentContextPack: true,
+    autoSaveAgentEdits: true,
+    autoCompileAfterChat: true,
+  });
+  assert.strictEqual(agintiSettings.agentProvider, "aginti");
+  assert.strictEqual(agintiSettings.agintiProvider, "deepseek");
+  assert.strictEqual(agintiSettings.agintiSafety, "normal");
+  assert.strictEqual(agintiSettings.agintiSessionId, "web-agent-test-session");
+  assert.strictEqual(agintiSettings.agentContextPack, true);
+  assert.strictEqual(agintiSettings.autoSaveAgentEdits, true);
+  assert.strictEqual(typeof agintiSettings.agintiflowAvailable, "boolean");
   const originalMainSource = fs.readFileSync(path.join(studioProject, "workflows", "main.aaps"), "utf8");
   const editedMainSource = originalMainSource.replace("Studio Project Compile", "Studio Project Compile Edited");
   const savedMain = httpJson(`${base}/api/aaps/project/file`, {

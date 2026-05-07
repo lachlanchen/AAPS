@@ -128,6 +128,10 @@
                 <button id="repair-prompt-btn" type="button">Repair Prompt</button>
               </div>
               <div id="block-readiness" class="block-readiness">Select a block, then check readiness.</div>
+              <div id="block-canvas" class="block-canvas">
+                <strong>Block Artifact Canvas</strong>
+                <span>Ask block chat to create or refine a segmentation block. AAPS will run a small preview when possible and show masks, overlays, tables, and reports here.</span>
+              </div>
               <pre id="block-log"></pre>
             </section>
           </form>
@@ -223,6 +227,7 @@
                   <select id="agent-provider">
                     <option value="codex">Codex wrapper</option>
                     <option value="deepseek">DeepSeek API</option>
+                    <option value="aginti">AgInTiFlow persistent agent</option>
                   </select>
                 </label>
                 <label>Codex Model
@@ -245,9 +250,35 @@
                 <label>DeepSeek Base URL
                   <input id="deepseek-base-url" placeholder="https://api.deepseek.com" />
                 </label>
+                <label>AgInTi Provider
+                  <select id="aginti-provider">
+                    <option value="deepseek">deepseek</option>
+                    <option value="openai">openai</option>
+                    <option value="venice">venice</option>
+                    <option value="mock">mock</option>
+                  </select>
+                </label>
+                <label>AgInTi Safety
+                  <select id="aginti-safety">
+                    <option value="normal">normal</option>
+                    <option value="safe">safe</option>
+                    <option value="danger">danger</option>
+                  </select>
+                </label>
+                <label>AgInTi Session
+                  <input id="aginti-session-id" placeholder="auto persistent session id" />
+                </label>
                 <label class="settings-check">
                   <input id="auto-compile-after-chat" type="checkbox" />
                   <span>Auto compile after chat edits</span>
+                </label>
+                <label class="settings-check">
+                  <input id="agent-context-pack" type="checkbox" />
+                  <span>Send full AAPS grammar/project context to backend agents</span>
+                </label>
+                <label class="settings-check">
+                  <input id="auto-save-agent-edits" type="checkbox" />
+                  <span>Version and save agent edits automatically</span>
                 </label>
               </div>
               <div class="form-actions">
