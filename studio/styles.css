@@ -154,12 +154,12 @@ main {
 
 [data-panel="lab"] {
   grid-template-columns: minmax(280px, 0.72fr) minmax(420px, 1.28fr);
-  min-height: calc(100svh - 72px);
+  height: calc(100svh - 72px);
 }
 
 [data-panel="program"] {
   grid-template-columns: minmax(300px, 0.82fr) minmax(420px, 1.1fr) minmax(320px, 0.9fr);
-  min-height: calc(100svh - 72px);
+  height: calc(100svh - 72px);
 }
 
 [data-panel="project"] {
@@ -210,11 +210,15 @@ main {
 }
 
 .inspector-panel,
-.tree-panel,
 .editor-panel,
 .ir-panel {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.tree-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .tree,
@@ -481,7 +485,8 @@ main {
 }
 
 .block-browser .node-card {
-  background: rgba(255, 255, 255, 0.92);
+  background:
+    linear-gradient(135deg, rgba(102, 95, 117, 0.08), rgba(255, 255, 255, 0.94));
 }
 
 .block-file-section {
@@ -527,6 +532,18 @@ main {
   color: var(--ink);
   font-size: 13px;
   font-weight: 500;
+}
+
+.inspector-form textarea {
+  min-height: 74px;
+  max-height: 180px;
+  overflow: auto;
+  resize: vertical;
+}
+
+#field-prompt,
+#field-code {
+  max-height: 260px;
 }
 
 .block-chat-box {
@@ -914,6 +931,8 @@ main {
 
 .run-qc-review textarea {
   min-height: 54px;
+  max-height: 130px;
+  overflow: auto;
   resize: vertical;
 }
 
@@ -1009,7 +1028,8 @@ main {
   border: 1px solid var(--line);
   border-left: 8px solid var(--pink);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.97);
+  background:
+    linear-gradient(135deg, rgba(102, 95, 117, 0.07), rgba(255, 255, 255, 0.96));
   cursor: grab;
 }
 
@@ -1018,7 +1038,18 @@ main {
 }
 
 .node-card.is-selected {
-  outline: 3px solid rgba(255, 79, 139, 0.22);
+  border-color: rgba(255, 79, 139, 0.76);
+  background:
+    linear-gradient(135deg, rgba(255, 79, 139, 0.18), rgba(255, 159, 28, 0.11)),
+    #fff;
+  box-shadow:
+    0 0 0 3px rgba(255, 79, 139, 0.18),
+    0 16px 34px rgba(255, 79, 139, 0.16);
+  outline: 0;
+}
+
+.node-card.is-selected .node-id {
+  color: #a21caf;
 }
 
 .node-top {
@@ -1060,7 +1091,7 @@ main {
 }
 
 .ir-panel {
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .project-manifest-panel,
@@ -1068,10 +1099,6 @@ main {
 .project-structure-panel {
   display: grid;
   grid-template-rows: auto auto 1fr;
-}
-
-.project-manifest-panel {
-  grid-column: 1 / -1;
 }
 
 .project-structure-panel {
@@ -1136,7 +1163,10 @@ main {
 }
 
 .program-controls {
-  padding: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 6px;
+  padding: 10px;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(248, 254, 255, 0.86));
 }
@@ -1155,6 +1185,31 @@ main {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+}
+
+.program-controls .program-active-summary,
+.program-controls .form-actions {
+  grid-column: 1 / -1;
+}
+
+.program-controls .form-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.program-controls .form-actions button {
+  min-height: 34px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.program-controls .program-active-summary {
+  overflow: hidden;
+  min-height: 34px;
+  padding: 8px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .program-active-summary,
@@ -1393,12 +1448,28 @@ main {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   font-weight: 700;
+  color: #352f42;
+  background:
+    linear-gradient(135deg, rgba(102, 95, 117, 0.08), rgba(255, 250, 244, 0.96));
+  border-color: rgba(235, 231, 244, 0.98);
 }
 
 .project-file.is-active {
   color: #fff;
-  background: var(--violet);
+  background:
+    linear-gradient(135deg, var(--violet), #ff4f8b);
   border-color: var(--violet);
+  box-shadow: 0 10px 22px rgba(124, 58, 237, 0.22);
+}
+
+.project-file.is-selected-file {
+  color: #fff;
+  background:
+    linear-gradient(135deg, #06b6d4, var(--violet));
+  border-color: #06b6d4;
+  box-shadow:
+    0 0 0 3px rgba(6, 182, 212, 0.16),
+    0 12px 26px rgba(6, 182, 212, 0.18);
 }
 
 .project-file:focus-visible,

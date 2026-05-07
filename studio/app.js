@@ -442,7 +442,7 @@ function renderProject(payload = currentProjectPayload) {
         ${categoryFiles
           .map(
             (file) => `
-              <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
+              <button class="${escapeAttr(projectFileClasses(file, manifest))}" type="button" data-project-file="${escapeHtml(file)}" aria-pressed="${activeFileMatches(file, manifest) ? "true" : "false"}">
                 <span>${escapeHtml(file)}</span>
                 <span>${files.includes(file) ? "found" : "listed"}</span>
               </button>
@@ -459,7 +459,7 @@ function renderProject(payload = currentProjectPayload) {
         ${scriptFiles
           .map(
             (file) => `
-                <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
+                <button class="${escapeAttr(projectFileClasses(file, manifest))}" type="button" data-project-text-file="${escapeHtml(file)}" aria-pressed="${activeFileMatches(file, manifest) ? "true" : "false"}">
                 <span>${escapeHtml(file)}</span>
                 <span>script</span>
               </button>
@@ -482,7 +482,7 @@ function renderProject(payload = currentProjectPayload) {
         ${categoryFiles
           .map(
             (file) => `
-              <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-text-file="${escapeHtml(file)}">
+              <button class="${escapeAttr(projectFileClasses(file, manifest))}" type="button" data-project-text-file="${escapeHtml(file)}" aria-pressed="${activeFileMatches(file, manifest) ? "true" : "false"}">
                 <span>${escapeHtml(file)}</span>
                 <span>${label}</span>
               </button>
@@ -1737,6 +1737,15 @@ function activeFileMatches(file, manifest) {
   );
 }
 
+function projectFileClasses(file, manifest) {
+  const classes = ["project-file"];
+  if (activeFileMatches(file, manifest)) classes.push("is-active");
+  if (file === selectedWorkflowFile || file === selectedProgramFile || file === selectedBlockFile) {
+    classes.push("is-selected-file");
+  }
+  return classes.join(" ");
+}
+
 function renderProgramSelectors(manifest) {
   if (!programWorkflowSelectEl || !programBlockSelectEl) return;
   const workflows = [
@@ -1911,7 +1920,7 @@ function renderNode(node, ref, depth = 0) {
     .map((child, index) => renderNode(child, `${ref}/children:${index}`, depth + 1))
     .join("");
   return `
-    <article class="node-card${selectedClass}" data-ref="${escapeHtml(ref)}" draggable="true" style="border-left-color:${nodeColor(node.kind)}">
+    <article class="node-card${selectedClass}" data-ref="${escapeHtml(ref)}" draggable="true" tabindex="0" aria-selected="${ref === selectedRef ? "true" : "false"}" style="border-left-color:${nodeColor(node.kind)}">
       <div class="node-top">
         <div>
           <div class="node-kind">${escapeHtml(node.kind)}</div>
@@ -1973,7 +1982,7 @@ function renderProjectBlockFiles() {
               ${groupFiles
                 .map(
                   (file) => `
-                    <button class="project-file${activeFileMatches(file, manifest) ? " is-active" : ""}" type="button" data-project-file="${escapeHtml(file)}">
+                    <button class="${escapeAttr(projectFileClasses(file, manifest))}" type="button" data-project-file="${escapeHtml(file)}" aria-pressed="${activeFileMatches(file, manifest) ? "true" : "false"}">
                       <span>${escapeHtml(file)}</span>
                       <span>${(currentProjectPayload.files || []).includes(file) ? "found" : "listed"}</span>
                     </button>
