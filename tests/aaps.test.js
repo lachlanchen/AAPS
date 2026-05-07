@@ -571,6 +571,49 @@ const microscopyForceScript = fs.readFileSync(path.join(microscopyScriptProject,
 assert(microscopyForceScript.includes("AAPS generated TIFF microscopy segmentation preview script"));
 assert(!microscopyForceScript.includes("print('stale')"));
 
+const neutralMicroscopyProject = path.join(__dirname, "..", ".aaps-work", "tests", "compiler-neutral-microscopy-script-project");
+fs.rmSync(neutralMicroscopyProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(neutralMicroscopyProject, "blocks"), { recursive: true });
+fs.writeFileSync(
+  path.join(neutralMicroscopyProject, "aaps.project.json"),
+  JSON.stringify({ name: "compiler-neutral-microscopy-script-project", activeFile: "blocks/neutral_preview.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(neutralMicroscopyProject, "blocks", "neutral_preview.aaps"),
+  `pipeline "Neutral Filename Microscopy Compile" {
+  domain "biology"
+  block neutral_step {
+    purpose "Compile a TIFF microscopy segmentation preview that writes masks, overlays, per-image metrics, summary tables, a figure, report, and run manifest."
+    input data_root: artifact required = "data/DEO App81 P8"
+    input image_glob: text optional = "**/*10x*.tif"
+    input output_root: artifact optional = "outputs/neutral"
+    output per_image_metrics_csv: table = "${"${input.output_root}"}/databases/per_image_metrics.csv"
+    output summary_figure: image = "${"${input.output_root}"}/figures/app81_deo_segmentation_summary.png"
+    requires_files "scripts/do_work.py"
+    exec python_script "scripts/do_work.py"
+    arg data_root = "${"${input.data_root}"}"
+    arg image_glob = "${"${input.image_glob}"}"
+    arg output_root = "${"${input.output_root}"}"
+    arg preview_limit = "3"
+    arg method_hint = "cellpose_then_threshold_fallback"
+  }
+}
+`,
+  "utf8"
+);
+const neutralMicroscopyCompileApply = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "compile", "blocks/neutral_preview.aaps", "--project", ".aaps-work/tests/compiler-neutral-microscopy-script-project", "--mode", "apply", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(neutralMicroscopyCompileApply.status, 0, neutralMicroscopyCompileApply.stderr || neutralMicroscopyCompileApply.stdout);
+const neutralMicroscopyScript = fs.readFileSync(path.join(neutralMicroscopyProject, "scripts", "do_work.py"), "utf8");
+assert(neutralMicroscopyScript.includes("AAPS generated TIFF microscopy segmentation preview script"));
+assert(neutralMicroscopyScript.includes("--data-root"));
+assert(neutralMicroscopyScript.includes("--output-root"));
+assert(!neutralMicroscopyScript.includes("synthetic PGM image generator"));
+
 const folderDemoRun = childProcess.spawnSync(
   "node",
   [

@@ -893,6 +893,29 @@ function latestRunForNode(node) {
   return runs[0];
 }
 
+function nodeInputValues(node) {
+  return Object.fromEntries((node?.inputs || []).map((input) => [input.name, String(input.value || "")]));
+}
+
+function resolveNodePathTemplate(value, inputValues = {}) {
+  return String(value || "")
+    .replace(/\$\{input\.([A-Za-z_][\w.-]*)\}/g, (_match, name) => inputValues[name] || "")
+    .replace(/^\/+/, "");
+}
+
+function artifactRootsForNode(node) {
+  const roots = new Set();
+  const inputValues = nodeInputValues(node);
+  if (inputValues.output_root) roots.add(inputValues.output_root.replace(/^\/+/, "").replace(/\/+$/, ""));
+  [...(node?.outputs || []), ...(node?.artifacts || [])].forEach((item) => {
+    const resolved = resolveNodePathTemplate(item.value || item.path || "", inputValues).replace(/\/+$/, "");
+    if (!resolved || resolved.includes("${")) return;
+    const hasFileExtension = /\.[A-Za-z0-9]{1,8}$/.test(resolved.split("/").pop() || "");
+    roots.add(hasFileExtension ? resolved.split("/").slice(0, -1).join("/") : resolved);
+  });
+  return [...roots].filter(Boolean).sort((a, b) => a.length - b.length);
+}
+
 function renderBlockCanvas(payload = null) {
   if (!blockCanvasEl) return;
   const items = payload?.canvasItems || payload?.previewRun?.canvasItems || [];
@@ -904,8 +927,14 @@ function renderBlockCanvas(payload = null) {
       const run = latestRun.runSummary;
       const passed = Number(run.validations || 0) - Number(run.failedValidations || 0);
       const runBase = String(latestRun.path || "").replace(/\/run\.json$/, "");
+      const declaredRoots = artifactRootsForNode(selected);
       const relatedItems = (currentArtifacts.items || [])
-        .filter((item) => runBase && item.path && item.path.startsWith(`${runBase}/`) && item.path !== latestRun.path)
+        .filter((item) => {
+          const itemPath = String(item.path || "");
+          if (!itemPath || itemPath === latestRun.path) return false;
+          if (runBase && itemPath.startsWith(`${runBase}/`)) return true;
+          return declaredRoots.some((root) => itemPath === root || itemPath.startsWith(`${root}/`));
+        })
         .slice(0, 80);
       const previewImages = relatedItems
         .filter((item) => item.kind === "image" && Number(item.size || 0) <= 2_500_000)
@@ -928,7 +957,8 @@ function renderBlockCanvas(payload = null) {
         .sort((a, b) => {
           const priority = (item) => {
             const value = String(item.path || "").toLowerCase();
-            if (value.endsWith("report.md")) return 0;
+            if (value.endsWith("report.md") && !value.includes("/aaps-runs/")) return 0;
+            if (value.endsWith("report.md")) return 1;
             if (value.endsWith("run_manifest.json")) return 1;
             if (value.endsWith("method_selection.json")) return 2;
             if (value.includes("per_image_metrics")) return 3;
@@ -1896,6 +1926,7 @@ function fillInspector(node) {
   fields.fallback.value = node.fallback || "";
   fields.reviews.value = (node.reviews || []).join("\n");
   renderSelectedReadiness(lastRuntimeResult);
+  renderBlockCanvas(null);
 }
 
 function render() {

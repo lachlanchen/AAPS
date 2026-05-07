@@ -98,7 +98,7 @@ function inferKind(name, context = {}) {
   if (/qc|quality|inspect/.test(text)) return "qc";
   if (/quantif|measure|metric|object/.test(text)) return "quantify";
   if (/summar|batch|report/.test(text)) return "summarize";
-  if (/generate|synthetic|demo/.test(text)) return "generate_images";
+  if (/generate[_ -]?images|synthetic|demo image|image generator/.test(text)) return "generate_images";
   if (/static|scan|project|app/.test(text)) return "static_check";
   return "generic";
 }
@@ -436,9 +436,9 @@ def main() -> int:
     parser.add_argument("--data-root", required=True)
     parser.add_argument("--image-glob", default="**/*10x*.tif")
     parser.add_argument("--condition-map", default="")
-    parser.add_argument("--out-dir", "--output-dir", required=True)
+    parser.add_argument("--out-dir", "--output-dir", "--output-root", dest="out_dir", required=True)
     parser.add_argument("--preview-limit", type=int, default=3)
-    parser.add_argument("--method", default="auto")
+    parser.add_argument("--method", "--method-hint", dest="method", default="auto")
     args, _unknown = parser.parse_known_args()
 
     data_root = Path(args.data_root)
@@ -477,9 +477,10 @@ def main() -> int:
 
     masks_dir = out_dir / "masks"
     overlays_dir = out_dir / "overlays"
+    stats_dir = out_dir / "stats"
     db_dir = out_dir / "databases"
     figures_dir = out_dir / "figures"
-    for folder in [masks_dir, overlays_dir, db_dir, figures_dir]:
+    for folder in [masks_dir, overlays_dir, stats_dir, db_dir, figures_dir]:
         folder.mkdir(parents=True, exist_ok=True)
 
     rows = []
@@ -526,6 +527,7 @@ def main() -> int:
             "overlay_path": str(overlay_path),
         }
         rows.append(row)
+        (stats_dir / f"{row['image_id']}.segmentation_stats.json").write_text(json.dumps(row, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
         log_lines.append(f"{index}. {image_path} -> objects={object_count}, foreground_fraction={foreground_fraction:.6f}, qc={row['qc_flag']}")
 
     summary_rows = summarize(rows)
@@ -536,20 +538,38 @@ def main() -> int:
     figure_path = figures_dir / "app81_deo_segmentation_summary.png"
     report_path = out_dir / "report.md"
     manifest_path = out_dir / "run_manifest.json"
+    image_manifest_json = out_dir / "manifest.json"
+    image_manifest_csv = out_dir / "manifest.csv"
+    result_path = out_dir / "result.json"
+    stdout_log = logs_dir / "segmentation-stdout.log"
+    stderr_log = logs_dir / "segmentation-stderr.log"
 
     write_csv(per_image_csv, rows, REQUIRED_COLUMNS)
     per_image_json.write_text(json.dumps({"rows": rows, "row_count": len(rows)}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
     write_csv(summary_csv, summary_rows, ["condition", "image_count", "total_objects", "total_foreground_area", "mean_foreground_fraction", "mean_object_area"])
     summary_json.write_text(json.dumps({"rows": summary_rows, "row_count": len(summary_rows)}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
     save_summary_figure(summary_rows, figure_path)
+    manifest_rows = [
+        {
+            "image_id": row["image_id"],
+            "image_path": row["image_path"],
+            "mask_path": row["mask_path"],
+            "overlay_path": row["overlay_path"],
+            "qc_flag": row["qc_flag"],
+        }
+        for row in rows
+    ]
+    write_csv(image_manifest_csv, manifest_rows, ["image_id", "image_path", "mask_path", "overlay_path", "qc_flag"])
+    image_manifest_json.write_text(json.dumps({"images": manifest_rows, "image_count": len(manifest_rows)}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
 
-    required_paths = [manifest_path, masks_dir, overlays_dir, per_image_csv, per_image_json, summary_csv, summary_json, figure_path, report_path]
+    required_paths = [manifest_path, image_manifest_json, image_manifest_csv, masks_dir, overlays_dir, stats_dir, per_image_csv, per_image_json, summary_csv, summary_json, figure_path, report_path, result_path, stdout_log, stderr_log]
     manifest = {
         "ok": True,
         "method": selected_method,
         "fallback_reason": fallback_reason,
         "data_root": str(data_root),
         "image_glob": args.image_glob,
+        "output_root": str(out_dir),
         "processed_count": len(rows),
         "mask_count": len(list(masks_dir.glob("*.png"))),
         "overlay_count": len(list(overlays_dir.glob("*.png"))),
@@ -578,6 +598,9 @@ def main() -> int:
     debug_log.write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
     alt_debug_log.write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
     (out_dir / "app81_deo_segmentation_debug.log").write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
+    stdout_log.write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
+    stderr_log.write_text("", encoding="utf-8")
+    result_path.write_text(json.dumps({"ok": True, "run_manifest": str(manifest_path), "processed_count": len(rows), "outputs": manifest}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
 
     missing = [str(path) for path in required_paths if not path.exists()]
     if missing:
@@ -1215,6 +1238,7 @@ function forceScriptTargets(plan) {
 function generateAssets({ projectDir, compileDir, mode, missingComponents, loadedFile, manualTarget, manualKind, plan }) {
   const generatedFiles = [];
   const modifiedFiles = [];
+  const stepById = new Map(((plan && plan.steps) || []).map((step) => [step.id, step]));
   const manualMissing = manualTarget
     ? [{ type: manualKind === "script" ? "missing_script" : "missing_block", name: manualTarget, block: manualTarget, safeAutoAction: manualKind === "script" ? "generate_script" : "generate_block" }]
     : [];
@@ -1245,7 +1269,13 @@ function generateAssets({ projectDir, compileDir, mode, missingComponents, loade
     if (missing.type === "missing_script" || missing.type === "force_script") {
       const scriptFile = missing.expected || missing.name;
       if (!scriptFile || /\$\{/.test(scriptFile)) return;
-      const scriptRecord = writeGenerated(projectDir, compileDir, mode, scriptFile, pythonScriptFor(inferKind(scriptFile, missing)), `generate missing script ${scriptFile}`, {
+      const step = stepById.get(missing.block);
+      const context = {
+        ...missing,
+        step,
+        contract: step && step.contract ? step.contract : {},
+      };
+      const scriptRecord = writeGenerated(projectDir, compileDir, mode, scriptFile, pythonScriptFor(inferKind(scriptFile, context)), `generate missing script ${scriptFile}`, {
         kind: "script",
         block: missing.block || "",
         agent: "aaps_internal_compiler",
