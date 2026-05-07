@@ -800,6 +800,59 @@ function runManifestPreviewHtml(manifest, manifestPath) {
   `;
 }
 
+function qcComparisonHtml(review) {
+  const items = Array.isArray(review?.comparisonItems) ? review.comparisonItems.slice(0, 4) : [];
+  const method = review?.method || {};
+  if (!items.length) {
+    return `
+      <div class="qc-comparison-panel empty">
+        <strong>Artifact comparison</strong>
+        <span>No paired mask/overlay artifacts were found for this run yet.</span>
+      </div>
+    `;
+  }
+  return `
+    <div class="qc-comparison-panel">
+      <div class="qc-comparison-head">
+        <div>
+          <strong>Side-by-side segmentation QC</strong>
+          <span>${escapeHtml(method.method || "method not recorded")}${method.fallbackReason ? ` · ${escapeHtml(method.fallbackReason)}` : ""}</span>
+        </div>
+        <small>${items.length} preview pair${items.length === 1 ? "" : "s"}</small>
+      </div>
+      <div class="qc-comparison-grid">
+        ${items
+          .map(
+            (item) => `
+              <article class="qc-comparison-card">
+                <header>
+                  <strong>${escapeHtml(item.imageId || "image")}</strong>
+                  <span>${escapeHtml(item.condition || item.qcFlag || "")}</span>
+                </header>
+                <div class="qc-image-pair">
+                  <figure>
+                    <img src="${escapeAttr(artifactFileUrl(item.overlayPath))}" alt="Overlay for ${escapeAttr(item.imageId || "image")}">
+                    <figcaption>Overlay</figcaption>
+                  </figure>
+                  <figure>
+                    <img src="${escapeAttr(artifactFileUrl(item.maskPath))}" alt="Mask for ${escapeAttr(item.imageId || "image")}">
+                    <figcaption>Mask</figcaption>
+                  </figure>
+                </div>
+                <footer>
+                  <span>objects ${escapeHtml(item.objectCount ?? "n/a")}</span>
+                  <span>foreground ${escapeHtml(item.foregroundFraction ?? "n/a")}</span>
+                  <span>${escapeHtml(item.method || "")}</span>
+                </footer>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
 function qcReviewHtml(runPath, review) {
   const status = review?.status || "unreviewed";
   const historyCount = Number(review?.historyCount || 0);
@@ -816,6 +869,7 @@ function qcReviewHtml(runPath, review) {
         <span>${Number(review?.maskCount || 0)} masks</span>
         <span>${escapeHtml(review?.reviewPath || "")}</span>
       </div>
+      ${qcComparisonHtml(review)}
       <label>QC notes
         <textarea data-qc-notes rows="3" placeholder="Example: overlays are acceptable, but low-density images need a higher min_area.">${escapeHtml(review?.notes || "")}</textarea>
       </label>
@@ -826,10 +880,33 @@ function qcReviewHtml(runPath, review) {
         <button type="button" data-qc-action="accepted">Accept QC</button>
         <button type="button" data-qc-action="needs_refinement">Needs Refinement</button>
         <button type="button" data-qc-action="rejected">Reject QC</button>
+        <button type="button" data-qc-rerun="refinement">Run Refinement Preview</button>
       </div>
+      <small data-qc-rerun-status>Refinement runs use the selected block/program and write a new durable run.</small>
       <small>QC decisions are written into the run directory and indexed under .aaps-work/qc for later refinement.</small>
     </div>
   `;
+}
+
+function parseRefinementOverrides(text) {
+  const aliases = {
+    minArea: "min_mask_pixels",
+    min_area: "min_mask_pixels",
+    minSize: "min_mask_pixels",
+    min_size: "min_mask_pixels",
+  };
+  const overrides = {};
+  const pattern = /([A-Za-z_][\w.-]*)\s*=\s*("[^"]*"|'[^']*'|[^,\n;\s]+)/g;
+  let match = pattern.exec(text || "");
+  while (match) {
+    const key = aliases[match[1]] || match[1];
+    if (/^[A-Za-z_][\w.-]*$/.test(key)) {
+      const rawValue = match[2] || "";
+      overrides[key] = rawValue.replace(/^["']|["']$/g, "");
+    }
+    match = pattern.exec(text || "");
+  }
+  return overrides;
 }
 
 async function loadQcReview(runPath) {
@@ -858,6 +935,40 @@ async function saveQcReview(runPath, status) {
   if (!response.ok) throw new Error(review.error || `QC review save returned ${response.status}`);
   card.outerHTML = qcReviewHtml(runPath, review);
   await loadArtifacts(projectPathEl.value || ".");
+}
+
+async function runQcRefinement(runPath) {
+  const card = document.querySelector(`[data-qc-run="${CSS.escape(runPath)}"]`);
+  if (!card) return;
+  const statusEl = card.querySelector("[data-qc-rerun-status]");
+  const manifest = getProjectManifest();
+  if (manifest.error) throw new Error(manifest.error);
+  const selectedNode = nodeRefs.get(selectedRef);
+  const file = selectedBlockFile || selectedProgramFile || selectedWorkflowFile || manifest.activeFile || manifest.defaultMain || "pipeline.aaps";
+  const inputOverrides = parseRefinementOverrides(card.querySelector("[data-qc-params]")?.value || "");
+  if (statusEl) statusEl.textContent = `Submitting refinement run for ${file}${Object.keys(inputOverrides).length ? ` with ${JSON.stringify(inputOverrides)}` : ""}...`;
+  const response = await fetch("/api/aaps/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: projectPathEl.value || ".",
+      file,
+      source: sourceForExecution(file),
+      dryRun: false,
+      block: selectedNode?.id || "",
+      inputOverrides,
+    }),
+  });
+  const record = await response.json();
+  if (!response.ok) throw new Error(record.error || `refinement run returned ${response.status}`);
+  activeRunId = record.id;
+  renderRuntime(record);
+  if (statusEl) statusEl.textContent = `Refinement run ${record.id} submitted; polling until outputs are durable.`;
+  pollRun(record.id).catch((error) => {
+    runStatusEl.textContent = "poll failed";
+    runLogEl.textContent = error.message;
+    if (statusEl) statusEl.textContent = `Refinement poll failed: ${error.message}`;
+  });
 }
 
 async function loadRunCanvasDetails(runPath, keyFiles) {
@@ -3227,9 +3338,18 @@ artifactListEl?.addEventListener("click", (event) => {
 
 blockCanvasEl?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-qc-action]");
-  if (!button) return;
-  const card = button.closest("[data-qc-run]");
+  const rerunButton = event.target.closest("[data-qc-rerun]");
+  const target = button || rerunButton;
+  if (!target) return;
+  const card = target.closest("[data-qc-run]");
   if (!card) return;
+  if (rerunButton) {
+    runQcRefinement(card.dataset.qcRun).catch((error) => {
+      blockLogEl.textContent = error.message;
+      addMessage("assistant", `Could not run QC refinement: ${error.message}`);
+    });
+    return;
+  }
   saveQcReview(card.dataset.qcRun, button.dataset.qcAction).catch((error) => {
     blockLogEl.textContent = error.message;
     addMessage("assistant", `Could not save QC review: ${error.message}`);

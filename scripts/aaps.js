@@ -38,6 +38,7 @@ function usage() {
     "  --port <port>     Studio port for `aaps studio`.",
     "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
     "  --run-id <id>     Stable run identifier for reproducible test runs.",
+    "  --set <name=value> Override an AAPS input or parameter at runtime; repeatable.",
     "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --backend <name>  Prompt backend for direct goals. Defaults to aginti.",
     "  --provider <name> Provider passed to AgInTi backend.",
@@ -66,9 +67,13 @@ function parseArgs(argv) {
     }
     const key = item.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     const next = argv[index + 1];
-    if (!next || next.startsWith("--")) options[key] = true;
+    if (!next || next.startsWith("--")) {
+      if (key === "set") options.set = [...(Array.isArray(options.set) ? options.set : []), "true"];
+      else options[key] = true;
+    }
     else {
-      options[key] = next;
+      if (key === "set") options.set = [...(Array.isArray(options.set) ? options.set : []), next];
+      else options[key] = next;
       index += 1;
     }
   }
@@ -475,6 +480,9 @@ function runRunner(command, file, options) {
   if (options.block) args.push("--block", options.block);
   if (options.runRoot) args.push("--run-root", options.runRoot);
   if (options.runId) args.push("--run-id", options.runId);
+  (Array.isArray(options.set) ? options.set : options.set ? [options.set] : []).forEach((item) => {
+    args.push("--set", item);
+  });
   if (options.dryRun) args.push("--dry-run");
   if (options.json) args.push("--json");
   const result = childProcess.spawnSync("node", args, {

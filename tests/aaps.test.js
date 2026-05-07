@@ -772,12 +772,15 @@ fs.writeFileSync(
   `pipeline "Parameter Runtime Context" {
   block parent_block {
     param min_mask_pixels = "50"
+    param min_rows = "1"
     output observed: text = "${"${run.artifacts}"}/param.txt"
+    output observed_table: table = "${"${run.artifacts}"}/rows.csv"
     stage write_stage {
       action write_param {
-        exec shell "mkdir -p ${"${run.artifacts}"} && printf '%s' '${"${param.min_mask_pixels}"}' > '${"${output.observed}"}'"
+        exec shell "mkdir -p ${"${run.artifacts}"} && printf '%s' '${"${param.min_mask_pixels}"}' > '${"${output.observed}"}' && printf 'name\\napp81\\n' > '${"${output.observed_table}"}'"
         validate exists "${"${output.observed}"}"
         validate nonempty "${"${output.observed}"}"
+        validate csv_min_rows "${"${output.observed_table}"}" "${"${param.min_rows}"}"
       }
     }
   }
@@ -807,6 +810,35 @@ assert.strictEqual(parameterContextRun.status, 0, parameterContextRun.stderr || 
 const parameterContextRunJson = JSON.parse(parameterContextRun.stdout);
 assert.strictEqual(parameterContextRunJson.status, "succeeded");
 assert.strictEqual(fs.readFileSync(path.join(parameterContextRunJson.runDir, "artifacts", "param.txt"), "utf8"), "50");
+
+const parameterOverrideRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run-block",
+    "blocks/params.aaps",
+    "--project",
+    ".aaps-work/tests/parameter-context-project",
+    "--block",
+    "parent_block",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "parameter-override-runtime",
+    "--set",
+    "param.min_mask_pixels=75",
+    "--set",
+    "unknown_preview_knob=1",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(parameterOverrideRun.status, 0, parameterOverrideRun.stderr || parameterOverrideRun.stdout);
+const parameterOverrideRunJson = JSON.parse(parameterOverrideRun.stdout);
+assert.strictEqual(parameterOverrideRunJson.status, "succeeded");
+assert.strictEqual(fs.readFileSync(path.join(parameterOverrideRunJson.runDir, "artifacts", "param.txt"), "utf8"), "75");
+assert(parameterOverrideRunJson.runtimeOverrides.applied.some((item) => item.key === "min_mask_pixels" && item.value === "75"));
+assert.deepStrictEqual(parameterOverrideRunJson.runtimeOverrides.unmatched, ["unknown_preview_knob"]);
 
 const semanticValidationProject = path.join(__dirname, "..", ".aaps-work", "tests", "semantic-validation-project");
 fs.rmSync(semanticValidationProject, { recursive: true, force: true });

@@ -1139,6 +1139,111 @@ def qc_review_paths(project_dir: Path, run_path: str) -> tuple[Path, Path, str]:
     return run_dir, review_path, qc_index_path
 
 
+def project_artifact_relpath(project_dir: Path, value: str | Path) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    candidate = Path(text)
+    if not candidate.is_absolute():
+        candidate = project_dir / candidate
+    try:
+        candidate = candidate.resolve()
+        project_resolved = project_dir.resolve()
+        if not is_relative_to(candidate, project_resolved):
+            return ""
+        if not any(is_relative_to(candidate, root.resolve()) for root in artifact_roots(project_dir)):
+            return ""
+        return candidate.relative_to(project_resolved).as_posix()
+    except (OSError, ValueError):
+        return ""
+
+
+def read_json_file(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def read_qc_metric_rows(run_dir: Path) -> list[dict]:
+    candidates = [
+        run_dir / "artifacts" / "databases" / "per_image_metrics.json",
+        run_dir / "artifacts" / "per_image_metrics.json",
+    ]
+    for candidate in candidates:
+        payload = read_json_file(candidate)
+        rows = payload.get("rows") if isinstance(payload, dict) else None
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def read_run_method_summary(run_dir: Path) -> dict:
+    manifest = read_json_file(run_dir / "artifacts" / "run_manifest.json")
+    selection = read_json_file(run_dir / "method_selection.json")
+    selections = selection.get("selections") if isinstance(selection.get("selections"), list) else []
+    latest = selections[-1] if selections else {}
+    return {
+        "method": str(manifest.get("method") or latest.get("selected") or ""),
+        "fallbackReason": str(manifest.get("fallback_reason") or ""),
+        "processedCount": manifest.get("processed_count"),
+        "maskCount": manifest.get("mask_count"),
+        "overlayCount": manifest.get("overlay_count"),
+        "selectedPath": str(latest.get("selectedPath") or ""),
+        "candidates": latest.get("candidates") if isinstance(latest.get("candidates"), list) else [],
+    }
+
+
+def build_qc_comparison_items(project_dir: Path, run_dir: Path, overlays: list[Path], masks: list[Path]) -> list[dict]:
+    by_stem = {}
+    for mask in masks:
+        stem = mask.name.replace(".mask.png", "").replace(".png", "")
+        by_stem[stem] = mask
+    items: list[dict] = []
+    metric_rows = read_qc_metric_rows(run_dir)
+    for row in metric_rows:
+        overlay_rel = project_artifact_relpath(project_dir, row.get("overlay_path") or "")
+        mask_rel = project_artifact_relpath(project_dir, row.get("mask_path") or "")
+        if not overlay_rel or not mask_rel:
+            continue
+        items.append(
+            {
+                "imageId": str(row.get("image_id") or Path(overlay_rel).stem),
+                "overlayPath": overlay_rel,
+                "maskPath": mask_rel,
+                "condition": str(row.get("condition") or ""),
+                "qcFlag": str(row.get("qc_flag") or ""),
+                "objectCount": row.get("object_count"),
+                "foregroundFraction": row.get("foreground_fraction"),
+                "method": str(row.get("method") or ""),
+            }
+        )
+        if len(items) >= 8:
+            return items
+    if items:
+        return items
+    for overlay in overlays:
+        stem = overlay.name.replace(".overlay.png", "").replace(".png", "")
+        mask = by_stem.get(stem)
+        if not mask:
+            continue
+        items.append(
+            {
+                "imageId": stem,
+                "overlayPath": project_artifact_relpath(project_dir, overlay),
+                "maskPath": project_artifact_relpath(project_dir, mask),
+                "condition": "",
+                "qcFlag": "",
+                "objectCount": None,
+                "foregroundFraction": None,
+                "method": "",
+            }
+        )
+        if len(items) >= 8:
+            break
+    return [item for item in items if item.get("overlayPath") and item.get("maskPath")]
+
+
 def read_qc_review(project_dir: Path, run_path: str) -> dict:
     run_dir, review_path, qc_index_path = qc_review_paths(project_dir, run_path)
     payload: dict = {}
@@ -1162,6 +1267,7 @@ def read_qc_review(project_dir: Path, run_path: str) -> dict:
     overlays = sorted((run_dir / "artifacts" / "overlays").glob("*.png")) if (run_dir / "artifacts" / "overlays").exists() else []
     masks = sorted((run_dir / "artifacts" / "masks").glob("*.png")) if (run_dir / "artifacts" / "masks").exists() else []
     history = payload.get("history") if isinstance(payload.get("history"), list) else []
+    comparison_items = build_qc_comparison_items(project_dir, run_dir, overlays, masks)
     return {
         "ok": True,
         "project_path": project_label(project_dir),
@@ -1176,6 +1282,8 @@ def read_qc_review(project_dir: Path, run_path: str) -> dict:
         "historyCount": len(history),
         "overlayCount": len(overlays),
         "maskCount": len(masks),
+        "comparisonItems": comparison_items,
+        "method": read_run_method_summary(run_dir),
         "reviewPath": review_path.relative_to(project_dir).as_posix(),
         "indexPath": qc_index_path.relative_to(project_dir).as_posix(),
     }
@@ -1232,6 +1340,36 @@ def write_qc_review(project_dir: Path, payload: dict) -> dict:
     result = read_qc_review(project_dir, run_dir.relative_to(project_dir).as_posix())
     result["previousSnapshot"] = snapshot
     return result
+
+
+def parse_runtime_input_overrides(body: dict) -> dict[str, str]:
+    raw = body.get("inputOverrides") or body.get("runtimeOverrides") or body.get("set") or {}
+    items: list[tuple[str, object]] = []
+    if isinstance(raw, dict):
+        items = list(raw.items())
+    elif isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, str) and "=" in entry:
+                key, value = entry.split("=", 1)
+                items.append((key, value))
+            elif isinstance(entry, dict):
+                key = entry.get("key") or entry.get("name")
+                if key:
+                    items.append((str(key), entry.get("value", "")))
+    elif isinstance(raw, str) and raw.strip():
+        for chunk in re.split(r"[\n,;]+", raw):
+            if "=" in chunk:
+                key, value = chunk.split("=", 1)
+                items.append((key, value))
+    overrides: dict[str, str] = {}
+    for key, value in items:
+        clean_key = re.sub(r"^(input|param|parameter)\.", "", str(key).strip(), flags=re.IGNORECASE)
+        if not clean_key:
+            continue
+        if not re.fullmatch(r"[A-Za-z_][\w.-]*", clean_key):
+            raise ValueError(f"invalid runtime override key: {key}")
+        overrides[clean_key] = str(value)
+    return overrides
 
 
 def write_project_artifact_file(handler: SimpleHTTPRequestHandler, project_dir: Path, file_name: str) -> None:
@@ -3059,6 +3197,7 @@ def start_aaps_run(body: dict) -> dict:
     project_arg_value = project_arg(project_dir)
     dry_run = bool(body.get("dryRun") or body.get("dry_run"))
     block = str(body.get("block") or body.get("blockId") or "").strip()
+    input_overrides = parse_runtime_input_overrides(body)
     source = str(body.get("source") or "")
     file_name = str(body.get("file") or "").strip()
     source_path = ""
@@ -3082,6 +3221,7 @@ def start_aaps_run(body: dict) -> dict:
         "file": file_name,
         "dryRun": dry_run,
         "block": block,
+        "inputOverrides": input_overrides,
         "result": None,
         "error": "",
     }
@@ -3109,6 +3249,8 @@ def start_aaps_run(body: dict) -> dict:
             command.append("--dry-run")
         if block:
             command.extend(["--block", block])
+        for key, value in input_overrides.items():
+            command.extend(["--set", f"{key}={value}"])
         try:
             process = subprocess.run(
                 command,

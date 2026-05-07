@@ -13,13 +13,96 @@ function parseArgs(argv) {
     if (!item.startsWith("--")) continue;
     const key = item.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     const next = argv[index + 1];
-    if (!next || next.startsWith("--")) args[key] = true;
+    if (!next || next.startsWith("--")) {
+      if (key === "set") args.set = [...(Array.isArray(args.set) ? args.set : []), "true"];
+      else args[key] = true;
+    }
     else {
-      args[key] = next;
+      if (key === "set") args.set = [...(Array.isArray(args.set) ? args.set : []), next];
+      else args[key] = next;
       index += 1;
     }
   }
   return args;
+}
+
+function normalizeRuntimeOverrideKey(rawKey) {
+  const key = String(rawKey || "")
+    .trim()
+    .replace(/^(input|param|parameter)\./i, "");
+  if (!/^[A-Za-z_][\w.-]*$/.test(key)) {
+    throw new Error(`Invalid runtime override key: ${rawKey}`);
+  }
+  return key;
+}
+
+function parseRuntimeOverrides(rawValue) {
+  const values = Array.isArray(rawValue) ? rawValue : rawValue ? [rawValue] : [];
+  return values
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => {
+      const separator = item.indexOf("=");
+      if (separator < 1) throw new Error(`Runtime override must use name=value syntax: ${item}`);
+      return {
+        key: normalizeRuntimeOverrideKey(item.slice(0, separator)),
+        value: item.slice(separator + 1),
+        raw: item,
+      };
+    });
+}
+
+function collectRuntimeNodes(ir) {
+  const nodes = [];
+  function walk(list) {
+    (list || []).forEach((node) => {
+      nodes.push(node);
+      walk(node.children || []);
+    });
+  }
+  const pipeline = ir.pipeline || {};
+  walk(pipeline.agents || []);
+  walk(pipeline.blocks || []);
+  walk(pipeline.skills || []);
+  walk(pipeline.tasks || []);
+  return nodes;
+}
+
+function applyOverrideToPorts(ports, override, target, applied) {
+  (ports || []).forEach((port) => {
+    if (port && port.name === override.key) {
+      port.value = String(override.value);
+      applied.push({ key: override.key, value: String(override.value), target });
+    }
+  });
+}
+
+function applyOverrideToParams(params, override, target, applied) {
+  if (!params || typeof params !== "object" || !Object.prototype.hasOwnProperty.call(params, override.key)) return;
+  params[override.key] = String(override.value);
+  applied.push({ key: override.key, value: String(override.value), target });
+}
+
+function applyRuntimeOverrides(ir, overrides) {
+  const parsed = Array.isArray(overrides) ? overrides : [];
+  const applied = [];
+  const pipeline = ir.pipeline || {};
+  parsed.forEach((override) => {
+    applyOverrideToPorts(pipeline.inputPorts || pipeline.inputs, override, "pipeline.input", applied);
+    applyOverrideToParams(pipeline.params, override, "pipeline.param", applied);
+    collectRuntimeNodes(ir).forEach((node) => {
+      const label = `${node.kind || "node"}.${node.id || "unnamed"}`;
+      applyOverrideToPorts(node.inputs, override, `${label}.input`, applied);
+      applyOverrideToParams(node.params, override, `${label}.param`, applied);
+      applyOverrideToParams(node.parameters || (node.contract && node.contract.parameters), override, `${label}.parameter`, applied);
+    });
+  });
+  const appliedKeys = new Set(applied.map((item) => item.key));
+  return {
+    overrides: parsed.map((item) => ({ key: item.key, value: String(item.value) })),
+    applied,
+    unmatched: parsed.filter((item) => !appliedKeys.has(item.key)).map((item) => item.key),
+  };
 }
 
 function nowIso() {
@@ -483,7 +566,7 @@ function parseValidation(raw) {
     const hasComparator = /^[<>]=?|={1,2}$/.test(tokens[2] || "");
     const comparator = hasComparator ? tokens[2] : ">=";
     const expectedToken = hasComparator ? tokens[3] : tokens[2];
-    return { kind: "csv_rows", path: pathArg, comparator, expected: Number(expectedToken) };
+    return { kind: "csv_rows", path: pathArg, comparator, expected: expectedToken };
   }
   if (command === "csv_columns" || command === "table_columns") {
     return { kind: "csv_columns", path: pathArg, columns: parseColumnList(tokens.slice(2)) };
@@ -492,7 +575,7 @@ function parseValidation(raw) {
     const hasComparator = /^[<>]=?|={1,2}$/.test(tokens[2] || "");
     const comparator = hasComparator ? tokens[2] : ">=";
     const expectedToken = hasComparator ? tokens[3] : tokens[2];
-    return { kind: "file_size", path: pathArg, comparator, expected: Number(expectedToken) };
+    return { kind: "file_size", path: pathArg, comparator, expected: expectedToken };
   }
   return { kind: "manual", text };
 }
@@ -537,14 +620,15 @@ function checkValidation(rule, projectDir, context) {
   if (parsed.kind === "csv_rows") {
     try {
       const table = readCsvTable(target);
-      const ok = Number.isFinite(parsed.expected) && compareNumber(table.rows.length, parsed.comparator, parsed.expected);
+      const expected = Number(expand(parsed.expected, context));
+      const ok = Number.isFinite(expected) && compareNumber(table.rows.length, parsed.comparator, expected);
       return {
         ok,
         status: ok ? "passed" : "failed",
         rule,
         path: target,
         observed: table.rows.length,
-        expected: `${parsed.comparator} ${parsed.expected}`,
+        expected: `${parsed.comparator} ${expected}`,
       };
     } catch (error) {
       return { ok: false, status: "failed", rule, path: target, message: error.message };
@@ -570,14 +654,15 @@ function checkValidation(rule, projectDir, context) {
   if (parsed.kind === "file_size") {
     try {
       const actual = fs.statSync(target).size;
-      const ok = Number.isFinite(parsed.expected) && compareNumber(actual, parsed.comparator, parsed.expected);
+      const expected = Number(expand(parsed.expected, context));
+      const ok = Number.isFinite(expected) && compareNumber(actual, parsed.comparator, expected);
       return {
         ok,
         status: ok ? "passed" : "failed",
         rule,
         path: target,
         observed: actual,
-        expected: `${parsed.comparator} ${parsed.expected}`,
+        expected: `${parsed.comparator} ${expected}`,
       };
     } catch (error) {
       return { ok: false, status: "failed", rule, path: target, message: error.message };
@@ -1024,6 +1109,7 @@ function run(options) {
   let registries = loadRegistries(projectDir, manifest);
   const loaded = loadSource(options, projectDir, manifest);
   const ir = parseLoaded(options, projectDir, manifest, loaded);
+  const runtimeOverrides = applyRuntimeOverrides(ir, parseRuntimeOverrides(options.set));
   registries = mergeWorkflowRegistries(registries, ir);
   let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
   if (options.block) {
@@ -1072,6 +1158,7 @@ function run(options) {
       project: projectDir,
       runDir,
       dryRun,
+      runtimeOverrides,
       diagnostics: ir.diagnostics,
       requirements: checkRequirements(ir, projectDir),
       readiness,
@@ -1123,6 +1210,7 @@ function run(options) {
       project: projectDir,
       runDir,
       dryRun,
+      runtimeOverrides,
       diagnostics: ir.diagnostics,
       requirements: checkRequirements(ir, projectDir),
       readiness,
@@ -1561,6 +1649,7 @@ function run(options) {
     project: projectDir,
     runDir,
     dryRun,
+    runtimeOverrides,
     diagnostics: ir.diagnostics,
     requirements,
     readiness,
@@ -1615,6 +1704,7 @@ function main() {
   let registries = loadRegistries(projectDir, manifest);
   const loaded = loadSource(options, projectDir, manifest);
   const ir = parseLoaded(options, projectDir, manifest, loaded);
+  const runtimeOverrides = applyRuntimeOverrides(ir, parseRuntimeOverrides(options.set));
   registries = mergeWorkflowRegistries(registries, ir);
   if (options.command === "plan" || options.command === "check") {
     let plan = AAPS.buildExecutionPlan(ir, { project: manifest || null });
@@ -1628,7 +1718,7 @@ function main() {
     context["project.python"] = projectPython(manifest, registries);
     const readiness = buildReadiness(plan, projectDir, manifest, registries, context);
     const compilePlan = AAPS.buildAgentCompilePlan(plan, readiness);
-    console.log(JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, plan, readiness, compilePlan }, null, 2));
+    console.log(JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, runtimeOverrides, plan, readiness, compilePlan }, null, 2));
     process.exit(ir.diagnostics.length || !readiness.ok || (options.block && plan.blockFilter && plan.blockFilter.matched === 0) ? 1 : 0);
   }
   const summary = run(options);
@@ -1656,6 +1746,7 @@ module.exports = {
   mergeWorkflowRegistries,
   parseArgs,
   parseLoaded,
+  parseRuntimeOverrides,
   projectPython,
   pythonPackageExists,
   readJsonIfExists,
@@ -1663,6 +1754,7 @@ module.exports = {
   run,
   safeRelative,
   suggestionForCheck,
+  applyRuntimeOverrides,
   unresolvedVariables,
   writeJson,
 };
