@@ -449,6 +449,38 @@
       </div>
     </section>
 
+    <div id="skill-edit-overlay" class="modal-overlay" hidden></div>
+    <section id="skill-edit-modal" class="studio-modal skill-edit-modal" aria-hidden="true" aria-label="Edit reusable AAPS skill">
+      <div class="modal-head">
+        <div>
+          <h2 id="skill-edit-title">Edit Skill</h2>
+          <p id="skill-edit-subtitle">Tune the reusable skill, then save or ask skill chat to refine it.</p>
+        </div>
+        <button id="close-skill-edit-modal" type="button">Close</button>
+      </div>
+      <div class="modal-body skill-edit-body">
+        <div class="skill-edit-grid">
+          <label>ID <input id="skill-edit-id" /></label>
+          <label>Title <input id="skill-edit-name" /></label>
+          <label class="wide">Prompt <textarea id="skill-edit-prompt" rows="5"></textarea></label>
+          <label>Inputs <textarea id="skill-edit-inputs" rows="5" placeholder="image_dir:dir&#10;output_root:dir"></textarea></label>
+          <label>Outputs <textarea id="skill-edit-outputs" rows="5" placeholder="masks:dir&#10;metrics_csv:file"></textarea></label>
+          <label>Requirements <textarea id="skill-edit-requirements" rows="5" placeholder="pythonPackages = numpy, pillow&#10;commands = python3"></textarea></label>
+          <label class="wide">Compile Prompt <textarea id="skill-edit-compile-prompt" rows="4" placeholder="Tell the backend agent how to implement missing scripts/tools for this skill."></textarea></label>
+        </div>
+        <section class="skill-chat-inline">
+          <h3>Skill Chat</h3>
+          <textarea id="skill-edit-chat" rows="4" placeholder="Ask: refine this segmentation skill for App81, add validation gates, create a deterministic fallback, or improve compile instructions."></textarea>
+          <div class="form-actions">
+            <button id="save-skill-edit-btn" type="button">Save Skill</button>
+            <button id="chat-skill-edit-btn" type="button">Apply Skill Chat</button>
+            <button id="select-skill-edit-btn" type="button">Select in Blocks</button>
+          </div>
+          <div id="skill-edit-status" class="structure-status">Click a skill template or existing skill card to edit it here.</div>
+        </section>
+      </div>
+    </section>
+
     <div id="artifact-modal-overlay" class="modal-overlay" hidden></div>
     <section id="artifact-modal" class="studio-modal artifact-modal" aria-hidden="true" aria-label="Artifacts and runs canvas">
       <div class="modal-head">

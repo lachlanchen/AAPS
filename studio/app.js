@@ -72,6 +72,25 @@ const openCreateProjectModalBtnEl = document.getElementById("open-create-project
 const closeCreateProjectModalBtnEl = document.getElementById("close-create-project-modal");
 const createProjectModalEl = document.getElementById("create-project-modal");
 const createProjectOverlayEl = document.getElementById("create-project-overlay");
+const skillEditModalEl = document.getElementById("skill-edit-modal");
+const skillEditOverlayEl = document.getElementById("skill-edit-overlay");
+const closeSkillEditModalBtnEl = document.getElementById("close-skill-edit-modal");
+const saveSkillEditBtnEl = document.getElementById("save-skill-edit-btn");
+const chatSkillEditBtnEl = document.getElementById("chat-skill-edit-btn");
+const selectSkillEditBtnEl = document.getElementById("select-skill-edit-btn");
+const skillEditTitleEl = document.getElementById("skill-edit-title");
+const skillEditSubtitleEl = document.getElementById("skill-edit-subtitle");
+const skillEditStatusEl = document.getElementById("skill-edit-status");
+const skillEditFields = {
+  id: document.getElementById("skill-edit-id"),
+  title: document.getElementById("skill-edit-name"),
+  prompt: document.getElementById("skill-edit-prompt"),
+  inputs: document.getElementById("skill-edit-inputs"),
+  outputs: document.getElementById("skill-edit-outputs"),
+  requirements: document.getElementById("skill-edit-requirements"),
+  compilePrompt: document.getElementById("skill-edit-compile-prompt"),
+  chat: document.getElementById("skill-edit-chat"),
+};
 const nodeKindSelectEl = document.getElementById("node-kind-select");
 const structureStatusEl = document.getElementById("structure-status");
 const programWorkflowSelectEl = document.getElementById("program-workflow-select");
@@ -141,6 +160,9 @@ let currentSettings = {
   autoCompileAfterChat: true,
   autoSaveAgentEdits: true,
 };
+let skillEditMode = "node";
+let skillEditRef = "";
+let skillEditDraft = null;
 
 const STUDIO_I18N = {
   en: {
@@ -1420,6 +1442,14 @@ function setIr(ir) {
   render();
 }
 
+function setIrAndSelect(ir, nodeId, options = {}) {
+  selectedRef = nodeRefById(ir, nodeId) || selectedRef;
+  sourceEl.value = AAPS.serializeAAPS(ir);
+  render();
+  if (options.editInBlocks) activateTab("lab");
+  return selectedRef;
+}
+
 function allNodes(ir) {
   const nodes = [];
   function walk(node) {
@@ -1869,6 +1899,14 @@ function setArtifactModalOpen(open) {
   }
 }
 
+function setSkillEditOpen(open) {
+  if (!skillEditModalEl || !skillEditOverlayEl) return;
+  skillEditModalEl.classList.toggle("is-open", open);
+  skillEditModalEl.setAttribute("aria-hidden", open ? "false" : "true");
+  skillEditOverlayEl.hidden = !open;
+  if (open) window.setTimeout(() => skillEditFields.prompt?.focus(), 0);
+}
+
 function addMessage(role, text) {
   const node = document.createElement("div");
   node.className = `message ${role}`;
@@ -1943,7 +1981,7 @@ function renderNode(node, ref, depth = 0) {
     .map((child, index) => renderNode(child, `${ref}/children:${index}`, depth + 1))
     .join("");
   return `
-    <article class="node-card${selectedClass}" data-ref="${escapeHtml(ref)}" draggable="true" tabindex="0" aria-selected="${ref === selectedRef ? "true" : "false"}" style="border-left-color:${nodeColor(node.kind)}">
+    <article class="node-card${selectedClass}" data-ref="${escapeHtml(ref)}" data-node-kind="${escapeAttr(node.kind)}" draggable="true" tabindex="0" aria-selected="${ref === selectedRef ? "true" : "false"}" style="border-left-color:${nodeColor(node.kind)}">
       <div class="node-top">
         <div>
           <div class="node-kind">${escapeHtml(node.kind)}</div>
@@ -2024,6 +2062,13 @@ function renderBlockBrowser(ir) {
   ].join("");
   const sections = [renderProjectBlockFiles(), sourceSections].join("");
   blockBrowserEl.innerHTML = sections || '<div class="message">No current blocks. Add a reusable block or ask block chat to create one.</div>';
+  blockBrowserEl.querySelectorAll('.node-card[data-node-kind="skill"]').forEach((card) => {
+    card.onclick = (event) => {
+      if (event.target.closest("button")) return;
+      event.stopPropagation();
+      openSkillNodeEditor(card.dataset.ref);
+    };
+  });
 }
 
 function renderSelectedReadiness(result = lastRuntimeResult) {
@@ -2262,6 +2307,134 @@ function uniqueId(base, nodes) {
   return candidate;
 }
 
+function skillMaterializeFile(node) {
+  return `${node?.kind === "skill" ? "skills" : "blocks"}/${AAPS.slug(node?.id || "reusable_skill")}.aaps`;
+}
+
+function collectSkillModalNode(base = {}) {
+  const node = {
+    ...clone(base || {}),
+    kind: "skill",
+    id: AAPS.slug(skillEditFields.id?.value || base.id || "reusable_skill"),
+    title: skillEditFields.title?.value.trim() || "",
+    prompt: skillEditFields.prompt?.value.trim() || "",
+    inputs: parsePorts(skillEditFields.inputs?.value || ""),
+    outputs: parsePorts(skillEditFields.outputs?.value || ""),
+    requirements: parseRequirements(skillEditFields.requirements?.value || ""),
+    compile: {
+      ...(base.compile || {}),
+      agent: (base.compile && base.compile.agent) || "codex_repair_agent",
+      prompt: skillEditFields.compilePrompt?.value.trim() || "",
+      onMissing: (base.compile && base.compile.onMissing) || "prompt",
+    },
+  };
+  node.artifacts = base.artifacts || [];
+  node.exec = base.exec || [];
+  node.args = base.args || {};
+  node.environment = base.environment || { python: "", requirements: [], commands: [], nodePackages: [], files: [], env: {}, setup: [] };
+  node.validations = base.validations || [];
+  node.recovery = base.recovery || [];
+  node.reviews = base.reviews || [];
+  node.children = base.children || [];
+  return node;
+}
+
+function fillSkillEditModal(node, mode = "node", ref = "") {
+  skillEditMode = mode;
+  skillEditRef = ref;
+  skillEditDraft = clone(node || templateNode("skill_appdev", getIr()));
+  if (skillEditTitleEl) skillEditTitleEl.textContent = mode === "template" ? "Create Reusable Skill" : "Edit Reusable Skill";
+  if (skillEditSubtitleEl) {
+    skillEditSubtitleEl.textContent =
+      mode === "template"
+        ? "Edit this template before inserting it into the current AAPS source."
+        : "Edit the selected skill directly, or ask skill chat to refine its implementation contract.";
+  }
+  if (saveSkillEditBtnEl) saveSkillEditBtnEl.textContent = mode === "template" ? "Insert Skill" : "Save Skill";
+  if (skillEditFields.id) skillEditFields.id.value = skillEditDraft.id || "reusable_skill";
+  if (skillEditFields.title) skillEditFields.title.value = skillEditDraft.title || "";
+  if (skillEditFields.prompt) skillEditFields.prompt.value = skillEditDraft.prompt || "";
+  if (skillEditFields.inputs) skillEditFields.inputs.value = portLines(skillEditDraft.inputs || []);
+  if (skillEditFields.outputs) skillEditFields.outputs.value = portLines(skillEditDraft.outputs || []);
+  if (skillEditFields.requirements) skillEditFields.requirements.value = requirementsLines(skillEditDraft.requirements || {});
+  if (skillEditFields.compilePrompt) skillEditFields.compilePrompt.value = skillEditDraft.compile?.prompt || "";
+  if (skillEditFields.chat) skillEditFields.chat.value = "";
+  if (skillEditStatusEl) {
+    skillEditStatusEl.textContent =
+      mode === "template"
+        ? "Template loaded. Edit fields, then Insert Skill or Apply Skill Chat."
+        : `Editing ${skillEditDraft.id}. Save fields or ask Skill Chat to refine it.`;
+  }
+}
+
+function openSkillTemplateEditor(kind) {
+  const ir = getIr();
+  const node = templateNode(kind, ir);
+  node.id = uniqueId(node.id || "reusable_skill", allNodes(ir));
+  if (!node.title) {
+    node.title = kind === "skill_segment" ? "Reusable Segmentation Skill" : kind === "skill_writing" ? "Reusable Writing Skill" : "Reusable AppDev Skill";
+  }
+  if (!node.prompt) {
+    node.prompt =
+      kind === "skill_segment"
+        ? "Reusable segmentation skill: inspect microscopy inputs, define typed masks/metrics/report outputs, implement deterministic fallback, and require human QC before downstream use."
+        : kind === "skill_writing"
+          ? "Reusable writing skill: use the provided story or article context to draft clear prose, then hand formatting to the requested output layer."
+          : "Reusable app-development skill: inspect project context, make a focused implementation or review plan, and return verifiable code or test artifacts.";
+  }
+  fillSkillEditModal(node, "template", "");
+  setSkillEditOpen(true);
+  addMessage("assistant", `Opened ${node.id} skill template editor.`);
+}
+
+function openSkillNodeEditor(ref) {
+  const node = nodeRefs.get(ref);
+  if (!node || node.kind !== "skill") return false;
+  selectNodeRef(ref, { editInBlocks: true });
+  fillSkillEditModal(nodeRefs.get(ref) || node, "node", ref);
+  setSkillEditOpen(true);
+  return true;
+}
+
+function commitSkillEditModal(options = {}) {
+  const ir = getIr();
+  const base = skillEditMode === "template" ? skillEditDraft || {} : clone(nodeLocationByRef(ir, skillEditRef)?.node || skillEditDraft || {});
+  const node = collectSkillModalNode(base);
+  if (skillEditMode === "template") {
+    node.id = uniqueId(node.id, allNodes(ir));
+    ir.pipeline.skills = ir.pipeline.skills || [];
+    ir.pipeline.skills.push(node);
+  } else {
+    const loc = nodeLocationByRef(ir, skillEditRef);
+    if (!loc || loc.node.kind !== "skill") throw new Error("Selected skill no longer exists.");
+    loc.list[loc.index] = node;
+  }
+  const ref = setIrAndSelect(ir, node.id, { editInBlocks: true });
+  skillEditMode = "node";
+  skillEditRef = ref;
+  skillEditDraft = clone(node);
+  if (skillEditStatusEl) skillEditStatusEl.textContent = `Saved ${node.id}.`;
+  if (!options.silent) addMessage("assistant", `${options.inserted ? "Inserted" : "Saved"} skill ${node.id}.`);
+  return { node, ref };
+}
+
+async function applySkillModalChat() {
+  const instruction = skillEditFields.chat?.value.trim() || "";
+  if (!instruction) {
+    if (skillEditStatusEl) skillEditStatusEl.textContent = "Write a skill-chat instruction first.";
+    return;
+  }
+  const { node, ref } = commitSkillEditModal({ silent: true, inserted: skillEditMode === "template" });
+  selectedRef = ref;
+  if (blockChatInputEl) blockChatInputEl.value = instruction;
+  if (skillEditStatusEl) skillEditStatusEl.textContent = `Routing skill chat for ${node.id}...`;
+  await applyBlockChat();
+  const latestNode = nodeRefs.get(selectedRef) || node;
+  fillSkillEditModal(latestNode, "node", selectedRef);
+  setSkillEditOpen(true);
+  if (skillEditStatusEl) skillEditStatusEl.textContent = `Applied skill chat to ${latestNode.id}.`;
+}
+
 function addTemplate(kind) {
   const ir = getIr();
   const node = templateNode(kind, ir);
@@ -2279,8 +2452,9 @@ function addTemplate(kind) {
   } else {
     ir.pipeline.tasks.push(node);
   }
-  setIr(ir);
+  setIrAndSelect(ir, node.id, { editInBlocks: activeTab === "lab" });
   addMessage("assistant", `Added ${node.kind} ${node.id}.`);
+  return { node, ref: selectedRef };
 }
 
 function deleteSelected() {
@@ -2604,6 +2778,17 @@ function localChatEdit(text) {
     if (!ref) return `Node ${match[2]} was not found.`;
     selectedRef = ref;
     return runNodeStructureAction(match[1].toLowerCase()) ? `${match[1]} ${match[2]}.` : `Could not ${match[1]} ${match[2]}.`;
+  }
+  match = raw.match(/^(?:set|update)\s+(?:selected|current)\s+(?:skill|block|node)\s+(prompt|title)\s*:\s*(.+)$/i);
+  if (match) {
+    const selected = nodeRefs.get(selectedRef);
+    if (!selected) return "Select a skill or block first.";
+    const field = match[1].toLowerCase();
+    const value = match[2].trim();
+    updateSelectedNode((target) => {
+      target[field] = value;
+    });
+    return `Updated ${field} for ${selected.kind} ${selected.id}.`;
   }
   match = raw.match(/^prompt\s+([A-Za-z_][\w.-]*)\s*:\s*(.+)$/i);
   if (match) {
@@ -3007,10 +3192,11 @@ async function applyBlockChat() {
     body: JSON.stringify({
       path: projectPathEl.value || ".",
       blockId: node.id,
+      blockKind: node.kind,
       message,
       source: sourceEl.value,
       materialize: true,
-      blockFile: `blocks/${AAPS.slug(node.id)}.aaps`,
+      blockFile: skillMaterializeFile(node),
       runPreview: true,
       previewMaxImages: 3,
       previewMaxDimension: 768,
@@ -3170,25 +3356,40 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 });
 
 document.querySelectorAll("[data-template]").forEach((button) => {
-  button.addEventListener("click", () => addTemplate(button.dataset.template));
+  button.addEventListener("click", () => {
+    const kind = button.dataset.template;
+    if (String(kind || "").startsWith("skill_")) {
+      openSkillTemplateEditor(kind);
+      return;
+    }
+    addTemplate(kind);
+  });
 });
 
 treeEl.addEventListener("click", (event) => {
   const editButton = event.target.closest("[data-edit-node-ref]");
   if (editButton) {
     event.stopPropagation();
-    editSelectedInBlocks(editButton.dataset.editNodeRef);
+    const ref = editButton.dataset.editNodeRef;
+    const node = nodeRefs.get(ref);
+    if (node?.kind === "skill") window.setTimeout(() => openSkillNodeEditor(ref), 0);
+    else editSelectedInBlocks(ref);
     return;
   }
   const selectButton = event.target.closest("[data-select-node-ref]");
   if (selectButton) {
     event.stopPropagation();
-    selectNodeRef(selectButton.dataset.selectNodeRef);
+    const ref = selectButton.dataset.selectNodeRef;
+    const node = nodeRefs.get(ref);
+    selectNodeRef(ref);
+    if (node?.kind === "skill") window.setTimeout(() => openSkillNodeEditor(ref), 0);
     return;
   }
   const card = event.target.closest("[data-ref]");
   if (!card) return;
+  const node = nodeRefs.get(card.dataset.ref);
   selectNodeRef(card.dataset.ref);
+  if (node?.kind === "skill") window.setTimeout(() => openSkillNodeEditor(card.dataset.ref), 0);
 });
 
 treeEl.addEventListener("dblclick", (event) => {
@@ -3284,6 +3485,34 @@ chatHistoryOverlayEl.addEventListener("click", () => setHistoryOpen(false));
 openCreateProjectModalBtnEl?.addEventListener("click", () => setCreateProjectOpen(true));
 closeCreateProjectModalBtnEl?.addEventListener("click", () => setCreateProjectOpen(false));
 createProjectOverlayEl?.addEventListener("click", () => setCreateProjectOpen(false));
+closeSkillEditModalBtnEl?.addEventListener("click", () => setSkillEditOpen(false));
+skillEditOverlayEl?.addEventListener("click", () => setSkillEditOpen(false));
+saveSkillEditBtnEl?.addEventListener("click", () => {
+  try {
+    commitSkillEditModal({ inserted: skillEditMode === "template" });
+    setSkillEditOpen(false);
+  } catch (error) {
+    if (skillEditStatusEl) skillEditStatusEl.textContent = error.message;
+  }
+});
+selectSkillEditBtnEl?.addEventListener("click", () => {
+  if (skillEditMode === "template") {
+    try {
+      commitSkillEditModal({ inserted: true });
+    } catch (error) {
+      if (skillEditStatusEl) skillEditStatusEl.textContent = error.message;
+      return;
+    }
+  }
+  setSkillEditOpen(false);
+  activateTab("lab");
+});
+chatSkillEditBtnEl?.addEventListener("click", () => {
+  applySkillModalChat().catch((error) => {
+    if (skillEditStatusEl) skillEditStatusEl.textContent = `Skill chat failed: ${error.message}`;
+    addMessage("assistant", `Skill chat failed: ${error.message}`);
+  });
+});
 openArtifactModalBtnEl?.addEventListener("click", () => setArtifactModalOpen(true));
 closeArtifactModalBtnEl?.addEventListener("click", () => setArtifactModalOpen(false));
 artifactModalOverlayEl?.addEventListener("click", () => setArtifactModalOpen(false));
