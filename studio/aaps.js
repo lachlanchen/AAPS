@@ -39,7 +39,7 @@
   }
 
   function quote(value) {
-    return `"${String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    return `"${String(value || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/"/g, '\\"')}"`;
   }
 
   function slug(text, fallback = "block") {

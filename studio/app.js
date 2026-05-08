@@ -91,6 +91,38 @@ const skillEditFields = {
   compilePrompt: document.getElementById("skill-edit-compile-prompt"),
   chat: document.getElementById("skill-edit-chat"),
 };
+const nodeDetailModalEl = document.getElementById("node-detail-modal");
+const nodeDetailOverlayEl = document.getElementById("node-detail-overlay");
+const closeNodeDetailModalBtnEl = document.getElementById("close-node-detail-modal");
+const nodeDetailEditTabEl = document.getElementById("node-detail-edit-tab");
+const nodeDetailInspectTabEl = document.getElementById("node-detail-inspect-tab");
+const nodeDetailEditFormEl = document.getElementById("node-detail-edit-form");
+const nodeDetailInspectorEl = document.getElementById("node-detail-inspector");
+const nodeDetailTitleEl = document.getElementById("node-detail-title");
+const nodeDetailSubtitleEl = document.getElementById("node-detail-subtitle");
+const selectNodeDetailBtnEl = document.getElementById("select-node-detail-btn");
+const nodeDetailFields = {
+  kind: document.getElementById("node-detail-kind"),
+  id: document.getElementById("node-detail-id"),
+  title: document.getElementById("node-detail-name"),
+  prompt: document.getElementById("node-detail-prompt"),
+  inputs: document.getElementById("node-detail-inputs"),
+  outputs: document.getElementById("node-detail-outputs"),
+  artifacts: document.getElementById("node-detail-artifacts"),
+  exec: document.getElementById("node-detail-exec"),
+  args: document.getElementById("node-detail-args"),
+  requirements: document.getElementById("node-detail-requirements"),
+  environment: document.getElementById("node-detail-environment"),
+  compilePrompt: document.getElementById("node-detail-compile-prompt"),
+  code: document.getElementById("node-detail-code"),
+  run: document.getElementById("node-detail-run"),
+  validations: document.getElementById("node-detail-validations"),
+  verify: document.getElementById("node-detail-verify"),
+  recovery: document.getElementById("node-detail-recovery"),
+  repair: document.getElementById("node-detail-repair"),
+  fallback: document.getElementById("node-detail-fallback"),
+  reviews: document.getElementById("node-detail-reviews"),
+};
 const nodeKindSelectEl = document.getElementById("node-kind-select");
 const structureStatusEl = document.getElementById("structure-status");
 const programWorkflowSelectEl = document.getElementById("program-workflow-select");
@@ -163,6 +195,9 @@ let currentSettings = {
 let skillEditMode = "node";
 let skillEditRef = "";
 let skillEditDraft = null;
+let nodeDetailRef = "";
+let nodeDetailMode = "edit";
+let blockCanvasFilter = localStorage.getItem("aaps.studio.blockCanvasFilter") || "explorer";
 
 const STUDIO_I18N = {
   en: {
@@ -177,8 +212,8 @@ const STUDIO_I18N = {
     download: "Download",
     skillLibrary: "Skill Library",
     skillLibraryText: "Reusable blocks for app development, biology, writing, and general agents.",
-    blockInspector: "Block Inspector",
-    blockInspectorText: "Edit the selected block. Save reparses and redraws the source.",
+    blockInspector: "Block Workspace",
+    blockInspectorText: "Outputs and status stay visible here. Use each block card's menu for focused edit or full inspection.",
     projectWorkspace: "Project Workspace",
     projectWorkspaceText: "aaps.project.json describes one topic workspace: workflows, reusable blocks, scripts, tools, agents, data, artifacts, and runs.",
     workspaceFiles: "Workspace Files",
@@ -203,7 +238,7 @@ const STUDIO_I18N = {
   },
   "zh-Hans": {
     lab: "积木实验室", program: "程序", project: "项目", general: "通用", biology: "生物", writing: "写作", format: "格式化", runbook: "运行手册", download: "下载",
-    skillLibrary: "技能库", skillLibraryText: "用于应用开发、生物、写作和通用智能体的可复用模块。", blockInspector: "模块检查器", blockInspectorText: "编辑选中的模块，保存后重新解析并重绘源码。",
+    skillLibrary: "技能库", skillLibraryText: "用于应用开发、生物、写作和通用智能体的可复用模块。", blockInspector: "模块工作区", blockInspectorText: "输出和状态固定显示在这里。用模块卡片菜单进行聚焦编辑或完整检查。",
     projectWorkspace: "项目工作区", projectWorkspaceText: "aaps.project.json 描述一个主题工作区：工作流、模块、脚本、工具、智能体、数据、产物和运行记录。",
     workspaceFiles: "工作区文件", workspaceFilesText: "工作流是可运行程序；模块/技能是可复用能力；脚本、工具、智能体和环境让模块可执行。",
     compileRuntime: "编译 / 运行", compileRuntimeText: "编译会在干跑或真实运行前解析缺失的模块、脚本、工具、智能体和安装提示。", structure: "结构",
@@ -211,20 +246,20 @@ const STUDIO_I18N = {
   },
   "zh-Hant": {
     lab: "積木實驗室", program: "程式", project: "專案", general: "通用", biology: "生物", writing: "寫作", format: "格式化", runbook: "執行手冊", download: "下載",
-    skillLibrary: "技能庫", skillLibraryText: "用於應用開發、生物、寫作和通用智能體的可重用模組。", blockInspector: "模組檢查器", blockInspectorText: "編輯選中的模組，保存後重新解析並重繪源碼。",
+    skillLibrary: "技能庫", skillLibraryText: "用於應用開發、生物、寫作和通用智能體的可重用模組。", blockInspector: "模組工作區", blockInspectorText: "輸出和狀態固定顯示在這裡。用模組卡片選單進行聚焦編輯或完整檢查。",
     projectWorkspace: "專案工作區", projectWorkspaceText: "aaps.project.json 描述一個主題工作區：工作流、模組、腳本、工具、智能體、資料、產物和執行紀錄。",
     workspaceFiles: "工作區檔案", workspaceFilesText: "工作流是可執行程式；模組/技能是可重用能力；腳本、工具、智能體和環境讓模組可執行。",
     compileRuntime: "編譯 / 執行", compileRuntimeText: "編譯會在 dry-run 或真正執行前解析缺失的模組、腳本、工具、智能體和安裝提示。", structure: "結構",
     load: "載入", sample: "示例", validate: "驗證", saveManifest: "保存清單", checkMissing: "檢查缺失", compile: "編譯", applyCompile: "安全套用編譯", saveActive: "保存目前檔案", dryRun: "Dry Run", run: "執行", send: "送出", history: "歷史", close: "關閉", chatPlaceholder: "讓 AAPS 編輯目前分頁：新增 qc_image、解釋工作流、加入迴圈、總結專案",
   },
-  ja: { lab: "ブロック", program: "プログラム", project: "プロジェクト", general: "汎用", biology: "生物", writing: "執筆", format: "整形", runbook: "手順書", download: "保存", skillLibrary: "スキルライブラリ", skillLibraryText: "アプリ開発、生物、執筆、汎用エージェント向けの再利用ブロック。", blockInspector: "ブロック詳細", blockInspectorText: "選択ブロックを編集し、保存すると再解析します。", projectWorkspace: "プロジェクト作業領域", projectWorkspaceText: "1つのテーマに複数のワークフロー、ブロック、スクリプト、ツール、エージェントをまとめます。", workspaceFiles: "作業領域ファイル", workspaceFilesText: "ワークフローは実行可能なプログラム、ブロックは再利用能力です。", compileRuntime: "コンパイル / 実行", compileRuntimeText: "実行前に不足ブロック、スクリプト、ツール、エージェント、設定を解決します。", structure: "構造", load: "読込", sample: "例", validate: "検証", saveManifest: "清單保存", checkMissing: "不足確認", compile: "コンパイル", applyCompile: "安全適用", saveActive: "保存", dryRun: "Dry Run", run: "実行", send: "送信", history: "履歴", close: "閉じる", chatPlaceholder: "AAPSに編集を依頼: ブロック追加、説明、ループ追加、プロジェクト要約" },
-  ko: { lab: "블록 랩", program: "프로그램", project: "프로젝트", general: "일반", biology: "생물", writing: "쓰기", format: "정리", runbook: "런북", download: "다운로드", skillLibrary: "스킬 라이브러리", skillLibraryText: "앱 개발, 생물, 글쓰기, 에이전트용 재사용 블록.", blockInspector: "블록 검사기", blockInspectorText: "선택한 블록을 편집하고 저장하면 다시 파싱합니다.", projectWorkspace: "프로젝트 작업공간", projectWorkspaceText: "하나의 주제에 여러 워크플로, 블록, 스크립트, 도구, 에이전트를 묶습니다.", workspaceFiles: "작업공간 파일", workspaceFilesText: "워크플로는 실행 프로그램이고 블록은 재사용 기능입니다.", compileRuntime: "컴파일 / 실행", compileRuntimeText: "실행 전에 누락 블록, 스크립트, 도구, 에이전트, 설정을 해결합니다.", structure: "구조", load: "열기", sample: "예제", validate: "검증", saveManifest: "매니페스트 저장", checkMissing: "누락 확인", compile: "컴파일", applyCompile: "안전 적용", saveActive: "활성 파일 저장", dryRun: "드라이런", run: "실행", send: "전송", history: "기록", close: "닫기", chatPlaceholder: "AAPS에 요청: 블록 추가, 워크플로 설명, 루프 추가, 프로젝트 요약" },
-  es: { lab: "Bloques", program: "Programa", project: "Proyecto", general: "General", biology: "Biología", writing: "Escritura", format: "Formatear", runbook: "Runbook", download: "Descargar", skillLibrary: "Biblioteca de skills", skillLibraryText: "Bloques reutilizables para apps, biología, escritura y agentes.", blockInspector: "Inspector de bloque", blockInspectorText: "Edita el bloque seleccionado y vuelve a parsear al guardar.", projectWorkspace: "Espacio del proyecto", projectWorkspaceText: "Un proyecto agrupa workflows, bloques, scripts, herramientas, agentes, datos, artefactos y ejecuciones de un tema.", workspaceFiles: "Archivos", workspaceFilesText: "Workflows ejecutables; bloques reutilizables; scripts, herramientas, agentes y entornos los hacen ejecutables.", compileRuntime: "Compilar / Ejecutar", compileRuntimeText: "La compilación resuelve faltantes antes de dry-runs o ejecuciones reales.", structure: "Estructura", load: "Cargar", sample: "Ejemplo", validate: "Validar", saveManifest: "Guardar manifest", checkMissing: "Faltantes", compile: "Compilar", applyCompile: "Aplicar seguro", saveActive: "Guardar activo", dryRun: "Dry run", run: "Ejecutar", send: "Enviar", history: "Historial", close: "Cerrar", chatPlaceholder: "Pide a AAPS editar: añadir bloque, explicar workflow, añadir loop, resumir proyecto" },
-  fr: { lab: "Blocs", program: "Programme", project: "Projet", general: "Général", biology: "Biologie", writing: "Écriture", format: "Formater", runbook: "Runbook", download: "Télécharger", skillLibrary: "Bibliothèque de skills", skillLibraryText: "Blocs réutilisables pour apps, biologie, écriture et agents.", blockInspector: "Inspecteur de bloc", blockInspectorText: "Modifiez le bloc sélectionné; l'enregistrement reparse la source.", projectWorkspace: "Espace projet", projectWorkspaceText: "Un projet regroupe workflows, blocs, scripts, outils, agents, données, artefacts et runs d'un même sujet.", workspaceFiles: "Fichiers", workspaceFilesText: "Les workflows sont exécutables; les blocs sont des capacités réutilisables.", compileRuntime: "Compiler / Exécuter", compileRuntimeText: "La compilation résout les composants manquants avant dry-run ou run réel.", structure: "Structure", load: "Charger", sample: "Exemple", validate: "Valider", saveManifest: "Enregistrer", checkMissing: "Manquants", compile: "Compiler", applyCompile: "Appliquer sûr", saveActive: "Enregistrer actif", dryRun: "Dry run", run: "Exécuter", send: "Envoyer", history: "Historique", close: "Fermer", chatPlaceholder: "Demandez à AAPS de modifier: bloc, explication, boucle, résumé projet" },
-  de: { lab: "Blocklabor", program: "Programm", project: "Projekt", general: "Allgemein", biology: "Biologie", writing: "Schreiben", format: "Format", runbook: "Runbook", download: "Download", skillLibrary: "Skill-Bibliothek", skillLibraryText: "Wiederverwendbare Blöcke für Apps, Biologie, Schreiben und Agenten.", blockInspector: "Blockinspektor", blockInspectorText: "Ausgewählten Block bearbeiten; Speichern parst neu.", projectWorkspace: "Projektarbeitsbereich", projectWorkspaceText: "Ein Projekt bündelt Workflows, Blöcke, Skripte, Tools, Agenten, Daten, Artefakte und Runs zu einem Thema.", workspaceFiles: "Arbeitsdateien", workspaceFilesText: "Workflows sind ausführbare Programme; Blöcke sind wiederverwendbare Fähigkeiten.", compileRuntime: "Kompilieren / Ausführen", compileRuntimeText: "Kompilieren löst fehlende Komponenten vor Dry-runs oder echten Runs.", structure: "Struktur", load: "Laden", sample: "Beispiel", validate: "Prüfen", saveManifest: "Manifest speichern", checkMissing: "Fehlendes prüfen", compile: "Kompilieren", applyCompile: "Sicher anwenden", saveActive: "Aktive Datei speichern", dryRun: "Dry Run", run: "Ausführen", send: "Senden", history: "Verlauf", close: "Schließen", chatPlaceholder: "AAPS bitten: Block hinzufügen, Workflow erklären, Loop hinzufügen, Projekt zusammenfassen" },
-  ru: { lab: "Блоки", program: "Программа", project: "Проект", general: "Общее", biology: "Биология", writing: "Текст", format: "Формат", runbook: "Runbook", download: "Скачать", skillLibrary: "Библиотека навыков", skillLibraryText: "Переиспользуемые блоки для приложений, биологии, письма и агентов.", blockInspector: "Инспектор блока", blockInspectorText: "Редактируйте выбранный блок; сохранение заново парсит исходник.", projectWorkspace: "Рабочая область", projectWorkspaceText: "Проект объединяет workflow, блоки, скрипты, инструменты, агентов, данные, артефакты и запуски одной темы.", workspaceFiles: "Файлы", workspaceFilesText: "Workflow исполняемы; блоки переиспользуемы; скрипты и окружения делают их runnable.", compileRuntime: "Компиляция / запуск", compileRuntimeText: "Компиляция решает отсутствующие компоненты перед dry-run или запуском.", structure: "Структура", load: "Открыть", sample: "Пример", validate: "Проверить", saveManifest: "Сохранить manifest", checkMissing: "Недостающее", compile: "Компилировать", applyCompile: "Безопасно применить", saveActive: "Сохранить активный", dryRun: "Dry run", run: "Запуск", send: "Отправить", history: "История", close: "Закрыть", chatPlaceholder: "Попросите AAPS: добавить блок, объяснить workflow, добавить цикл, резюмировать проект" },
-  ar: { lab: "المكعبات", program: "البرنامج", project: "المشروع", general: "عام", biology: "أحياء", writing: "كتابة", format: "تنسيق", runbook: "دليل التشغيل", download: "تنزيل", skillLibrary: "مكتبة المهارات", skillLibraryText: "مكعبات قابلة لإعادة الاستخدام للتطبيقات والأحياء والكتابة والوكلاء.", blockInspector: "فاحص المكعب", blockInspectorText: "حرر المكعب المحدد؛ الحفظ يعيد التحليل والرسم.", projectWorkspace: "مساحة المشروع", projectWorkspaceText: "المشروع يجمع workflows ومكعبات وسكربتات وأدوات ووكلاء وبيانات ومخرجات وتشغيلات لموضوع واحد.", workspaceFiles: "ملفات العمل", workspaceFilesText: "الـ workflows برامج قابلة للتشغيل، والمكعبات قدرات قابلة لإعادة الاستخدام.", compileRuntime: "ترجمة / تشغيل", compileRuntimeText: "الترجمة تحل العناصر المفقودة قبل dry-run أو التشغيل الحقيقي.", structure: "البنية", load: "تحميل", sample: "مثال", validate: "تحقق", saveManifest: "حفظ البيان", checkMissing: "فحص الناقص", compile: "ترجمة", applyCompile: "تطبيق آمن", saveActive: "حفظ الحالي", dryRun: "تجربة", run: "تشغيل", send: "إرسال", history: "السجل", close: "إغلاق", chatPlaceholder: "اطلب من AAPS: إضافة مكعب، شرح workflow، إضافة حلقة، تلخيص المشروع" },
-  vi: { lab: "Block Lab", program: "Chương trình", project: "Dự án", general: "Chung", biology: "Sinh học", writing: "Viết", format: "Định dạng", runbook: "Runbook", download: "Tải xuống", skillLibrary: "Thư viện kỹ năng", skillLibraryText: "Block tái sử dụng cho app, sinh học, viết và agent.", blockInspector: "Trình xem block", blockInspectorText: "Sửa block được chọn; lưu sẽ parse và vẽ lại.", projectWorkspace: "Không gian dự án", projectWorkspaceText: "Một dự án gom workflow, block, script, công cụ, agent, dữ liệu, artifact và lần chạy cho một chủ đề.", workspaceFiles: "Tệp dự án", workspaceFilesText: "Workflow là chương trình chạy được; block là năng lực tái sử dụng.", compileRuntime: "Compile / Chạy", compileRuntimeText: "Compile xử lý phần thiếu trước dry-run hoặc chạy thật.", structure: "Cấu trúc", load: "Mở", sample: "Mẫu", validate: "Kiểm tra", saveManifest: "Lưu manifest", checkMissing: "Kiểm tra thiếu", compile: "Compile", applyCompile: "Áp dụng an toàn", saveActive: "Lưu tệp hiện tại", dryRun: "Dry run", run: "Chạy", send: "Gửi", history: "Lịch sử", close: "Đóng", chatPlaceholder: "Yêu cầu AAPS sửa: thêm block, giải thích workflow, thêm loop, tóm tắt dự án" },
+  ja: { lab: "ブロック", program: "プログラム", project: "プロジェクト", general: "汎用", biology: "生物", writing: "執筆", format: "整形", runbook: "手順書", download: "保存", skillLibrary: "スキルライブラリ", skillLibraryText: "アプリ開発、生物、執筆、汎用エージェント向けの再利用ブロック。", blockInspector: "ブロック作業領域", blockInspectorText: "出力と状態をここに表示します。カードのメニューで編集または詳細確認します。", projectWorkspace: "プロジェクト作業領域", projectWorkspaceText: "1つのテーマに複数のワークフロー、ブロック、スクリプト、ツール、エージェントをまとめます。", workspaceFiles: "作業領域ファイル", workspaceFilesText: "ワークフローは実行可能なプログラム、ブロックは再利用能力です。", compileRuntime: "コンパイル / 実行", compileRuntimeText: "実行前に不足ブロック、スクリプト、ツール、エージェント、設定を解決します。", structure: "構造", load: "読込", sample: "例", validate: "検証", saveManifest: "清單保存", checkMissing: "不足確認", compile: "コンパイル", applyCompile: "安全適用", saveActive: "保存", dryRun: "Dry Run", run: "実行", send: "送信", history: "履歴", close: "閉じる", chatPlaceholder: "AAPSに編集を依頼: ブロック追加、説明、ループ追加、プロジェクト要約" },
+  ko: { lab: "블록 랩", program: "프로그램", project: "프로젝트", general: "일반", biology: "생물", writing: "쓰기", format: "정리", runbook: "런북", download: "다운로드", skillLibrary: "스킬 라이브러리", skillLibraryText: "앱 개발, 생물, 글쓰기, 에이전트용 재사용 블록.", blockInspector: "블록 작업공간", blockInspectorText: "출력과 상태를 여기에 유지합니다. 카드 메뉴로 집중 편집 또는 전체 검사를 엽니다.", projectWorkspace: "프로젝트 작업공간", projectWorkspaceText: "하나의 주제에 여러 워크플로, 블록, 스크립트, 도구, 에이전트를 묶습니다.", workspaceFiles: "작업공간 파일", workspaceFilesText: "워크플로는 실행 프로그램이고 블록은 재사용 기능입니다.", compileRuntime: "컴파일 / 실행", compileRuntimeText: "실행 전에 누락 블록, 스크립트, 도구, 에이전트, 설정을 해결합니다.", structure: "구조", load: "열기", sample: "예제", validate: "검증", saveManifest: "매니페스트 저장", checkMissing: "누락 확인", compile: "컴파일", applyCompile: "안전 적용", saveActive: "활성 파일 저장", dryRun: "드라이런", run: "실행", send: "전송", history: "기록", close: "닫기", chatPlaceholder: "AAPS에 요청: 블록 추가, 워크플로 설명, 루프 추가, 프로젝트 요약" },
+  es: { lab: "Bloques", program: "Programa", project: "Proyecto", general: "General", biology: "Biología", writing: "Escritura", format: "Formatear", runbook: "Runbook", download: "Descargar", skillLibrary: "Biblioteca de skills", skillLibraryText: "Bloques reutilizables para apps, biología, escritura y agentes.", blockInspector: "Espacio de bloque", blockInspectorText: "Las salidas y el estado quedan visibles aquí. Usa el menú de cada tarjeta para editar o inspeccionar.", projectWorkspace: "Espacio del proyecto", projectWorkspaceText: "Un proyecto agrupa workflows, bloques, scripts, herramientas, agentes, datos, artefactos y ejecuciones de un tema.", workspaceFiles: "Archivos", workspaceFilesText: "Workflows ejecutables; bloques reutilizables; scripts, herramientas, agentes y entornos los hacen ejecutables.", compileRuntime: "Compilar / Ejecutar", compileRuntimeText: "La compilación resuelve faltantes antes de dry-runs o ejecuciones reales.", structure: "Estructura", load: "Cargar", sample: "Ejemplo", validate: "Validar", saveManifest: "Guardar manifest", checkMissing: "Faltantes", compile: "Compilar", applyCompile: "Aplicar seguro", saveActive: "Guardar activo", dryRun: "Dry run", run: "Ejecutar", send: "Enviar", history: "Historial", close: "Cerrar", chatPlaceholder: "Pide a AAPS editar: añadir bloque, explicar workflow, añadir loop, resumir proyecto" },
+  fr: { lab: "Blocs", program: "Programme", project: "Projet", general: "Général", biology: "Biologie", writing: "Écriture", format: "Formater", runbook: "Runbook", download: "Télécharger", skillLibrary: "Bibliothèque de skills", skillLibraryText: "Blocs réutilisables pour apps, biologie, écriture et agents.", blockInspector: "Espace bloc", blockInspectorText: "Les sorties et l'état restent visibles ici. Utilisez le menu de carte pour éditer ou inspecter.", projectWorkspace: "Espace projet", projectWorkspaceText: "Un projet regroupe workflows, blocs, scripts, outils, agents, données, artefacts et runs d'un même sujet.", workspaceFiles: "Fichiers", workspaceFilesText: "Les workflows sont exécutables; les blocs sont des capacités réutilisables.", compileRuntime: "Compiler / Exécuter", compileRuntimeText: "La compilation résout les composants manquants avant dry-run ou run réel.", structure: "Structure", load: "Charger", sample: "Exemple", validate: "Valider", saveManifest: "Enregistrer", checkMissing: "Manquants", compile: "Compiler", applyCompile: "Appliquer sûr", saveActive: "Enregistrer actif", dryRun: "Dry run", run: "Exécuter", send: "Envoyer", history: "Historique", close: "Fermer", chatPlaceholder: "Demandez à AAPS de modifier: bloc, explication, boucle, résumé projet" },
+  de: { lab: "Blocklabor", program: "Programm", project: "Projekt", general: "Allgemein", biology: "Biologie", writing: "Schreiben", format: "Format", runbook: "Runbook", download: "Download", skillLibrary: "Skill-Bibliothek", skillLibraryText: "Wiederverwendbare Blöcke für Apps, Biologie, Schreiben und Agenten.", blockInspector: "Blockarbeitsbereich", blockInspectorText: "Ausgaben und Status bleiben hier sichtbar. Das Kartenmenü öffnet Editor oder Inspektor.", projectWorkspace: "Projektarbeitsbereich", projectWorkspaceText: "Ein Projekt bündelt Workflows, Blöcke, Skripte, Tools, Agenten, Daten, Artefakte und Runs zu einem Thema.", workspaceFiles: "Arbeitsdateien", workspaceFilesText: "Workflows sind ausführbare Programme; Blöcke sind wiederverwendbare Fähigkeiten.", compileRuntime: "Kompilieren / Ausführen", compileRuntimeText: "Kompilieren löst fehlende Komponenten vor Dry-runs oder echten Runs.", structure: "Struktur", load: "Laden", sample: "Beispiel", validate: "Prüfen", saveManifest: "Manifest speichern", checkMissing: "Fehlendes prüfen", compile: "Kompilieren", applyCompile: "Sicher anwenden", saveActive: "Aktive Datei speichern", dryRun: "Dry Run", run: "Ausführen", send: "Senden", history: "Verlauf", close: "Schließen", chatPlaceholder: "AAPS bitten: Block hinzufügen, Workflow erklären, Loop hinzufügen, Projekt zusammenfassen" },
+  ru: { lab: "Блоки", program: "Программа", project: "Проект", general: "Общее", biology: "Биология", writing: "Текст", format: "Формат", runbook: "Runbook", download: "Скачать", skillLibrary: "Библиотека навыков", skillLibraryText: "Переиспользуемые блоки для приложений, биологии, письма и агентов.", blockInspector: "Рабочая область блока", blockInspectorText: "Выводы и статус остаются видимыми здесь. Меню карточки открывает редактор или инспектор.", projectWorkspace: "Рабочая область", projectWorkspaceText: "Проект объединяет workflow, блоки, скрипты, инструменты, агентов, данные, артефакты и запуски одной темы.", workspaceFiles: "Файлы", workspaceFilesText: "Workflow исполняемы; блоки переиспользуемы; скрипты и окружения делают их runnable.", compileRuntime: "Компиляция / запуск", compileRuntimeText: "Компиляция решает отсутствующие компоненты перед dry-run или запуском.", structure: "Структура", load: "Открыть", sample: "Пример", validate: "Проверить", saveManifest: "Сохранить manifest", checkMissing: "Недостающее", compile: "Компилировать", applyCompile: "Безопасно применить", saveActive: "Сохранить активный", dryRun: "Dry run", run: "Запуск", send: "Отправить", history: "История", close: "Закрыть", chatPlaceholder: "Попросите AAPS: добавить блок, объяснить workflow, добавить цикл, резюмировать проект" },
+  ar: { lab: "المكعبات", program: "البرنامج", project: "المشروع", general: "عام", biology: "أحياء", writing: "كتابة", format: "تنسيق", runbook: "دليل التشغيل", download: "تنزيل", skillLibrary: "مكتبة المهارات", skillLibraryText: "مكعبات قابلة لإعادة الاستخدام للتطبيقات والأحياء والكتابة والوكلاء.", blockInspector: "مساحة عمل المكعب", blockInspectorText: "تبقى المخرجات والحالة ظاهرة هنا. تفتح قائمة البطاقة التحرير أو الفحص.", projectWorkspace: "مساحة المشروع", projectWorkspaceText: "المشروع يجمع workflows ومكعبات وسكربتات وأدوات ووكلاء وبيانات ومخرجات وتشغيلات لموضوع واحد.", workspaceFiles: "ملفات العمل", workspaceFilesText: "الـ workflows برامج قابلة للتشغيل، والمكعبات قدرات قابلة لإعادة الاستخدام.", compileRuntime: "ترجمة / تشغيل", compileRuntimeText: "الترجمة تحل العناصر المفقودة قبل dry-run أو التشغيل الحقيقي.", structure: "البنية", load: "تحميل", sample: "مثال", validate: "تحقق", saveManifest: "حفظ البيان", checkMissing: "فحص الناقص", compile: "ترجمة", applyCompile: "تطبيق آمن", saveActive: "حفظ الحالي", dryRun: "تجربة", run: "تشغيل", send: "إرسال", history: "السجل", close: "إغلاق", chatPlaceholder: "اطلب من AAPS: إضافة مكعب، شرح workflow، إضافة حلقة، تلخيص المشروع" },
+  vi: { lab: "Block Lab", program: "Chương trình", project: "Dự án", general: "Chung", biology: "Sinh học", writing: "Viết", format: "Định dạng", runbook: "Runbook", download: "Tải xuống", skillLibrary: "Thư viện kỹ năng", skillLibraryText: "Block tái sử dụng cho app, sinh học, viết và agent.", blockInspector: "Không gian block", blockInspectorText: "Output và trạng thái luôn ở đây. Dùng menu trên thẻ để sửa hoặc kiểm tra đầy đủ.", projectWorkspace: "Không gian dự án", projectWorkspaceText: "Một dự án gom workflow, block, script, công cụ, agent, dữ liệu, artifact và lần chạy cho một chủ đề.", workspaceFiles: "Tệp dự án", workspaceFilesText: "Workflow là chương trình chạy được; block là năng lực tái sử dụng.", compileRuntime: "Compile / Chạy", compileRuntimeText: "Compile xử lý phần thiếu trước dry-run hoặc chạy thật.", structure: "Cấu trúc", load: "Mở", sample: "Mẫu", validate: "Kiểm tra", saveManifest: "Lưu manifest", checkMissing: "Kiểm tra thiếu", compile: "Compile", applyCompile: "Áp dụng an toàn", saveActive: "Lưu tệp hiện tại", dryRun: "Dry run", run: "Chạy", send: "Gửi", history: "Lịch sử", close: "Đóng", chatPlaceholder: "Yêu cầu AAPS sửa: thêm block, giải thích workflow, thêm loop, tóm tắt dự án" },
 };
 
 function t(key) {
@@ -1030,20 +1065,25 @@ async function loadRunCanvasDetails(runPath, keyFiles) {
   detailsEl.innerHTML = [validationPreviewHtml(runData), methodPreviewHtml(runData), manifestPreview, tables.join(""), reportPreview, qcReview].filter(Boolean).join("");
 }
 
-function latestRunForNode(node) {
+function runItemsForNode(node) {
   const runs = (currentArtifacts.items || []).filter((item) => item.kind === "run" && item.runSummary);
   if (!runs.length) return null;
+  let matches = [];
   if (node && node.id) {
-    const byBlock = runs.find((item) => item.runSummary.block === node.id);
-    if (byBlock) return byBlock;
+    matches = runs.filter((item) => item.runSummary.block === node.id);
+    if (matches.length) return matches;
   }
   const manifest = getProjectManifest();
   const activeFile = manifest.activeFile || manifest.defaultMain || "";
   if (activeFile) {
-    const byFile = runs.find((item) => item.runSummary.file === activeFile);
-    if (byFile) return byFile;
+    matches = runs.filter((item) => item.runSummary.file === activeFile);
+    if (matches.length) return matches;
   }
-  return runs[0];
+  return runs;
+}
+
+function latestRunForNode(node) {
+  return runItemsForNode(node)?.[0] || null;
 }
 
 function nodeInputValues(node) {
@@ -1069,13 +1109,141 @@ function artifactRootsForNode(node) {
   return [...roots].filter(Boolean).sort((a, b) => a.length - b.length);
 }
 
+function blockCanvasKindMatches(item, filter = blockCanvasFilter) {
+  if (!filter || filter === "explorer") return true;
+  const kind = artifactDisplayKind(item);
+  const path = String(item?.path || "").toLowerCase();
+  if (filter === "images") return kind === "image";
+  if (filter === "tables") return kind === "table";
+  if (filter === "pdf") return kind === "pdf";
+  if (filter === "source") return kind === "source";
+  if (filter === "text") return kind === "text" || path.endsWith("report.md") || path.endsWith(".md") || path.endsWith(".log");
+  if (filter === "runs") return kind === "run";
+  if (filter === "other") return !["image", "table", "pdf", "source", "text", "run"].includes(kind);
+  return true;
+}
+
+function blockCanvasTabCounts(items) {
+  return {
+    explorer: items.length,
+    images: items.filter((item) => blockCanvasKindMatches(item, "images")).length,
+    tables: items.filter((item) => blockCanvasKindMatches(item, "tables")).length,
+    pdf: items.filter((item) => blockCanvasKindMatches(item, "pdf")).length,
+    text: items.filter((item) => blockCanvasKindMatches(item, "text")).length,
+    source: items.filter((item) => blockCanvasKindMatches(item, "source")).length,
+    runs: items.filter((item) => blockCanvasKindMatches(item, "runs")).length,
+    other: items.filter((item) => blockCanvasKindMatches(item, "other")).length,
+  };
+}
+
+function renderBlockCanvasTabs(items) {
+  const counts = blockCanvasTabCounts(items);
+  const tabs = [
+    ["explorer", "Explorer"],
+    ["images", "Images"],
+    ["tables", "Tables"],
+    ["pdf", "PDF"],
+    ["text", "Reports"],
+    ["source", "Source"],
+    ["runs", "Runs"],
+    ["other", "Other"],
+  ];
+  return `
+    <div class="block-artifact-tabs" role="tablist" aria-label="Block artifact filters">
+      ${tabs
+        .map(
+          ([id, label]) => `
+            <button type="button" class="${blockCanvasFilter === id ? "is-active" : ""}" data-block-artifact-filter="${escapeAttr(id)}">
+              ${escapeHtml(label)} <span>${Number(counts[id] || 0)}</span>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderBlockFileExplorer(items) {
+  if (!items.length) return '<div class="message">No artifacts match this block/run filter yet.</div>';
+  return `
+    <div class="block-canvas-files block-canvas-explorer">
+      ${items
+        .slice(0, 80)
+        .map(
+          (item) => `
+            <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">
+              <strong>${escapeHtml(artifactDisplayKind(item))}</strong>
+              <span>${escapeHtml(item.path)} · ${formatBytes(item.size)}</span>
+              ${
+                item.runSummary
+                  ? `<small>${escapeHtml(item.runSummary.status || "run")} · ${escapeHtml(item.runSummary.runId || "")} · ${escapeHtml(item.runSummary.file || "")}</small>`
+                  : ""
+              }
+            </a>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderBlockImages(items) {
+  const images = items.filter((item) => blockCanvasKindMatches(item, "images") && Number(item.size || 0) <= 8_000_000);
+  if (!images.length) return '<div class="message">No image artifacts match this block/run yet.</div>';
+  return `
+    <div class="block-canvas-images">
+      ${images
+        .slice(0, 24)
+        .map(
+          (item) => `
+            <figure class="block-canvas-item">
+              <img src="${artifactFileUrl(item.path)}" alt="${escapeAttr(item.title || item.path)}" loading="lazy" />
+              <figcaption>${escapeHtml(item.path)}</figcaption>
+            </figure>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderBlockCanvasBody(items) {
+  if (blockCanvasFilter === "images") return renderBlockImages(items);
+  return renderBlockFileExplorer(items.filter((item) => blockCanvasKindMatches(item)));
+}
+
+function renderOutputVersions(runs, latestPath = "") {
+  if (!runs?.length) return "";
+  return `
+    <div class="block-output-versions">
+      <strong>Output Versions</strong>
+      <div>
+        ${runs
+          .slice(0, 8)
+          .map((item, index) => {
+            const run = item.runSummary || {};
+            return `
+              <a class="${item.path === latestPath ? "is-current" : ""}" href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">
+                <span>${index === 0 ? "latest" : `v${index + 1}`}</span>
+                <strong>${escapeHtml(run.status || "run")}</strong>
+                <small>${escapeHtml(run.runId || item.path)} · ${escapeHtml(run.file || "")}</small>
+              </a>
+            `;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderBlockCanvas(payload = null) {
   if (!blockCanvasEl) return;
   const items = payload?.canvasItems || payload?.previewRun?.canvasItems || [];
   const preview = payload?.previewRun || {};
   if (!payload) {
     const selected = nodeRefs.get(selectedRef);
-    const latestRun = latestRunForNode(selected);
+    const nodeRuns = runItemsForNode(selected) || [];
+    const latestRun = nodeRuns[0] || null;
     if (selected && latestRun?.runSummary) {
       const run = latestRun.runSummary;
       const passed = Number(run.validations || 0) - Number(run.failedValidations || 0);
@@ -1122,6 +1290,7 @@ function renderBlockCanvas(payload = null) {
           return priority(a) - priority(b) || String(a.path || "").localeCompare(String(b.path || ""));
         })
         .slice(0, 12);
+      const canvasItems = [latestRun, ...relatedItems];
       blockCanvasEl.innerHTML = `
         <div class="block-canvas-head">
           <div>
@@ -1134,51 +1303,10 @@ function renderBlockCanvas(payload = null) {
             <span>${Number(run.methodSelections || 0)} method routes</span>
           </div>
         </div>
-        <div class="block-run-card">
-          <div><strong>Workflow file</strong><span>${escapeHtml(run.file || "")}</span></div>
-          <div><strong>Run directory</strong><span>${escapeHtml(run.runDir || "")}</span></div>
-          <div class="block-canvas-files">
-            <a href="${artifactFileUrl(latestRun.path)}" target="_blank" rel="noopener noreferrer">
-              <strong>run</strong>
-              <span>${escapeHtml(latestRun.path)} · ${formatBytes(latestRun.size)}</span>
-            </a>
-          </div>
-        </div>
-        ${
-          keyFiles.length
-            ? `<div class="block-run-card">
-                <strong>Related artifacts</strong>
-                <div class="block-canvas-files">
-                  ${keyFiles
-                    .map(
-                      (item) => `
-                        <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">
-                          <strong>${escapeHtml(item.kind)}</strong>
-                          <span>${escapeHtml(item.path)} · ${formatBytes(item.size)}</span>
-                        </a>
-                      `
-                    )
-                    .join("")}
-                </div>
-              </div>`
-            : ""
-        }
-        ${
-          previewImages.length
-            ? `<div class="block-canvas-images">
-                ${previewImages
-                  .map(
-                    (item) => `
-                      <figure class="block-canvas-item">
-                        <img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.path)}" loading="lazy" />
-                        <figcaption>${escapeHtml(item.path)}</figcaption>
-                      </figure>
-                    `
-                  )
-                  .join("")}
-              </div>`
-            : ""
-        }
+        ${renderOutputVersions(nodeRuns, latestRun.path)}
+        ${renderBlockCanvasTabs(canvasItems)}
+        ${blockCanvasFilter === "images" && !previewImages.length ? '<div class="message">No small image previews found for this run.</div>' : ""}
+        ${renderBlockCanvasBody(canvasItems)}
         <div class="block-run-card run-detail-card" data-run-details="${escapeHtml(latestRun.path)}">
           <strong>Loading validation details and table previews...</strong>
         </div>
@@ -1196,7 +1324,6 @@ function renderBlockCanvas(payload = null) {
     return;
   }
   const imageItems = items.filter((item) => item.kind === "image");
-  const dataItems = items.filter((item) => item.kind !== "image").slice(0, 8);
   blockCanvasEl.innerHTML = `
     <div class="block-canvas-head">
       <div>
@@ -1209,35 +1336,9 @@ function renderBlockCanvas(payload = null) {
         <span>${formatBytes(items.reduce((sum, item) => sum + Number(item.size || 0), 0))}</span>
       </div>
     </div>
-    ${
-      imageItems.length
-        ? `<div class="block-canvas-grid">${imageItems
-            .slice(0, 12)
-            .map(
-              (item) => `
-                <figure class="block-canvas-item">
-                  <img src="${artifactFileUrl(item.path)}" alt="${escapeHtml(item.title || item.path)}" loading="lazy" />
-                  <figcaption>${escapeHtml(item.path)}</figcaption>
-                </figure>
-              `
-            )
-            .join("")}</div>`
-        : '<div class="message">No preview images were produced. Check stdout/stderr in the block log.</div>'
-    }
-    ${
-      dataItems.length
-        ? `<div class="block-canvas-files">${dataItems
-            .map(
-              (item) => `
-                <a href="${artifactFileUrl(item.path)}" target="_blank" rel="noopener noreferrer">
-                  <strong>${escapeHtml(item.kind)}</strong>
-                  <span>${escapeHtml(item.path)} · ${formatBytes(item.size)}</span>
-                </a>
-              `
-            )
-            .join("")}</div>`
-        : ""
-    }
+    ${renderBlockCanvasTabs(items)}
+    ${!imageItems.length && blockCanvasFilter === "images" ? '<div class="message">No preview images were produced. Check stdout/stderr in the block log.</div>' : ""}
+    ${renderBlockCanvasBody(items)}
   `;
 }
 
@@ -1907,6 +2008,197 @@ function setSkillEditOpen(open) {
   if (open) window.setTimeout(() => skillEditFields.prompt?.focus(), 0);
 }
 
+function setNodeDetailOpen(open) {
+  if (!nodeDetailModalEl || !nodeDetailOverlayEl) return;
+  nodeDetailModalEl.classList.toggle("is-open", open);
+  nodeDetailModalEl.setAttribute("aria-hidden", open ? "false" : "true");
+  nodeDetailOverlayEl.hidden = !open;
+  if (open) {
+    window.setTimeout(() => {
+      if (nodeDetailMode === "edit") nodeDetailFields.title?.focus();
+    }, 0);
+  }
+}
+
+function setNodeDetailMode(mode) {
+  nodeDetailMode = mode === "inspect" ? "inspect" : "edit";
+  nodeDetailEditTabEl?.classList.toggle("is-active", nodeDetailMode === "edit");
+  nodeDetailInspectTabEl?.classList.toggle("is-active", nodeDetailMode === "inspect");
+  if (nodeDetailEditFormEl) nodeDetailEditFormEl.hidden = nodeDetailMode !== "edit";
+  if (nodeDetailInspectorEl) nodeDetailInspectorEl.hidden = nodeDetailMode !== "inspect";
+  if (nodeDetailSubtitleEl) {
+    nodeDetailSubtitleEl.textContent =
+      nodeDetailMode === "inspect"
+        ? "Read the complete block contract, run evidence, and output roots without changing source."
+        : "Edit the selected block contract. Save reparses and redraws the source, inline inspector, and canvas.";
+  }
+}
+
+function fillNodeDetailEditor(node) {
+  if (!node) return;
+  if (nodeDetailTitleEl) nodeDetailTitleEl.textContent = `${node.kind} ${node.id}`;
+  if (nodeDetailFields.kind) nodeDetailFields.kind.value = node.kind || "";
+  if (nodeDetailFields.id) nodeDetailFields.id.value = node.id || "";
+  if (nodeDetailFields.title) nodeDetailFields.title.value = node.title || "";
+  if (nodeDetailFields.prompt) nodeDetailFields.prompt.value = node.prompt || "";
+  if (nodeDetailFields.inputs) nodeDetailFields.inputs.value = portLines(node.inputs || []);
+  if (nodeDetailFields.outputs) nodeDetailFields.outputs.value = portLines(node.outputs || []);
+  if (nodeDetailFields.artifacts) nodeDetailFields.artifacts.value = portLines(node.artifacts || []);
+  if (nodeDetailFields.exec) nodeDetailFields.exec.value = execLines(node.exec || []);
+  if (nodeDetailFields.args) nodeDetailFields.args.value = keyValueLines(node.args || {});
+  if (nodeDetailFields.requirements) nodeDetailFields.requirements.value = requirementsLines(node.requirements || {});
+  if (nodeDetailFields.environment) nodeDetailFields.environment.value = environmentLines(node.environment || {});
+  if (nodeDetailFields.compilePrompt) nodeDetailFields.compilePrompt.value = node.compile?.prompt || "";
+  if (nodeDetailFields.code) nodeDetailFields.code.value = node.code || (node.exec && node.exec[0] && node.exec[0].code) || "";
+  if (nodeDetailFields.run) nodeDetailFields.run.value = (node.run || []).join("\n");
+  if (nodeDetailFields.validations) nodeDetailFields.validations.value = (node.validations || []).join("\n");
+  if (nodeDetailFields.verify) nodeDetailFields.verify.value = (node.verify || []).join("\n");
+  if (nodeDetailFields.recovery) nodeDetailFields.recovery.value = (node.recovery || []).join("\n");
+  if (nodeDetailFields.repair) nodeDetailFields.repair.value = node.repair ? "true" : "false";
+  if (nodeDetailFields.fallback) nodeDetailFields.fallback.value = node.fallback || "";
+  if (nodeDetailFields.reviews) nodeDetailFields.reviews.value = (node.reviews || []).join("\n");
+}
+
+function nodeDetailPillList(items, empty = "none") {
+  const values = (items || []).filter(Boolean);
+  if (!values.length) return `<span class="node-detail-empty">${escapeHtml(empty)}</span>`;
+  return values.map((item) => `<span>${escapeHtml(item)}</span>`).join("");
+}
+
+function nodeDetailPortsHtml(title, ports) {
+  const rows = (ports || []).map((port) => `<tr><td>${escapeHtml(port.name || "")}</td><td>${escapeHtml(port.type || "")}</td><td>${escapeHtml(port.value || "")}</td></tr>`).join("");
+  return `
+    <section class="node-detail-section">
+      <h3>${escapeHtml(title)}</h3>
+      ${
+        rows
+          ? `<table><thead><tr><th>Name</th><th>Type</th><th>Path / Value</th></tr></thead><tbody>${rows}</tbody></table>`
+          : '<div class="node-detail-empty">No declared ports.</div>'
+      }
+    </section>
+  `;
+}
+
+function renderNodeDetailInspector(node) {
+  if (!nodeDetailInspectorEl || !node) return;
+  const latestRun = latestRunForNode(node);
+  const roots = artifactRootsForNode(node);
+  const requirements = node.requirements || {};
+  const run = latestRun?.runSummary || {};
+  nodeDetailInspectorEl.innerHTML = `
+    <div class="node-detail-summary">
+      <div><strong>${escapeHtml(node.kind)}</strong><span>kind</span></div>
+      <div><strong>${escapeHtml(node.id || "")}</strong><span>id</span></div>
+      <div><strong>${(node.inputs || []).length}</strong><span>inputs</span></div>
+      <div><strong>${(node.outputs || []).length}</strong><span>outputs</span></div>
+      <div><strong>${(node.artifacts || []).length}</strong><span>artifacts</span></div>
+      <div><strong>${(node.validations || []).length}</strong><span>validations</span></div>
+    </div>
+    <section class="node-detail-section">
+      <h3>Purpose</h3>
+      <p>${escapeHtml(node.prompt || "No prompt/purpose is written yet.")}</p>
+    </section>
+    ${nodeDetailPortsHtml("Inputs", node.inputs || [])}
+    ${nodeDetailPortsHtml("Outputs", node.outputs || [])}
+    ${nodeDetailPortsHtml("Artifacts", node.artifacts || [])}
+    <section class="node-detail-section">
+      <h3>Requirements</h3>
+      <div class="node-detail-pills">
+        ${nodeDetailPillList([
+          ...(requirements.commands || []).map((item) => `command: ${item}`),
+          ...(requirements.files || []).map((item) => `file: ${item}`),
+          ...(requirements.tools || []).map((item) => `tool: ${item}`),
+          ...(requirements.pythonPackages || []).map((item) => `python: ${item}`),
+          ...(requirements.nodePackages || []).map((item) => `node: ${item}`),
+        ])}
+      </div>
+    </section>
+    <section class="node-detail-section">
+      <h3>Compile Contract</h3>
+      <p><strong>Agent:</strong> ${escapeHtml(node.compile?.agent || "(inherit/default)")}</p>
+      <pre>${escapeHtml(node.compile?.prompt || "No compile prompt declared.")}</pre>
+    </section>
+    <section class="node-detail-section">
+      <h3>Validation and Review</h3>
+      <div class="node-detail-pills">${nodeDetailPillList(node.validations || [])}</div>
+      <div class="node-detail-pills">${nodeDetailPillList(node.reviews || [], "no human-review steps")}</div>
+    </section>
+    <section class="node-detail-section">
+      <h3>Output Roots</h3>
+      <div class="node-detail-pills">${nodeDetailPillList(roots, "no resolvable output roots")}</div>
+    </section>
+    <section class="node-detail-section">
+      <h3>Latest Run Evidence</h3>
+      ${
+        latestRun
+          ? `<p><strong>${escapeHtml(run.status || "run")}</strong> · ${escapeHtml(run.runId || "")} · ${escapeHtml(run.file || "")}</p>
+             <p>${Number(run.failedSteps || 0)} failed steps · ${Number(run.failedValidations || 0)} failed validations · ${Number(run.methodSelections || 0)} method routes</p>
+             <a href="${artifactFileUrl(latestRun.path)}" target="_blank" rel="noopener noreferrer">${escapeHtml(latestRun.path)}</a>`
+          : "<p>No run evidence is linked to this block yet.</p>"
+      }
+    </section>
+  `;
+}
+
+function nodeFromDetailFields(baseNode) {
+  const node = clone(baseNode || {});
+  node.id = AAPS.slug(nodeDetailFields.id?.value || node.id || node.kind || "node");
+  node.title = nodeDetailFields.title?.value.trim() || "";
+  node.prompt = nodeDetailFields.prompt?.value.trim() || "";
+  node.inputs = parsePorts(nodeDetailFields.inputs?.value || "");
+  node.outputs = parsePorts(nodeDetailFields.outputs?.value || "");
+  node.artifacts = parsePorts(nodeDetailFields.artifacts?.value || "");
+  node.exec = parseExecActions(nodeDetailFields.exec?.value || "");
+  node.args = parseKeyValues(nodeDetailFields.args?.value || "");
+  node.requirements = parseRequirements(nodeDetailFields.requirements?.value || "");
+  node.environment = parseEnvironment(nodeDetailFields.environment?.value || "");
+  node.compile = {
+    ...(node.compile || {}),
+    prompt: nodeDetailFields.compilePrompt?.value.trim() || "",
+    onMissing: (node.compile && node.compile.onMissing) || "prompt",
+  };
+  node.code = nodeDetailFields.code?.value.trim() || "";
+  if (node.code && node.exec.length) node.exec[node.exec.length - 1].code = node.code;
+  if (node.exec.length) node.exec[node.exec.length - 1].args = { ...node.args };
+  node.run = parseLines(nodeDetailFields.run?.value || "");
+  node.validations = parseLines(nodeDetailFields.validations?.value || "");
+  node.verify = parseLines(nodeDetailFields.verify?.value || "");
+  node.recovery = parseLines(nodeDetailFields.recovery?.value || "");
+  node.repair = /^(true|yes|on|1)$/i.test(nodeDetailFields.repair?.value.trim() || "");
+  node.fallback = nodeDetailFields.fallback?.value.trim() || "";
+  node.reviews = parseLines(nodeDetailFields.reviews?.value || "");
+  return node;
+}
+
+function saveNodeDetailEdit() {
+  const ir = getIr();
+  const loc = nodeLocationByRef(ir, nodeDetailRef || selectedRef);
+  if (!loc) throw new Error("Could not find the selected block to save.");
+  const updated = nodeFromDetailFields(loc.node);
+  loc.list[loc.index] = updated;
+  selectedRef = `${loc.listRef}:${loc.index}`;
+  nodeDetailRef = selectedRef;
+  sourceEl.value = AAPS.serializeAAPS(ir);
+  render();
+  fillNodeDetailEditor(updated);
+  renderNodeDetailInspector(updated);
+  addMessage("assistant", `Saved ${updated.kind} ${updated.id}.`);
+  return updated;
+}
+
+function openNodeDetail(ref, mode = "edit") {
+  const ir = getIr();
+  const loc = nodeLocationByRef(ir, ref || selectedRef);
+  if (!loc) return;
+  selectedRef = `${loc.listRef}:${loc.index}`;
+  nodeDetailRef = selectedRef;
+  render();
+  fillNodeDetailEditor(loc.node);
+  renderNodeDetailInspector(loc.node);
+  setNodeDetailMode(mode);
+  setNodeDetailOpen(true);
+}
+
 function addMessage(role, text) {
   const node = document.createElement("div");
   node.className = `message ${role}`;
@@ -1962,6 +2254,38 @@ function nodeColor(kind) {
   }[kind] || "#ff4f8b";
 }
 
+function closeNodeMenus(exceptRef = "") {
+  document.querySelectorAll("[data-node-menu-panel]").forEach((panel) => {
+    if (exceptRef && panel.dataset.nodeMenuPanel === exceptRef) return;
+    panel.hidden = true;
+    panel.style.left = "";
+    panel.style.top = "";
+    panel.closest(".node-card-tools")?.classList.remove("is-open");
+  });
+}
+
+function toggleNodeMenu(ref, trigger = null) {
+  const panel = trigger?.closest(".node-card-tools")?.querySelector(`[data-node-menu-panel="${CSS.escape(ref)}"]`) || document.querySelector(`[data-node-menu-panel="${CSS.escape(ref)}"]`);
+  if (!panel) return;
+  const willOpen = panel.hidden;
+  closeNodeMenus();
+  panel.hidden = !willOpen;
+  panel.closest(".node-card-tools")?.classList.toggle("is-open", willOpen);
+  if (willOpen && trigger) {
+    const triggerRect = trigger.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const gap = 8;
+    const dockRect = document.querySelector(".chat-dock")?.getBoundingClientRect();
+    const safeBottom = dockRect ? Math.max(gap, dockRect.top - gap) : window.innerHeight - gap;
+    const below = triggerRect.bottom + gap;
+    const above = triggerRect.top - panelRect.height - gap;
+    const top = below + panelRect.height <= safeBottom ? below : Math.max(gap, above);
+    const left = Math.min(window.innerWidth - panelRect.width - gap, Math.max(gap, triggerRect.right - panelRect.width));
+    panel.style.top = `${top}px`;
+    panel.style.left = `${left}px`;
+  }
+}
+
 function renderNode(node, ref, depth = 0) {
   nodeRefs.set(ref, node);
   const selectedClass = ref === selectedRef ? " is-selected" : "";
@@ -1987,11 +2311,20 @@ function renderNode(node, ref, depth = 0) {
           <div class="node-kind">${escapeHtml(node.kind)}</div>
           <div class="node-id">${escapeHtml(node.id)}</div>
         </div>
-        <div class="node-kind">${(node.inputs || []).length} in / ${(node.outputs || []).length} out / ${(node.artifacts || []).length} art</div>
+        <div class="node-card-tools">
+          <div class="node-kind">${(node.inputs || []).length} in / ${(node.outputs || []).length} out / ${(node.artifacts || []).length} art</div>
+          <button class="node-more" type="button" data-node-menu-ref="${escapeAttr(ref)}" aria-label="Open block actions">...</button>
+          <div class="node-menu-panel" data-node-menu-panel="${escapeAttr(ref)}" hidden>
+            <button type="button" data-open-node-editor-ref="${escapeAttr(ref)}">Editor popup</button>
+            <button type="button" data-open-node-inspector-ref="${escapeAttr(ref)}">Inspector popup</button>
+            <button type="button" data-select-node-ref="${escapeAttr(ref)}">Focus inline</button>
+          </div>
+        </div>
       </div>
       <div class="node-actions">
         <button type="button" data-select-node-ref="${escapeHtml(ref)}">Select</button>
-        <button type="button" data-edit-node-ref="${escapeHtml(ref)}">Edit in Blocks</button>
+        <button type="button" data-open-node-editor-ref="${escapeHtml(ref)}">Editor</button>
+        <button type="button" data-open-node-inspector-ref="${escapeHtml(ref)}">Inspector</button>
       </div>
       ${meta.length ? `<div class="node-meta">${escapeHtml(meta.join(" · "))}</div>` : ""}
       ${node.prompt ? `<div class="node-prompt">${escapeHtml(node.prompt.replace(/\s+/g, " ").slice(0, 180))}</div>` : ""}
@@ -2060,7 +2393,7 @@ function renderBlockBrowser(ir) {
     renderSection("Skills", ir.pipeline.skills || [], "skill"),
     renderSection("Tasks", ir.pipeline.tasks || [], "task"),
   ].join("");
-  const sections = [renderProjectBlockFiles(), sourceSections].join("");
+  const sections = [sourceSections, renderProjectBlockFiles()].join("");
   blockBrowserEl.innerHTML = sections || '<div class="message">No current blocks. Add a reusable block or ask block chat to create one.</div>';
   blockBrowserEl.querySelectorAll('.node-card[data-node-kind="skill"]').forEach((card) => {
     card.onclick = (event) => {
@@ -3366,7 +3699,39 @@ document.querySelectorAll("[data-template]").forEach((button) => {
   });
 });
 
+function handleNodeCardCommand(event) {
+  const menuButton = event.target.closest("[data-node-menu-ref]");
+  if (menuButton) {
+    event.stopPropagation();
+    toggleNodeMenu(menuButton.dataset.nodeMenuRef, menuButton);
+    return true;
+  }
+  const editorButton = event.target.closest("[data-open-node-editor-ref]");
+  if (editorButton) {
+    event.stopPropagation();
+    closeNodeMenus();
+    openNodeDetail(editorButton.dataset.openNodeEditorRef, "edit");
+    return true;
+  }
+  const inspectorButton = event.target.closest("[data-open-node-inspector-ref]");
+  if (inspectorButton) {
+    event.stopPropagation();
+    closeNodeMenus();
+    openNodeDetail(inspectorButton.dataset.openNodeInspectorRef, "inspect");
+    return true;
+  }
+  const inlineFocusButton = event.target.closest(".node-menu-panel [data-select-node-ref]");
+  if (inlineFocusButton) {
+    event.stopPropagation();
+    closeNodeMenus();
+    selectNodeRef(inlineFocusButton.dataset.selectNodeRef, { editInBlocks: activeTab === "lab" });
+    return true;
+  }
+  return false;
+}
+
 treeEl.addEventListener("click", (event) => {
+  if (handleNodeCardCommand(event)) return;
   const editButton = event.target.closest("[data-edit-node-ref]");
   if (editButton) {
     event.stopPropagation();
@@ -3399,6 +3764,7 @@ treeEl.addEventListener("dblclick", (event) => {
 });
 
 blockBrowserEl?.addEventListener("click", (event) => {
+  if (handleNodeCardCommand(event)) return;
   const editFileButton = event.target.closest("[data-project-edit-file]");
   if (editFileButton) {
     event.stopPropagation();
@@ -3427,6 +3793,11 @@ blockBrowserEl?.addEventListener("click", (event) => {
   const card = event.target.closest("[data-ref]");
   if (!card) return;
   selectNodeRef(card.dataset.ref);
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-node-menu-ref]") || event.target.closest(".node-menu-panel")) return;
+  closeNodeMenus();
 });
 
 function handleNodeDragStart(event) {
@@ -3487,6 +3858,31 @@ closeCreateProjectModalBtnEl?.addEventListener("click", () => setCreateProjectOp
 createProjectOverlayEl?.addEventListener("click", () => setCreateProjectOpen(false));
 closeSkillEditModalBtnEl?.addEventListener("click", () => setSkillEditOpen(false));
 skillEditOverlayEl?.addEventListener("click", () => setSkillEditOpen(false));
+closeNodeDetailModalBtnEl?.addEventListener("click", () => setNodeDetailOpen(false));
+nodeDetailOverlayEl?.addEventListener("click", () => setNodeDetailOpen(false));
+nodeDetailEditTabEl?.addEventListener("click", () => {
+  const node = nodeRefs.get(nodeDetailRef || selectedRef);
+  if (node) fillNodeDetailEditor(node);
+  setNodeDetailMode("edit");
+});
+nodeDetailInspectTabEl?.addEventListener("click", () => {
+  const node = nodeRefs.get(nodeDetailRef || selectedRef);
+  if (node) renderNodeDetailInspector(node);
+  setNodeDetailMode("inspect");
+});
+nodeDetailEditFormEl?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  try {
+    saveNodeDetailEdit();
+    setNodeDetailOpen(false);
+  } catch (error) {
+    addMessage("assistant", `Could not save popup edit: ${error.message}`);
+  }
+});
+selectNodeDetailBtnEl?.addEventListener("click", () => {
+  selectNodeRef(nodeDetailRef || selectedRef, { editInBlocks: true });
+  setNodeDetailOpen(false);
+});
 saveSkillEditBtnEl?.addEventListener("click", () => {
   try {
     commitSkillEditModal({ inserted: skillEditMode === "template" });
@@ -3616,6 +4012,13 @@ artifactListEl?.addEventListener("click", (event) => {
 });
 
 blockCanvasEl?.addEventListener("click", (event) => {
+  const filterButton = event.target.closest("[data-block-artifact-filter]");
+  if (filterButton) {
+    blockCanvasFilter = filterButton.dataset.blockArtifactFilter || "explorer";
+    localStorage.setItem("aaps.studio.blockCanvasFilter", blockCanvasFilter);
+    renderBlockCanvas(null);
+    return;
+  }
   const button = event.target.closest("[data-qc-action]");
   const rerunButton = event.target.closest("[data-qc-rerun]");
   const target = button || rerunButton;

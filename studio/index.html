@@ -80,11 +80,16 @@
         <section class="panel inspector-panel">
           <div class="panel-head">
             <div>
-              <h2>Block Inspector</h2>
-              <p>Edit the selected block. Save reparses and redraws the source.</p>
+              <h2>Block Workspace</h2>
+              <p>Outputs and status stay visible here. Use each block card's ... menu for focused edit or full inspection.</p>
             </div>
             <span id="selected-label">none</span>
           </div>
+          <div id="block-canvas" class="block-canvas">
+            <strong>Block Artifact Canvas</strong>
+            <span>Ask block chat to create or refine a segmentation block. AAPS will run a small preview when possible and show masks, overlays, tables, and reports here.</span>
+          </div>
+          <div id="block-readiness" class="block-readiness">Select a block, then check readiness.</div>
           <form id="inspector-form" class="inspector-form">
             <label>Kind <input id="field-kind" disabled /></label>
             <label>ID <input id="field-id" /></label>
@@ -156,11 +161,6 @@
                 <button id="dry-run-block-btn" type="button">Dry Run Block</button>
                 <button id="run-block-btn" type="button">Run Block</button>
                 <button id="repair-prompt-btn" type="button">Repair Prompt</button>
-              </div>
-              <div id="block-readiness" class="block-readiness">Select a block, then check readiness.</div>
-              <div id="block-canvas" class="block-canvas">
-                <strong>Block Artifact Canvas</strong>
-                <span>Ask block chat to create or refine a segmentation block. AAPS will run a small preview when possible and show masks, overlays, tables, and reports here.</span>
               </div>
               <pre id="block-log"></pre>
             </section>
@@ -478,6 +478,50 @@
           </div>
           <div id="skill-edit-status" class="structure-status">Click a skill template or existing skill card to edit it here.</div>
         </section>
+      </div>
+    </section>
+
+    <div id="node-detail-overlay" class="modal-overlay" hidden></div>
+    <section id="node-detail-modal" class="studio-modal node-detail-modal" aria-hidden="true" aria-label="Edit or inspect selected AAPS block">
+      <div class="modal-head">
+        <div>
+          <h2 id="node-detail-title">Block Details</h2>
+          <p id="node-detail-subtitle">Edit the selected reusable unit or inspect its complete contract.</p>
+        </div>
+        <button id="close-node-detail-modal" type="button">Close</button>
+      </div>
+      <div class="artifact-modal-toolbar node-detail-tabs">
+        <button id="node-detail-edit-tab" type="button" class="artifact-filter is-active" data-node-detail-mode="edit">Editor</button>
+        <button id="node-detail-inspect-tab" type="button" class="artifact-filter" data-node-detail-mode="inspect">Inspector</button>
+      </div>
+      <div class="modal-body node-detail-body">
+        <form id="node-detail-edit-form" class="skill-edit-grid node-detail-edit-form">
+          <label>Kind <input id="node-detail-kind" disabled /></label>
+          <label>ID <input id="node-detail-id" /></label>
+          <label class="wide">Title <input id="node-detail-name" /></label>
+          <label class="wide">Prompt <textarea id="node-detail-prompt" rows="6"></textarea></label>
+          <label>Inputs <textarea id="node-detail-inputs" rows="5"></textarea></label>
+          <label>Outputs <textarea id="node-detail-outputs" rows="5"></textarea></label>
+          <label>Artifacts <textarea id="node-detail-artifacts" rows="4"></textarea></label>
+          <label>Exec Actions <textarea id="node-detail-exec" rows="4"></textarea></label>
+          <label>Args <textarea id="node-detail-args" rows="4"></textarea></label>
+          <label>Requirements <textarea id="node-detail-requirements" rows="4"></textarea></label>
+          <label>Environment <textarea id="node-detail-environment" rows="4"></textarea></label>
+          <label class="wide">Compile Prompt <textarea id="node-detail-compile-prompt" rows="4"></textarea></label>
+          <label class="wide">Action Code <textarea id="node-detail-code" rows="6"></textarea></label>
+          <label>Run Commands <textarea id="node-detail-run" rows="4"></textarea></label>
+          <label>Validation Rules <textarea id="node-detail-validations" rows="4"></textarea></label>
+          <label>Verify Checks <textarea id="node-detail-verify" rows="4"></textarea></label>
+          <label>Recovery Policies <textarea id="node-detail-recovery" rows="4"></textarea></label>
+          <label>Repair <input id="node-detail-repair" placeholder="true or false" /></label>
+          <label>Fallback <input id="node-detail-fallback" placeholder="fallback block id or run: command" /></label>
+          <label>Human Review <textarea id="node-detail-reviews" rows="4"></textarea></label>
+          <div class="form-actions wide">
+            <button id="save-node-detail-btn" type="submit">Save Node</button>
+            <button id="select-node-detail-btn" type="button">Focus Inline</button>
+          </div>
+        </form>
+        <section id="node-detail-inspector" class="node-detail-inspector" hidden></section>
       </div>
     </section>
 
