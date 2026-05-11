@@ -1,6 +1,6 @@
 {
   "name": "@lazyingart/aaps",
-  "version": "0.4.27",
+  "version": "0.4.28",
   "description": "Prompt is all you need: AAPS is a project oriented and prompt-native programming language and visual studio for turning prompts into structured, verifiable pipelines.",
   "type": "commonjs",
   "private": false,
@@ -43,8 +43,9 @@
     "aaps": "node scripts/aaps.js",
     "aaps:plan": "node scripts/aaps-runner.js plan --project .",
     "aaps:run": "node scripts/aaps-runner.js run --project . --json",
-    "studio": "python3 backend/aaps_codex_server.py --host 127.0.0.1 --port 8796",
-    "build:website": "cp src/aaps.js studio/aaps.js && rm -rf website/studio && mkdir -p website/studio && cp -R studio/. website/studio/"
+    "studio": "python3 backend/aaps_codex_server.py --host 127.0.0.1 --port 8797",
+    "build:website": "cp src/aaps.js studio/aaps.js && rm -rf website/studio && mkdir -p website/studio && cp -R studio/. website/studio/",
+    "postinstall": "node scripts/postinstall-webapp.js"
   },
   "repository": {
     "type": "git",

@@ -143,14 +143,27 @@ npm run project:validate
 npm run studio
 ```
 
-Open `http://127.0.0.1:8796`.
+Open `http://127.0.0.1:8797`.
 
 npm install:
 
 ```bash
 npm install -g @lazyingart/aaps
-aaps studio --host 127.0.0.1 --port 8796
+aaps webapp
+aaps chat
+aaps studio --host 127.0.0.1 --port 8797
 aaps parse examples/hello.aaps --project .
+```
+
+The npm package starts AAPS Studio on a best-effort basis after install. First interactive run also starts or reuses Studio and prints the URL below the CLI header. Use `AAPS_SKIP_POSTINSTALL_WEBAPP=1` during install or `AAPS_NO_WEB_AUTO_START=1` during CLI runs to disable automatic startup.
+
+CLI and Studio entry points:
+
+```bash
+aaps webapp --project .                 # detached Studio, tries 8797 then 8798, 8799...
+aaps chat --project .                   # AAPS-focused chat CLI with /webapp, /parse, /compile, /run
+aaps                                    # same as aaps chat
+aaps studio --project .                 # foreground Studio server
 ```
 
 Direct prompt handoff:

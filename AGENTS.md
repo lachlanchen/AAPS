@@ -23,7 +23,7 @@ AAPS is split into a language core, a local Studio app, and a landing website.
 - `npm run project:validate`: validates `aaps.project.json` and all project `.aaps` files.
 - `npm run aaps:run -- --file examples/executable_runtime.aaps`: executes a workflow through the local runtime.
 - `node scripts/aaps.js compile workflows/main.aaps --project . --mode check --json`: checks missing AAPS components without editing files.
-- `npm run studio`: starts the local Studio plus Codex wrapper at `http://127.0.0.1:8796`.
+- `npm run studio`: starts the local Studio plus Codex wrapper at `http://127.0.0.1:8797`.
 - `npm run build:website`: copies `src/aaps.js` into Studio and stages Studio under `website/studio/` for static deployment.
 - `python3 -m py_compile backend/aaps_codex_server.py`: checks the wrapper server syntax.
 - `npm pack --dry-run`: verifies the npm package contents before publishing.

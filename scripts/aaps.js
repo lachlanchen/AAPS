@@ -4,7 +4,9 @@
 const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const readline = require("readline");
 const AAPS = require("../src/aaps");
+const { DEFAULT_PORT, ensureAapsWebApp } = require("../src/web-autostart");
 
 const SKIP_DIRS = new Set([".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"]);
 
@@ -27,7 +29,9 @@ function usage() {
     "  aaps prompt \"goal\" [--project .] [--backend aginti|print] [--json]",
     "  aaps \"goal\" [--project .] [--backend aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
-    "  aaps studio [--project .] [--host 127.0.0.1] [--port 8796] [--mock-codex]",
+    "  aaps chat [--project .] [--backend aginti|print]",
+    "  aaps webapp [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
+    "  aaps studio [--project .] [--host 127.0.0.1] [--port 8797] [--mock-codex]",
     "  aaps --version",
     "",
     "Options:",
@@ -51,12 +55,13 @@ function usage() {
     "  --print-prompt    Save and print the generated backend prompt without running it.",
     "  --audit-scope <entry|project> Post-backend audit scope. Defaults to entry for prompt backends.",
     "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
+    "  --no-webapp       Do not auto-start the local Studio for `aaps chat`.",
     "  --json            Print machine-readable JSON where supported.",
   ].join("\n");
 }
 
 function parseArgs(argv) {
-  const command = argv[2] || "help";
+  const command = argv[2] || "chat";
   const positional = [];
   const options = { project: "." };
   for (let index = 3; index < argv.length; index += 1) {
@@ -159,6 +164,43 @@ function packageVersion() {
   } catch (_error) {
     return "latest";
   }
+}
+
+function compactLine(value, limit = 110) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit - 3).trim()}...` : text;
+}
+
+function splitCliWords(value) {
+  const words = [];
+  String(value || "").replace(/"([^"]*)"|'([^']*)'|(\S+)/g, (_match, doubleQuoted, singleQuoted, bare) => {
+    words.push(doubleQuoted ?? singleQuoted ?? bare ?? "");
+    return "";
+  });
+  return words;
+}
+
+function printChatHeader({ version = packageVersion(), webAppUrl = "", webAppNotice = "" } = {}) {
+  const title = "AAPS";
+  const subtitle = "Prompt-native project workflows, blocks, parsing, compile, run, and Studio.";
+  const tagline = webAppUrl ? `webapp: ${webAppUrl}` : webAppNotice || "";
+  const width = Math.max(title.length + 8, subtitle.length + 4, tagline.length + 4, 74);
+  const border = "-".repeat(width);
+  console.log(border);
+  console.log(`${title} v${version}`);
+  console.log(subtitle);
+  if (tagline) console.log(tagline);
+  console.log(border);
+}
+
+function runCliInProject(projectDir, args, { capture = false } = {}) {
+  return childProcess.spawnSync(process.execPath, [path.join(__dirname, "aaps.js"), ...args], {
+    cwd: projectDir,
+    encoding: "utf8",
+    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+    maxBuffer: 20 * 1024 * 1024,
+    env: { ...process.env, AAPS_NO_WEB_AUTO_START: "1" },
+  });
 }
 
 function shellCommandExists(command, cwd) {
@@ -580,7 +622,7 @@ function commandStudio(options) {
   const root = path.resolve(__dirname, "..");
   const projectDir = path.resolve(options.project || ".");
   const host = String(options.host || "127.0.0.1");
-  const port = String(options.port || "8796");
+  const port = String(options.port || DEFAULT_PORT);
   const env = { ...process.env };
   if (options.mockCodex) env.AAPS_MOCK_CODEX = "1";
   env.AAPS_STUDIO_PROJECT = projectDir;
@@ -599,7 +641,158 @@ function commandStudio(options) {
   process.exit(result.status || 0);
 }
 
-function main() {
+async function commandWebapp(options, { manual = true } = {}) {
+  const projectDir = path.resolve(options.project || ".");
+  const result = await ensureAapsWebApp({
+    packageDir: path.resolve(__dirname, ".."),
+    cwd: projectDir,
+    host: String(options.host || "127.0.0.1"),
+    preferredPort: options.port || DEFAULT_PORT,
+    mockCodex: Boolean(options.mockCodex),
+    respectAutoStartDisable: !manual,
+  });
+  const payload = {
+    ok: Boolean(result.ok),
+    url: result.url || "",
+    host: result.host || String(options.host || "127.0.0.1"),
+    port: result.port || 0,
+    started: Boolean(result.started),
+    reused: Boolean(result.reused),
+    disabled: Boolean(result.disabled),
+    error: result.error || "",
+  };
+  if (options.silent) return payload;
+  if (options.json) print(payload, true);
+  else if (payload.ok) {
+    console.log(`AAPS Studio ${payload.reused ? "reused" : "started"}: ${payload.url}`);
+  } else if (payload.disabled) {
+    console.log("AAPS Studio auto-start disabled. Run `aaps webapp` or `/webapp` from `aaps chat`.");
+  } else {
+    console.error(`AAPS Studio unavailable: ${payload.error || "unknown error"}`);
+  }
+  return payload;
+}
+
+function chatHelp() {
+  return [
+    "AAPS chat commands:",
+    "  /webapp [port]       Start or reuse AAPS Studio and print the URL.",
+    "  /status              Show project manifest and active file.",
+    "  /validate [file]     Validate the project or selected file.",
+    "  /parse <file>        Parse a .aaps file.",
+    "  /compile <file> [mode]  Compile/check/apply a .aaps file.",
+    "  /run <file>          Run a .aaps file.",
+    "  /backend <name>      Set prompt backend: aginti or print.",
+    "  /exit                Exit the CLI.",
+    "Plain messages are sent through `aaps prompt` so the selected backend can edit/parse/compile AAPS.",
+  ].join("\n");
+}
+
+function printProjectStatus(projectDir) {
+  const manifest = readManifest(projectDir);
+  if (!manifest) {
+    console.log(`project: ${projectDir}`);
+    console.log("manifest: missing aaps.project.json");
+    return;
+  }
+  const files = Object.keys(scanAapsFiles(projectDir)).sort();
+  console.log(`project: ${projectDir}`);
+  console.log(`name: ${manifest.name || path.basename(projectDir)}`);
+  console.log(`activeFile: ${manifest.activeFile || "(none)"}`);
+  console.log(`defaultMain: ${manifest.defaultMain || "(none)"}`);
+  console.log(`aapsFiles: ${files.length}`);
+}
+
+async function startChat(options) {
+  const projectDir = path.resolve(options.project || ".");
+  let backend = String(options.backend || process.env.AAPS_BACKEND || "aginti").toLowerCase();
+  let webResult = { ok: false, url: "", error: "", disabled: Boolean(options.noWebapp) };
+  if (!options.noWebapp) {
+    webResult = await commandWebapp({ ...options, project: projectDir, silent: true }, { manual: false });
+  }
+  const notice = webResult.disabled
+    ? "webapp auto-start disabled - use /webapp to start manually"
+    : webResult.ok
+      ? ""
+      : `webapp unavailable - use /webapp to retry; error: ${compactLine(webResult.error || "unknown", 84)}`;
+  printChatHeader({ webAppUrl: webResult.ok ? webResult.url : "", webAppNotice: notice });
+  printProjectStatus(projectDir);
+  console.log(chatHelp());
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: "aaps> ",
+    terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+  });
+  rl.prompt();
+
+  for await (const rawLine of rl) {
+    const line = String(rawLine || "").trim();
+    if (!line) {
+      rl.prompt();
+      continue;
+    }
+    if (line === "/exit" || line === "/quit" || line === "exit" || line === "quit") break;
+    if (line === "/help" || line === "help") {
+      console.log(chatHelp());
+      rl.prompt();
+      continue;
+    }
+    if (line.startsWith("/webapp") || line.startsWith("/web ")) {
+      const words = splitCliWords(line);
+      const port = words[1] || options.port || DEFAULT_PORT;
+      await commandWebapp({ ...options, project: projectDir, port, json: false }, { manual: true });
+      rl.prompt();
+      continue;
+    }
+    if (line.startsWith("/backend")) {
+      const words = splitCliWords(line);
+      backend = String(words[1] || backend).toLowerCase();
+      console.log(`backend=${backend}`);
+      rl.prompt();
+      continue;
+    }
+    if (line === "/status") {
+      printProjectStatus(projectDir);
+      rl.prompt();
+      continue;
+    }
+    if (line.startsWith("/validate")) {
+      const words = splitCliWords(line);
+      runCliInProject(projectDir, ["validate", ...(words[1] ? [words[1]] : []), "--project", "."], {});
+      rl.prompt();
+      continue;
+    }
+    if (line.startsWith("/parse")) {
+      const words = splitCliWords(line);
+      if (!words[1]) console.log("Usage: /parse <file>");
+      else runCliInProject(projectDir, ["parse", words[1], "--project", "."], {});
+      rl.prompt();
+      continue;
+    }
+    if (line.startsWith("/compile")) {
+      const words = splitCliWords(line);
+      if (!words[1]) console.log("Usage: /compile <file> [check|suggest|apply|force]");
+      else runCliInProject(projectDir, ["compile", words[1], "--project", ".", "--mode", words[2] || "check"], {});
+      rl.prompt();
+      continue;
+    }
+    if (line.startsWith("/run")) {
+      const words = splitCliWords(line);
+      if (!words[1]) console.log("Usage: /run <file>");
+      else runCliInProject(projectDir, ["run", words[1], "--project", "."], {});
+      rl.prompt();
+      continue;
+    }
+    runCliInProject(projectDir, ["prompt", line, "--project", ".", "--backend", backend], {});
+    rl.prompt();
+  }
+
+  rl.close();
+}
+
+async function main() {
   const { command, positional, options } = parseArgs(process.argv);
   const file = positional[0];
   const knownCommands = new Set([
@@ -612,6 +805,10 @@ function main() {
     "parse",
     "validate",
     "studio",
+    "webapp",
+    "web",
+    "chat",
+    "interactive",
     "compile",
     "compile-project",
     "missing",
@@ -654,6 +851,14 @@ function main() {
     commandStudio(options);
     return;
   }
+  if (command === "webapp" || command === "web") {
+    const payload = await commandWebapp(options, { manual: true });
+    process.exit(payload.ok ? 0 : 1);
+  }
+  if (command === "chat" || command === "interactive") {
+    await startChat(options);
+    return;
+  }
   if (["compile", "compile-project", "missing", "generate-block", "generate-script", "prepare-setup"].includes(command)) {
     runCompiler(command, positional, options);
     return;
@@ -683,7 +888,10 @@ function main() {
 }
 
 try {
-  main();
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
 } catch (error) {
   console.error(error.message);
   process.exit(1);

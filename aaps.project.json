@@ -34,7 +34,7 @@
   "artifactRoot": "runtime/artifacts",
   "runDatabase": "runtime/aaps-runs.jsonl",
   "variables": {
-    "studio_port": "8796",
+    "studio_port": "8797",
     "website_domain": "aaps.lazying.art"
   },
   "tools": [

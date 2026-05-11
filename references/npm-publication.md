@@ -16,7 +16,7 @@ This note records the public, non-secret publication setup for AAPS.
 
 ```bash
 npm install -g @lazyingart/aaps
-aaps studio --host 127.0.0.1 --port 8796
+aaps studio --host 127.0.0.1 --port 8797
 ```
 
 ## Release Publisher

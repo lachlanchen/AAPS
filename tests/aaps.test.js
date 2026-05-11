@@ -342,6 +342,49 @@ assert.strictEqual(cliShortVersion.status, 0, cliShortVersion.stderr || cliShort
 assert.strictEqual(cliShortVersion.stdout.trim(), require("../package.json").version);
 assert.strictEqual(cliShortVersion.stderr, "");
 
+const webappProject = path.join(__dirname, "..", ".aaps-work", "tests", "webapp-project");
+fs.rmSync(webappProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(webappProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(webappProject, "aaps.project.json"),
+  JSON.stringify({ name: "Webapp Project", activeFile: "workflows/main.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(webappProject, "workflows", "main.aaps"),
+  'pipeline "Webapp Project" {\n  task main {\n    prompt "Keep AAPS Studio available."\n  }\n}\n',
+  "utf8"
+);
+const webappPort = "8897";
+const webappStart = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--mock-codex", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(webappStart.status, 0, webappStart.stderr || webappStart.stdout);
+const webappPayload = JSON.parse(webappStart.stdout);
+assert.strictEqual(webappPayload.ok, true, JSON.stringify(webappPayload));
+assert.strictEqual(webappPayload.url, `http://127.0.0.1:${webappPort}`);
+const webappHealth = httpJson(`${webappPayload.url}/api/health`);
+assert.strictEqual(webappHealth.ok, true);
+assert.strictEqual(webappHealth.app, "aaps");
+const webappReuse = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(webappReuse.status, 0, webappReuse.stderr || webappReuse.stdout);
+assert.strictEqual(JSON.parse(webappReuse.stdout).reused, true);
+const webappChat = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--no-webapp"],
+  { cwd: path.join(__dirname, ".."), input: "/webapp 8897\n/status\n/exit\n", encoding: "utf8" }
+);
+assert.strictEqual(webappChat.status, 0, webappChat.stderr || webappChat.stdout);
+assert(webappChat.stdout.includes("AAPS v"), webappChat.stdout);
+assert(webappChat.stdout.includes(`AAPS Studio reused: http://127.0.0.1:${webappPort}`), webappChat.stdout);
+childProcess.spawnSync("pkill", ["-f", `aaps_codex_server.py --host 127.0.0.1 --port ${webappPort}`]);
+
 const blockRun = childProcess.spawnSync(
   "node",
   [

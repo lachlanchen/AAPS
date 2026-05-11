@@ -11,8 +11,17 @@ npm run studio
 Open:
 
 ```text
-http://127.0.0.1:8796
+http://127.0.0.1:8797
 ```
+
+Detached/local startup:
+
+```bash
+aaps webapp --project .
+aaps chat --project .
+```
+
+`aaps webapp` starts or reuses the local Studio process, trying port `8797` first and then later ports if needed. `aaps chat` shows the active Studio URL below the CLI header and supports `/webapp`, `/parse`, `/compile`, `/run`, and backend prompt handoffs against the same project.
 
 ## Environment
 

@@ -3460,6 +3460,9 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 self,
                 {
                     "ok": True,
+                    "app": "aaps",
+                    "host": getattr(self.server, "server_name", ""),
+                    "port": getattr(self.server, "server_port", None),
                     "codex": bool(shutil.which("codex")),
                     "agintiflow_submodule": (ROOT / "vendor" / "AgInTiFlow").exists(),
                     "runtime": str(RUNTIME_DIR),
@@ -3957,7 +3960,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Serve AAPS Studio with Codex wrapper APIs.")
     parser.add_argument("--host", default=os.environ.get("AAPS_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("AAPS_PORT", "8796")))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("AAPS_PORT", "8797")))
     args = parser.parse_args()
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
