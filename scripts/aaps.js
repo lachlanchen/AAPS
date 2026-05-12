@@ -3,6 +3,7 @@
 
 const childProcess = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const readline = require("readline");
 const AAPS = require("../src/aaps");
@@ -304,12 +305,157 @@ function runCliInProject(projectDir, args, { capture = false } = {}) {
   });
 }
 
-function shellCommandExists(command, cwd) {
-  const result = childProcess.spawnSync("sh", ["-lc", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], {
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\"'\"'")}'`;
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function isExecutableFile(file) {
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return false;
+    if (process.platform === "win32") return true;
+    return Boolean(stat.mode & 0o111);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function commandPathCandidates(command) {
+  const home = os.homedir();
+  const pathExts = process.platform === "win32"
+    ? String(process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)
+    : [""];
+  const dirs = [
+    ...String(process.env.PATH || "").split(path.delimiter),
+    path.join(home, ".local", "bin"),
+    path.join(home, ".npm-global", "bin"),
+    path.join(home, ".yarn", "bin"),
+    path.join(home, ".bun", "bin"),
+    path.join(home, ".volta", "bin"),
+    path.join(home, ".cargo", "bin"),
+    path.join(home, "Library", "pnpm"),
+    path.join(home, ".local", "share", "pnpm"),
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/bin",
+    "/bin",
+  ];
+  for (const root of [
+    path.join(home, ".nvm", "versions", "node"),
+    path.join(home, ".asdf", "installs", "nodejs"),
+  ]) {
+    try {
+      for (const version of fs.readdirSync(root)) dirs.push(path.join(root, version, "bin"));
+    } catch (_error) {
+      // Optional toolchain manager directory.
+    }
+  }
+  try {
+    const fnmRoot = path.join(home, ".fnm", "node-versions");
+    for (const version of fs.readdirSync(fnmRoot)) dirs.push(path.join(fnmRoot, version, "installation", "bin"));
+  } catch (_error) {
+    // Optional toolchain manager directory.
+  }
+  const candidates = [];
+  for (const dir of unique(dirs.map((item) => path.resolve(item || ".")))) {
+    for (const ext of pathExts) candidates.push(path.join(dir, `${command}${ext}`));
+  }
+  return candidates;
+}
+
+function shellResolveCommand(command, cwd) {
+  const shells = unique([
+    process.env.SHELL,
+    process.platform === "win32" ? "" : "/bin/zsh",
+    process.platform === "win32" ? "" : "/bin/bash",
+    process.platform === "win32" ? "" : "/bin/sh",
+  ]);
+  for (const shell of shells) {
+    const shellName = path.basename(shell);
+    const args = shellName === "sh" ? ["-c", `command -v ${shellQuote(command)} 2>/dev/null`] : ["-lc", `command -v ${shellQuote(command)} 2>/dev/null`];
+    const result = childProcess.spawnSync(shell, args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2500,
+    });
+    const found = String(result.stdout || "").trim().split(/\r?\n/)[0] || "";
+    if (!found) continue;
+    if (path.isAbsolute(found) && isExecutableFile(found)) return found;
+    if (!found.includes(" ") && found === command) return found;
+  }
+  return "";
+}
+
+function npmGlobalBinDir(cwd) {
+  const result = childProcess.spawnSync("npm", ["prefix", "-g"], {
     cwd,
-    stdio: "ignore",
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 2500,
   });
-  return result.status === 0;
+  const prefix = String(result.stdout || "").trim();
+  return prefix ? path.join(prefix, "bin") : "";
+}
+
+function resolveCommand(command, cwd, envVar = "") {
+  const override = String(envVar ? process.env[envVar] || "" : "").trim();
+  const explicit = override || command;
+  if (explicit.includes(path.sep) || (process.platform === "win32" && explicit.includes("\\"))) {
+    const full = path.resolve(explicit.replace(/^~/, os.homedir()));
+    if (isExecutableFile(full)) return { command: full, source: envVar || "explicit", pathEnv: process.env.PATH || "" };
+  }
+  if (override && !override.includes(path.sep)) {
+    const resolvedOverride = resolveCommand(override, cwd, "");
+    if (resolvedOverride.ok) return { ...resolvedOverride, source: envVar };
+  }
+  const shellFound = shellResolveCommand(command, cwd);
+  if (shellFound) {
+    const dir = path.isAbsolute(shellFound) ? path.dirname(shellFound) : "";
+    return {
+      ok: true,
+      command: shellFound,
+      source: "login-shell",
+      pathEnv: unique([dir, process.env.PATH || ""].filter(Boolean)).join(path.delimiter),
+    };
+  }
+  const npmBin = npmGlobalBinDir(cwd);
+  const candidates = unique([...commandPathCandidates(command), npmBin ? path.join(npmBin, command) : ""]);
+  for (const candidate of candidates) {
+    if (isExecutableFile(candidate)) {
+      return {
+        ok: true,
+        command: candidate,
+        source: "path-scan",
+        pathEnv: unique([path.dirname(candidate), process.env.PATH || ""].filter(Boolean)).join(path.delimiter),
+      };
+    }
+  }
+  return {
+    ok: false,
+    command,
+    source: "not-found",
+    pathEnv: process.env.PATH || "",
+    searched: unique([
+      envVar ? `$${envVar}` : "",
+      "login shell",
+      "npm global prefix",
+      "~/.local/bin",
+      "~/.npm-global/bin",
+      "~/.bun/bin",
+      "~/.volta/bin",
+      "~/.nvm/versions/node/*/bin",
+      "~/.fnm/node-versions/*/installation/bin",
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+    ]),
+  };
 }
 
 function normalizePromptBackend(value) {
@@ -547,13 +693,16 @@ function codexPromptArgs(projectDir, outputPath, options = {}) {
 }
 
 function commandPromptWithCodex(projectDir, handoff, payload, options) {
-  if (!shellCommandExists("codex", projectDir)) {
+  const codexCommand = resolveCommand("codex", projectDir, "AAPS_CODEX_BIN");
+  if (!codexCommand.ok) {
     payload.ok = false;
     payload.status = "missing_backend";
-    payload.error = "Codex CLI (`codex`) was not found on PATH. Install/configure Codex or rerun with --backend aginti or --backend print.";
+    payload.error = "Codex CLI (`codex`) was not found. Set AAPS_CODEX_BIN, install/configure Codex, or rerun with --backend aginti or --backend print.";
+    payload.searched = codexCommand.searched;
     if (options.json) print(payload, true);
     else {
       console.error(payload.error);
+      console.error(`Searched: ${codexCommand.searched.join(", ")}`);
       console.error(`Prepared prompt: ${handoff.projectRelativePromptPath}`);
     }
     process.exit(1);
@@ -561,18 +710,20 @@ function commandPromptWithCodex(projectDir, handoff, payload, options) {
   const outputPath = path.join(projectDir, ".aaps-work", "prompts", `${timestampSlug()}-codex-output.md`);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const args = codexPromptArgs(projectDir, outputPath, options);
-  payload.command = ["codex", ...args];
+  payload.command = [codexCommand.command, ...args];
+  payload.backendCommand = { name: "codex", command: codexCommand.command, source: codexCommand.source };
   payload.handoffMode = "stdin_with_saved_handoff";
   payload.outputPath = outputPath;
   payload.outputFile = toProjectPath(path.relative(projectDir, outputPath));
   const auditStartedAtMs = Date.now();
-  const result = childProcess.spawnSync("codex", args, {
+  const result = childProcess.spawnSync(codexCommand.command, args, {
     cwd: projectDir,
     input: handoff.prompt,
     encoding: "utf8",
     stdio: options.json ? ["pipe", "pipe", "pipe"] : ["pipe", "inherit", "inherit"],
     timeout: Number(options.codexTimeoutMs || process.env.AAPS_CODEX_TIMEOUT_MS || 15 * 60 * 1000),
     maxBuffer: 20 * 1024 * 1024,
+    env: { ...process.env, PATH: codexCommand.pathEnv || process.env.PATH || "" },
   });
   payload.executed = true;
   payload.exitCode = result.status ?? 1;
@@ -622,13 +773,16 @@ function commandPrompt(goal, options) {
   if (backend !== "aginti") {
     throw new Error(`Unsupported AAPS prompt backend: ${backend}. Supported backends: codex, aginti, print.`);
   }
-  if (!shellCommandExists("aginti", projectDir)) {
+  const agintiCommand = resolveCommand("aginti", projectDir, "AAPS_AGINTI_BIN");
+  if (!agintiCommand.ok) {
     payload.ok = false;
     payload.status = "missing_backend";
-    payload.error = "AgInTiFlow CLI (`aginti`) was not found on PATH. Install @lazyingart/agintiflow or rerun with --backend print.";
+    payload.error = "AgInTiFlow CLI (`aginti`) was not found. Set AAPS_AGINTI_BIN, install @lazyingart/agintiflow, or rerun with --backend print.";
+    payload.searched = agintiCommand.searched;
     if (options.json) print(payload, true);
     else {
       console.error(payload.error);
+      console.error(`Searched: ${agintiCommand.searched.join(", ")}`);
       console.error(`Prepared prompt: ${handoff.projectRelativePromptPath}`);
     }
     process.exit(1);
@@ -661,15 +815,17 @@ function commandPrompt(goal, options) {
     "Inspect it before editing, then parse/compile/run/verify declared outputs before finishing.",
   ].join(" ");
   args.push(handoffGoal);
-  payload.command = ["aginti", ...args];
+  payload.command = [agintiCommand.command, ...args];
+  payload.backendCommand = { name: "aginti", command: agintiCommand.command, source: agintiCommand.source };
   payload.handoffMode = "file";
   payload.handoffGoal = handoffGoal;
   const auditStartedAtMs = Date.now();
-  const result = childProcess.spawnSync("aginti", args, {
+  const result = childProcess.spawnSync(agintiCommand.command, args, {
     cwd: projectDir,
     encoding: "utf8",
     stdio: options.json ? ["ignore", "pipe", "pipe"] : "inherit",
     maxBuffer: 20 * 1024 * 1024,
+    env: { ...process.env, PATH: agintiCommand.pathEnv || process.env.PATH || "" },
   });
   payload.executed = true;
   payload.exitCode = result.status ?? 1;
@@ -709,14 +865,15 @@ function runRunner(command, file, options) {
   });
   if (options.dryRun) args.push("--dry-run");
   if (options.json) args.push("--json");
-  const result = childProcess.spawnSync("node", args, {
+  const result = childProcess.spawnSync(process.execPath, args, {
     cwd: projectDir,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-  process.exit(result.status || 0);
+  if (result.error) process.stderr.write(`${result.error.message}\n`);
+  process.exit(result.status ?? 1);
 }
 
 function runCompiler(command, positional, options) {
@@ -728,14 +885,15 @@ function runCompiler(command, positional, options) {
   if (options.file && !positional.length) args.push("--file", options.file);
   if (options.compileId) args.push("--compile-id", options.compileId);
   if (options.json) args.push("--json");
-  const result = childProcess.spawnSync("node", args, {
+  const result = childProcess.spawnSync(process.execPath, args, {
     cwd: projectDir,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-  process.exit(result.status || 0);
+  if (result.error) process.stderr.write(`${result.error.message}\n`);
+  process.exit(result.status ?? 1);
 }
 
 function commandParse(fileArg, options) {
@@ -1130,7 +1288,11 @@ async function readComposerLine(history) {
         finish(null);
         return;
       }
-      if ((key.ctrl && key.name === "j") || key.sequence === "\n") {
+      if ((key.ctrl && key.name === "j") || key.sequence === "\n" || str === "\n") {
+        if (!buffer) {
+          render();
+          return;
+        }
         insertText("\n");
         return;
       }

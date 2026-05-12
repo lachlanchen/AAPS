@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -126,6 +127,105 @@ def load_dotenv() -> None:
 load_dotenv()
 
 
+def executable_path(path_value: str | Path) -> str:
+    expanded = Path(str(path_value)).expanduser()
+    if expanded.exists() and expanded.is_file() and os.access(expanded, os.X_OK):
+        return str(expanded.resolve())
+    return ""
+
+
+def command_candidates(name: str) -> list[Path]:
+    home = Path.home()
+    dirs: list[Path] = [Path(item).expanduser() for item in os.environ.get("PATH", "").split(os.pathsep) if item]
+    dirs.extend(
+        [
+            home / ".local" / "bin",
+            home / ".npm-global" / "bin",
+            home / ".yarn" / "bin",
+            home / ".bun" / "bin",
+            home / ".volta" / "bin",
+            home / ".cargo" / "bin",
+            home / "Library" / "pnpm",
+            home / ".local" / "share" / "pnpm",
+            Path("/opt/homebrew/bin"),
+            Path("/opt/homebrew/sbin"),
+            Path("/usr/local/bin"),
+            Path("/usr/local/sbin"),
+            Path("/usr/bin"),
+            Path("/bin"),
+        ]
+    )
+    for root in [home / ".nvm" / "versions" / "node", home / ".asdf" / "installs" / "nodejs"]:
+        if root.exists():
+            dirs.extend(child / "bin" for child in root.iterdir() if child.is_dir())
+    fnm_root = home / ".fnm" / "node-versions"
+    if fnm_root.exists():
+        dirs.extend(child / "installation" / "bin" for child in fnm_root.iterdir() if child.is_dir())
+    seen: set[str] = set()
+    candidates: list[Path] = []
+    for directory in dirs:
+        key = str(directory)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(directory / name)
+    return candidates
+
+
+def login_shell_command(name: str) -> str:
+    shells = [os.environ.get("SHELL"), "/bin/zsh", "/bin/bash", "/bin/sh"]
+    seen: set[str] = set()
+    for shell in [item for item in shells if item]:
+        if shell in seen or not Path(shell).exists():
+            continue
+        seen.add(shell)
+        quoted = shlex.quote(name)
+        args = [shell, "-c", f"command -v {quoted} 2>/dev/null"]
+        if Path(shell).name in {"zsh", "bash"}:
+            args = [shell, "-lc", f"command -v {quoted} 2>/dev/null"]
+        try:
+            process = subprocess.run(args, cwd=str(PROJECT_ROOT), text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2.5, check=False)
+        except Exception:
+            continue
+        found = (process.stdout or "").strip().splitlines()[0] if process.stdout else ""
+        if found:
+            resolved = executable_path(found)
+            if resolved:
+                return resolved
+    return ""
+
+
+def npm_global_command(name: str) -> str:
+    try:
+        process = subprocess.run(["npm", "prefix", "-g"], cwd=str(PROJECT_ROOT), text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2.5, check=False)
+    except Exception:
+        return ""
+    prefix = (process.stdout or "").strip()
+    return executable_path(Path(prefix) / "bin" / name) if prefix else ""
+
+
+def find_command(name: str, env_name: str = "") -> str:
+    override = os.environ.get(env_name, "").strip() if env_name else ""
+    if override:
+        explicit = executable_path(override)
+        if explicit:
+            return explicit
+    direct = shutil.which(override or name)
+    if direct:
+        return direct
+    shell_found = login_shell_command(override or name)
+    if shell_found:
+        return shell_found
+    npm_found = npm_global_command(override or name)
+    if npm_found:
+        return npm_found
+    for candidate in command_candidates(override or name):
+        found = executable_path(candidate)
+        if found:
+            return found
+    return ""
+
+
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -165,10 +265,10 @@ def read_settings() -> dict:
 
 def public_settings() -> dict:
     settings = read_settings()
-    settings["codexAvailable"] = bool(shutil.which("codex"))
+    settings["codexAvailable"] = bool(find_command("codex", "AAPS_CODEX_BIN"))
     settings["deepseekKeyAvailable"] = bool(os.environ.get("AAPS_DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_API_KEY"))
     settings["openaiKeyAvailable"] = bool(os.environ.get("OPENAI_API_KEY"))
-    settings["agintiflowAvailable"] = bool(shutil.which("aginti")) or (ROOT / "vendor" / "AgInTiFlow").exists()
+    settings["agintiflowAvailable"] = bool(find_command("aginti", "AAPS_AGINTI_BIN")) or (ROOT / "vendor" / "AgInTiFlow").exists()
     return settings
 
 
@@ -1541,8 +1641,9 @@ def codex_command(schema: str, output_path: Path, settings: dict | None = None) 
     active = settings or read_settings()
     model = str(active.get("codexModel") or "gpt-5.3-codex")
     reasoning = str(active.get("codexReasoning") or "medium")
+    codex_bin = find_command("codex", "AAPS_CODEX_BIN") or "codex"
     command = [
-        "codex",
+        codex_bin,
         "exec",
         "--ephemeral",
         "--model",
@@ -3034,8 +3135,9 @@ def run_aginti(job_id: str, prompt: str, schema: str = "response", settings: dic
     project_handoff_rel = handoff_path.relative_to(PROJECT_ROOT).as_posix() if is_relative_to(handoff_path, PROJECT_ROOT) else handoff_path.as_posix()
     prompt_path.write_text(prompt, encoding="utf-8")
 
-    if not shutil.which("aginti"):
-        return {"status": "failed", "error": "AgInTiFlow CLI (`aginti`) was not found on PATH."}
+    aginti_bin = find_command("aginti", "AAPS_AGINTI_BIN")
+    if not aginti_bin:
+        return {"status": "failed", "error": "AgInTiFlow CLI (`aginti`) was not found. Set AAPS_AGINTI_BIN or install @lazyingart/agintiflow."}
 
     schema_text = schema_instruction(schema)
     aginti_prompt = f"""You are the persistent AgInTiFlow backend agent for AAPS Studio.
@@ -3063,10 +3165,10 @@ Backend task:
     session_id = str(active.get("agintiSessionId") or "").strip()
     timeout = int(active.get("agintiTimeout") or 900)
     if session_id:
-        command = ["aginti", "--no-auto-update", "resume", session_id, short_prompt]
+        command = [aginti_bin, "--no-auto-update", "resume", session_id, short_prompt]
     else:
         command = [
-            "aginti",
+            aginti_bin,
             "--no-auto-update",
             "-s",
             str(active.get("agintiSafety") or "normal"),
@@ -3153,10 +3255,10 @@ def run_codex(job_id: str, prompt: str, schema: str = "response") -> dict:
         output_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"status": "succeeded", "result": output}
 
-    if not shutil.which("codex"):
+    if not find_command("codex", "AAPS_CODEX_BIN"):
         return {
             "status": "failed",
-            "error": "codex CLI was not found on PATH.",
+            "error": "codex CLI was not found. Set AAPS_CODEX_BIN or install/configure Codex.",
         }
 
     timeout = int(settings.get("codexTimeout") or os.environ.get("AAPS_CODEX_TIMEOUT", "240"))
@@ -3463,7 +3565,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     "app": "aaps",
                     "host": getattr(self.server, "server_name", ""),
                     "port": getattr(self.server, "server_port", None),
-                    "codex": bool(shutil.which("codex")),
+                    "codex": bool(find_command("codex", "AAPS_CODEX_BIN")),
                     "agintiflow_submodule": (ROOT / "vendor" / "AgInTiFlow").exists(),
                     "runtime": str(RUNTIME_DIR),
                     "compile_runtime": str(COMPILE_DIR),

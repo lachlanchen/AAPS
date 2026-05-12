@@ -167,7 +167,7 @@ aaps studio --project .                 # foreground Studio server
 aaps update                             # update a global npm install when a newer release exists
 ```
 
-`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/compile`, `/check`, `/run`, `/webapp`, and `/backend codex|aginti|print`. In a real terminal it supports Ctrl-J for multiline prompts and Up/Down for prompt history.
+`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/compile`, `/check`, `/run`, `/webapp`, and `/backend codex|aginti|print`. In a real terminal it supports Ctrl-J for multiline prompts, ignores Ctrl-J on an empty prompt, and uses Up/Down for prompt history or multi-line cursor movement.
 
 Direct prompt handoff:
 
@@ -178,7 +178,7 @@ aaps prompt "Use AgInTiFlow to repair this project" --backend aginti --project .
 aaps prompt "Draft the workflow only" --backend print --project .
 ```
 
-By default, direct prompts prepare an AAPS backend-agent handoff and invoke Codex when it is available. Use `--backend aginti` to route the same AAPS handoff through AgInTiFlow, or `--backend print` / `--print-prompt` to save and inspect the generated prompt without running an agent. This keeps AAPS usable as a declarative workflow layer while letting Codex or AgInTiFlow act as implementation backends for prompt-level tasks.
+By default, direct prompts prepare an AAPS backend-agent handoff and invoke Codex when it is available. Use `--backend aginti` to route the same AAPS handoff through AgInTiFlow, or `--backend print` / `--print-prompt` to save and inspect the generated prompt without running an agent. AAPS resolves `codex` and `aginti` through `AAPS_CODEX_BIN` / `AAPS_AGINTI_BIN`, login-shell lookup, npm global prefix, and common Homebrew/npm/nvm/fnm/bun/volta paths, so macOS GUI-launched or npm-launched sessions do not depend only on the current minimal PATH. This keeps AAPS usable as a declarative workflow layer while letting Codex or AgInTiFlow act as implementation backends for prompt-level tasks.
 
 The handoff prompt includes three explicit CLI routes: installed `aaps`, Docker-safe `npx -y @lazyingart/aaps@<version>` when package installs/network are approved, and a host/source `node scripts/aaps.js` fallback only when that path is visible inside the active sandbox.
 

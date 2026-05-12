@@ -1275,6 +1275,146 @@ assert(fakeAgintiArgs.includes("--allow-destructive"));
 assert(fakeAgintiArgs.includes(trustedPayload.promptFile));
 assert(!fakeAgintiArgs.includes("AAPS Syntax Contract"));
 
+const discoveryHome = path.join(promptProject, "fake-home");
+const discoveryBin = path.join(discoveryHome, ".local", "bin");
+fs.mkdirSync(discoveryBin, { recursive: true });
+const discoveryAgintiProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-discovery-aginti-project");
+fs.rmSync(discoveryAgintiProject, { recursive: true, force: true });
+fs.mkdirSync(discoveryAgintiProject, { recursive: true });
+const discoveryAgintiArgsFile = path.join(discoveryAgintiProject, "fake-aginti-args.txt");
+fs.writeFileSync(
+  path.join(discoveryBin, "aginti"),
+  `#!/bin/sh
+printf '%s\\n' "$@" > "$AAPS_FAKE_AGINTI_ARGS"
+mkdir -p workflows runtime/artifacts
+cat > aaps.project.json <<'EOF'
+{"schema":"aaps_project/0.1","name":"Discovery Aginti Project","activeFile":"workflows/discovered_aginti.aaps"}
+EOF
+cat > workflows/discovered_aginti.aaps <<'EOF'
+pipeline "Discovered Aginti" {
+  output ok_file: text = "runtime/artifacts/discovered-aginti-ok.txt"
+  agent runner {
+    role "Local shell runner."
+    model "local"
+    tools "shell"
+  }
+  task done {
+    uses runner
+    output ok_file: text = "runtime/artifacts/discovered-aginti-ok.txt"
+    exec shell "mkdir -p runtime/artifacts && printf ok > runtime/artifacts/discovered-aginti-ok.txt"
+    validate exists "runtime/artifacts/discovered-aginti-ok.txt"
+  }
+}
+EOF
+printf ok > runtime/artifacts/discovered-aginti-ok.txt
+exit 0
+`,
+  { encoding: "utf8", mode: 0o755 }
+);
+const promptDiscoveredAginti = childProcess.spawnSync(
+  process.execPath,
+  [
+    "scripts/aaps.js",
+    "prompt",
+    "Use AgInTiFlow discovered from HOME local bin.",
+    "--project",
+    ".aaps-work/tests/prompt-discovery-aginti-project",
+    "--backend",
+    "aginti",
+    "--sandbox-mode",
+    "host",
+    "--json",
+  ],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: discoveryHome,
+      PATH: "/usr/bin:/bin",
+      AAPS_FAKE_AGINTI_ARGS: discoveryAgintiArgsFile,
+    },
+  }
+);
+assert.strictEqual(promptDiscoveredAginti.status, 0, promptDiscoveredAginti.stderr || promptDiscoveredAginti.stdout);
+const discoveredAgintiPayload = JSON.parse(promptDiscoveredAginti.stdout);
+assert.strictEqual(discoveredAgintiPayload.status, "succeeded_verified");
+assert.strictEqual(discoveredAgintiPayload.backendCommand.name, "aginti");
+assert(discoveredAgintiPayload.backendCommand.command.endsWith(`${path.sep}.local${path.sep}bin${path.sep}aginti`));
+assert(fs.readFileSync(discoveryAgintiArgsFile, "utf8").includes(discoveredAgintiPayload.promptFile));
+
+const discoveryCodexProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-discovery-codex-project");
+fs.rmSync(discoveryCodexProject, { recursive: true, force: true });
+fs.mkdirSync(discoveryCodexProject, { recursive: true });
+fs.writeFileSync(
+  path.join(discoveryBin, "codex"),
+  `#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    out="$1"
+  fi
+  shift || break
+done
+cat >/dev/null
+mkdir -p workflows runtime/artifacts
+if [ -n "$out" ]; then
+  mkdir -p "$(dirname "$out")"
+  printf 'fake codex complete\\n' > "$out"
+fi
+cat > aaps.project.json <<'EOF'
+{"schema":"aaps_project/0.1","name":"Discovery Codex Project","activeFile":"workflows/discovered_codex.aaps"}
+EOF
+cat > workflows/discovered_codex.aaps <<'EOF'
+pipeline "Discovered Codex" {
+  output ok_file: text = "runtime/artifacts/discovered-codex-ok.txt"
+  agent runner {
+    role "Local shell runner."
+    model "local"
+    tools "shell"
+  }
+  task done {
+    uses runner
+    output ok_file: text = "runtime/artifacts/discovered-codex-ok.txt"
+    exec shell "mkdir -p runtime/artifacts && printf ok > runtime/artifacts/discovered-codex-ok.txt"
+    validate exists "runtime/artifacts/discovered-codex-ok.txt"
+  }
+}
+EOF
+printf ok > runtime/artifacts/discovered-codex-ok.txt
+exit 0
+`,
+  { encoding: "utf8", mode: 0o755 }
+);
+const promptDiscoveredCodex = childProcess.spawnSync(
+  process.execPath,
+  [
+    "scripts/aaps.js",
+    "prompt",
+    "Use Codex discovered from HOME local bin.",
+    "--project",
+    ".aaps-work/tests/prompt-discovery-codex-project",
+    "--backend",
+    "codex",
+    "--json",
+  ],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: discoveryHome,
+      PATH: "/usr/bin:/bin",
+    },
+  }
+);
+assert.strictEqual(promptDiscoveredCodex.status, 0, promptDiscoveredCodex.stderr || promptDiscoveredCodex.stdout);
+const discoveredCodexPayload = JSON.parse(promptDiscoveredCodex.stdout);
+assert.strictEqual(discoveredCodexPayload.status, "succeeded_verified");
+assert.strictEqual(discoveredCodexPayload.backendCommand.name, "codex");
+assert(discoveredCodexPayload.backendCommand.command.endsWith(`${path.sep}.local${path.sep}bin${path.sep}codex`));
+
 const manifestOnlyProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-manifest-only-project");
 fs.rmSync(manifestOnlyProject, { recursive: true, force: true });
 fs.mkdirSync(path.join(manifestOnlyProject, "fake-bin"), { recursive: true });
