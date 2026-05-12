@@ -6,9 +6,36 @@ const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
 const AAPS = require("../src/aaps");
+const { maybeAutoUpdate } = require("../src/auto-update");
 const { DEFAULT_PORT, ensureAapsWebApp } = require("../src/web-autostart");
 
 const SKIP_DIRS = new Set([".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"]);
+const useColor = Boolean(process.stdin.isTTY && process.stdout.isTTY && process.env.AAPS_NO_COLOR !== "1");
+const ansi = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  cyan: "\x1b[36m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  userBg: "\x1b[48;5;24m\x1b[38;5;231m",
+  aapsBg: "\x1b[48;5;29m\x1b[38;5;231m",
+  stateBg: "\x1b[48;5;23m\x1b[38;5;231m",
+  systemBg: "\x1b[48;5;236m\x1b[38;5;245m",
+  cursorHide: "\x1b[?25l",
+  cursorShow: "\x1b[?25h",
+};
+const ROLE_LABEL_WIDTH = "system".length;
+const PROMPT_LABEL_WIDTH = "user>".length;
+const LARGE_LAUNCH_TITLE = [
+  " █████╗  █████╗ ██████╗ ███████╗",
+  "██╔══██╗██╔══██╗██╔══██╗██╔════╝",
+  "███████║███████║██████╔╝███████╗",
+  "██╔══██║██╔══██║██╔═══╝ ╚════██║",
+  "██║  ██║██║  ██║██║     ███████║",
+  "╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚══════╝",
+];
 
 function usage() {
   return [
@@ -26,12 +53,13 @@ function usage() {
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
-    "  aaps prompt \"goal\" [--project .] [--backend aginti|print] [--json]",
-    "  aaps \"goal\" [--project .] [--backend aginti|print] [--json]",
+    "  aaps prompt \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
+    "  aaps \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
-    "  aaps chat [--project .] [--backend aginti|print]",
+    "  aaps chat [--project .] [--backend codex|aginti|print]",
     "  aaps webapp [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
     "  aaps studio [--project .] [--host 127.0.0.1] [--port 8797] [--mock-codex]",
+    "  aaps update",
     "  aaps --version",
     "",
     "Options:",
@@ -44,7 +72,9 @@ function usage() {
     "  --run-id <id>     Stable run identifier for reproducible test runs.",
     "  --set <name=value> Override an AAPS input or parameter at runtime; repeatable.",
     "  --dry-run         Build plan/readiness and skip action side effects.",
-    "  --backend <name>  Prompt backend for direct goals. Defaults to aginti.",
+    "  --backend <name>  Prompt backend for direct goals. Defaults to codex.",
+    "  --no-auto-update Skip startup update checks for global npm installs.",
+    "  --auto-update     Force a startup update check for global npm installs.",
     "  --provider <name> Provider passed to AgInTi backend.",
     "  --routing <mode>  Routing passed to AgInTi backend. Defaults to complex for backend implementation.",
     "  --aginti-safety <safe|normal|danger> Safety shortcut passed to AgInTi backend.",
@@ -180,17 +210,88 @@ function splitCliWords(value) {
   return words;
 }
 
-function printChatHeader({ version = packageVersion(), webAppUrl = "", webAppNotice = "" } = {}) {
-  const title = "AAPS";
-  const subtitle = "Prompt-native project workflows, blocks, parsing, compile, run, and Studio.";
+function color(value, ...codes) {
+  if (!useColor || !codes.length) return String(value);
+  return `${codes.join("")}${value}${ansi.reset}`;
+}
+
+function stripAnsi(value) {
+  return String(value || "").replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
+function visibleLength(value) {
+  return stripAnsi(value).length;
+}
+
+function terminalWidth() {
+  return Math.max(Number(process.stdout.columns) || 88, 48);
+}
+
+function padVisible(value, width) {
+  return `${value}${" ".repeat(Math.max(width - visibleLength(value), 0))}`;
+}
+
+function terminalHyperlink(url = "", text = url) {
+  if (!useColor || process.env.AAPS_NO_HYPERLINK === "1") return String(text || "");
+  const safeUrl = String(url || "").replace(/[\x00-\x1f\x7f]/g, "");
+  return safeUrl ? `\x1b]8;;${safeUrl}\x07${text}\x1b]8;;\x07` : String(text || "");
+}
+
+function linkifyTerminalUrl(line = "", url = "") {
+  if (!url || !String(line).includes(url)) return String(line || "");
+  return String(line).replace(url, terminalHyperlink(url, url));
+}
+
+function labelText(name, { prompt = false } = {}) {
+  const raw = String(name || "");
+  const width = prompt || raw.endsWith(">") ? PROMPT_LABEL_WIDTH : ROLE_LABEL_WIDTH;
+  const aligned = raw.endsWith(">") ? raw.padStart(width, " ") : raw.padEnd(width, " ");
+  return ` ${aligned} `;
+}
+
+function label(name, bgCode) {
+  return color(labelText(name), bgCode, ansi.bold);
+}
+
+function printStripe(role, text = "", bgCode = ansi.systemBg) {
+  const content = String(text ?? "");
+  const rows = content.split(/\r?\n/);
+  rows.forEach((row, index) => {
+    const prefix = index === 0 ? label(role, bgCode) : label("", bgCode);
+    console.log(`${prefix} ${row}`);
+  });
+}
+
+function printAapsMessage(text = "") {
+  printStripe("aaps", text, ansi.aapsBg);
+}
+
+function printStateMessage(text = "") {
+  printStripe("state", text, ansi.stateBg);
+}
+
+function printErrorMessage(text = "") {
+  printStripe("error", text, ansi.systemBg);
+}
+
+function printChatHeader({ version = packageVersion(), webAppUrl = "", webAppNotice = "", backend = "codex" } = {}) {
+  const width = Math.min(Math.max(terminalWidth() - 2, 74), 112);
+  const titleWidth = Math.max(...LARGE_LAUNCH_TITLE.map((line) => visibleLength(line)));
+  const titleFits = width >= titleWidth + 4;
+  const top = `╭${"─".repeat(width - 2)}╮`;
+  const bottom = `╰${"─".repeat(width - 2)}╯`;
+  const line = (value = "") => `│ ${padVisible(value, width - 4)} │`;
+  console.log(color(top, ansi.cyan));
+  if (titleFits) {
+    for (const row of LARGE_LAUNCH_TITLE) console.log(color(line(row), ansi.cyan));
+  } else {
+    console.log(color(line("AAPS"), ansi.cyan, ansi.bold));
+  }
+  console.log(color(line(`AAPS v${version} - prompt-native workflows, blocks, parse, compile, run, and Studio.`), ansi.cyan));
+  console.log(color(line(`backend: ${backend}    cwd: ${process.cwd()}`), ansi.dim));
   const tagline = webAppUrl ? `webapp: ${webAppUrl}` : webAppNotice || "";
-  const width = Math.max(title.length + 8, subtitle.length + 4, tagline.length + 4, 74);
-  const border = "-".repeat(width);
-  console.log(border);
-  console.log(`${title} v${version}`);
-  console.log(subtitle);
-  if (tagline) console.log(tagline);
-  console.log(border);
+  if (tagline) console.log(color(line(linkifyTerminalUrl(tagline, webAppUrl)), ansi.green));
+  console.log(color(bottom, ansi.cyan));
 }
 
 function runCliInProject(projectDir, args, { capture = false } = {}) {
@@ -209,6 +310,14 @@ function shellCommandExists(command, cwd) {
     stdio: "ignore",
   });
   return result.status === 0;
+}
+
+function normalizePromptBackend(value) {
+  const backend = String(value || process.env.AAPS_BACKEND || "codex").trim().toLowerCase();
+  if (["codex", "codex-cli", "codex_cli"].includes(backend)) return "codex";
+  if (["aginti", "agintiflow", "aginti-flow"].includes(backend)) return "aginti";
+  if (["print", "dry-run", "dryrun", "prompt"].includes(backend)) return "print";
+  return backend || "codex";
 }
 
 function collectWorkflowCandidates(projectDir, fileArg = "", options = {}) {
@@ -415,11 +524,80 @@ function buildPromptHandoff(projectDir, goal, options) {
   return { promptPath, projectRelativePromptPath, prompt: text, aapsCli, dockerSafeAapsCli };
 }
 
+function codexPromptArgs(projectDir, outputPath, options = {}) {
+  const model = String(options.model || options.codexModel || process.env.AAPS_CODEX_MODEL || "gpt-5.3-codex");
+  const reasoning = String(options.reasoning || options.codexReasoning || process.env.AAPS_CODEX_REASONING || "high");
+  const args = [
+    "exec",
+    "--ephemeral",
+    "--model",
+    model,
+    "-c",
+    `model_reasoning_effort="${reasoning}"`,
+    "--cd",
+    projectDir,
+    "--output-last-message",
+    outputPath,
+  ];
+  if (options.codexBypassSandbox || process.env.AAPS_CODEX_BYPASS_SANDBOX === "1") {
+    args.push("--dangerously-bypass-approvals-and-sandbox");
+  }
+  args.push("-");
+  return args;
+}
+
+function commandPromptWithCodex(projectDir, handoff, payload, options) {
+  if (!shellCommandExists("codex", projectDir)) {
+    payload.ok = false;
+    payload.status = "missing_backend";
+    payload.error = "Codex CLI (`codex`) was not found on PATH. Install/configure Codex or rerun with --backend aginti or --backend print.";
+    if (options.json) print(payload, true);
+    else {
+      console.error(payload.error);
+      console.error(`Prepared prompt: ${handoff.projectRelativePromptPath}`);
+    }
+    process.exit(1);
+  }
+  const outputPath = path.join(projectDir, ".aaps-work", "prompts", `${timestampSlug()}-codex-output.md`);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  const args = codexPromptArgs(projectDir, outputPath, options);
+  payload.command = ["codex", ...args];
+  payload.handoffMode = "stdin_with_saved_handoff";
+  payload.outputPath = outputPath;
+  payload.outputFile = toProjectPath(path.relative(projectDir, outputPath));
+  const auditStartedAtMs = Date.now();
+  const result = childProcess.spawnSync("codex", args, {
+    cwd: projectDir,
+    input: handoff.prompt,
+    encoding: "utf8",
+    stdio: options.json ? ["pipe", "pipe", "pipe"] : ["pipe", "inherit", "inherit"],
+    timeout: Number(options.codexTimeoutMs || process.env.AAPS_CODEX_TIMEOUT_MS || 15 * 60 * 1000),
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  payload.executed = true;
+  payload.exitCode = result.status ?? 1;
+  payload.signal = result.signal || "";
+  payload.postRunAudit = auditAapsBackendResult(projectDir, options.auditFile || "", {
+    scope: String(options.auditScope || "entry").toLowerCase() === "project" ? "project" : "entry",
+    sinceMs: auditStartedAtMs,
+  });
+  if (payload.exitCode === 0 && payload.postRunAudit.ok) payload.status = "succeeded_verified";
+  else if (payload.exitCode === 0) payload.status = "backend_returned_unverified";
+  else payload.status = "failed";
+  if (options.json) {
+    payload.stdout = result.stdout || "";
+    payload.stderr = result.stderr || result.error?.message || "";
+    payload.ok = payload.exitCode === 0 && payload.postRunAudit.ok;
+    print(payload, true);
+  }
+  process.exit(payload.ok ? 0 : payload.exitCode || 1);
+}
+
 function commandPrompt(goal, options) {
   const projectDir = path.resolve(options.project || ".");
   const text = String(goal || "").trim();
   if (!text) throw new Error("aaps prompt requires a goal string.");
-  const backend = String(options.backend || process.env.AAPS_BACKEND || "aginti").toLowerCase();
+  const backend = normalizePromptBackend(options.backend);
   const handoff = buildPromptHandoff(projectDir, text, options);
   const payload = {
     ok: true,
@@ -437,8 +615,12 @@ function commandPrompt(goal, options) {
     else print(handoff.prompt, false);
     return;
   }
+  if (backend === "codex") {
+    commandPromptWithCodex(projectDir, handoff, payload, options);
+    return;
+  }
   if (backend !== "aginti") {
-    throw new Error(`Unsupported AAPS prompt backend: ${backend}. Supported backends: aginti, print.`);
+    throw new Error(`Unsupported AAPS prompt backend: ${backend}. Supported backends: codex, aginti, print.`);
   }
   if (!shellCommandExists("aginti", projectDir)) {
     payload.ok = false;
@@ -676,36 +858,235 @@ async function commandWebapp(options, { manual = true } = {}) {
 function chatHelp() {
   return [
     "AAPS chat commands:",
-    "  /webapp [port]       Start or reuse AAPS Studio and print the URL.",
-    "  /status              Show project manifest and active file.",
-    "  /validate [file]     Validate the project or selected file.",
-    "  /parse <file>        Parse a .aaps file.",
+    "  /webapp [port]          Start or reuse AAPS Studio and print the URL.",
+    "  /status                 Show project manifest, active file, and backend.",
+    "  /files                  List project .aaps files.",
+    "  /validate [file]        Validate the project or selected file.",
+    "  /parse <file>           Parse a .aaps file.",
     "  /compile <file> [mode]  Compile/check/apply a .aaps file.",
-    "  /run <file>          Run a .aaps file.",
-    "  /backend <name>      Set prompt backend: aginti or print.",
-    "  /exit                Exit the CLI.",
-    "Plain messages are sent through `aaps prompt` so the selected backend can edit/parse/compile AAPS.",
+    "  /check <file>           Compile check shortcut.",
+    "  /run <file>             Run a .aaps file.",
+    "  /backend <name>         Set prompt backend: codex, aginti, or print.",
+    "  /codex                  Use Codex for plain-message backend work.",
+    "  /aginti                 Use AgInTiFlow for plain-message backend work.",
+    "  /print                  Save/print backend handoff without executing it.",
+    "  /update                 Check npm for a newer global AAPS release.",
+    "  /exit                   Exit the CLI.",
+    "",
+    "Editing: Ctrl-J inserts a newline; Up/Down recalls previous messages in TTY mode.",
+    "Plain messages are sent through `aaps prompt` so the selected backend can edit, parse, compile, and verify AAPS.",
   ].join("\n");
 }
 
-function printProjectStatus(projectDir) {
+function projectStatusText(projectDir, backend = "codex") {
   const manifest = readManifest(projectDir);
+  const lines = [];
   if (!manifest) {
-    console.log(`project: ${projectDir}`);
-    console.log("manifest: missing aaps.project.json");
-    return;
+    lines.push(`project: ${projectDir}`);
+    lines.push("manifest: missing aaps.project.json");
+    lines.push(`backend: ${backend}`);
+    return lines.join("\n");
   }
   const files = Object.keys(scanAapsFiles(projectDir)).sort();
-  console.log(`project: ${projectDir}`);
-  console.log(`name: ${manifest.name || path.basename(projectDir)}`);
-  console.log(`activeFile: ${manifest.activeFile || "(none)"}`);
-  console.log(`defaultMain: ${manifest.defaultMain || "(none)"}`);
-  console.log(`aapsFiles: ${files.length}`);
+  lines.push(`project: ${projectDir}`);
+  lines.push(`name: ${manifest.name || path.basename(projectDir)}`);
+  lines.push(`backend: ${backend}`);
+  lines.push(`activeFile: ${manifest.activeFile || "(none)"}`);
+  lines.push(`defaultMain: ${manifest.defaultMain || "(none)"}`);
+  lines.push(`aapsFiles: ${files.length}`);
+  return lines.join("\n");
+}
+
+function printProjectStatus(projectDir, backend = "codex") {
+  printStateMessage(projectStatusText(projectDir, backend));
+}
+
+function projectFilesText(projectDir) {
+  const files = Object.keys(scanAapsFiles(projectDir)).sort();
+  if (!files.length) return "No .aaps files found in this project.";
+  return files.map((file, index) => `${String(index + 1).padStart(2, " ")}. ${file}`).join("\n");
+}
+
+function runCliAndPrint(projectDir, args) {
+  const result = runCliInProject(projectDir, args, { capture: true });
+  const stdout = String(result.stdout || "").trimEnd();
+  const stderr = String(result.stderr || result.error?.message || "").trimEnd();
+  if (stdout) printAapsMessage(stdout);
+  if (stderr) printErrorMessage(stderr);
+  if ((result.status ?? 0) !== 0 && !stderr) printErrorMessage(`command failed with exit code ${result.status}`);
+  return result;
+}
+
+class ComposerHistory {
+  constructor(entries = []) {
+    this.entries = [];
+    this.cursor = null;
+    this.draft = "";
+    entries.forEach((entry) => this.record(entry));
+  }
+
+  record(value) {
+    const text = String(value || "");
+    if (text.trim() && this.entries[this.entries.length - 1] !== text) this.entries.push(text);
+    this.cursor = null;
+    this.draft = "";
+  }
+
+  navigate(buffer, direction) {
+    if (!this.entries.length) return null;
+    if (this.cursor === null) {
+      this.cursor = this.entries.length;
+      this.draft = String(buffer || "");
+    }
+    if (direction < 0) {
+      this.cursor = Math.max(this.cursor - 1, 0);
+    } else if (this.cursor >= this.entries.length - 1) {
+      const draft = this.draft;
+      this.cursor = null;
+      this.draft = "";
+      return draft;
+    } else {
+      this.cursor += 1;
+    }
+    return this.entries[this.cursor] || "";
+  }
+}
+
+const SLASH_COMMANDS = [
+  "/help",
+  "/webapp",
+  "/status",
+  "/files",
+  "/validate",
+  "/parse",
+  "/compile",
+  "/check",
+  "/run",
+  "/backend",
+  "/codex",
+  "/aginti",
+  "/print",
+  "/update",
+  "/exit",
+];
+
+function autocompleteSlashCommand(buffer) {
+  const text = String(buffer || "");
+  if (!text.startsWith("/") || /\s/.test(text)) return text;
+  const matches = SLASH_COMMANDS.filter((command) => command.startsWith(text));
+  return matches.length === 1 ? matches[0] : text;
+}
+
+async function readComposerLine(history) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== "function") {
+    return null;
+  }
+  readline.emitKeypressEvents(process.stdin);
+  const wasRaw = process.stdin.isRaw;
+  let buffer = "";
+  let renderedLines = 0;
+  let closed = false;
+  let keypressHandler = null;
+
+  function render() {
+    if (renderedLines > 0) {
+      process.stdout.write("\r");
+      if (renderedLines > 1) process.stdout.write(`\x1b[${renderedLines - 1}A`);
+      process.stdout.write("\x1b[J");
+    }
+    const rows = String(buffer || "").split("\n");
+    rows.forEach((row, index) => {
+      const prompt = index === 0 ? label("user>", ansi.userBg) : label("", ansi.userBg);
+      if (index > 0) process.stdout.write("\n");
+      process.stdout.write(`${prompt} ${row}`);
+    });
+    renderedLines = Math.max(rows.length, 1);
+  }
+
+  function closeRaw() {
+    if (closed) return;
+    closed = true;
+    if (keypressHandler) process.stdin.off("keypress", keypressHandler);
+    process.stdin.setRawMode(Boolean(wasRaw));
+    if (!wasRaw) process.stdin.pause();
+    process.stdout.write(ansi.cursorShow);
+  }
+
+  return await new Promise((resolve) => {
+    function finish(value) {
+      closeRaw();
+      process.stdout.write("\n");
+      resolve(value);
+    }
+
+    function insertText(value) {
+      buffer += String(value || "").replace(/\r/g, "");
+      render();
+    }
+
+    keypressHandler = function onKeypress(str, key = {}) {
+      if (key.ctrl && key.name === "c") {
+        closeRaw();
+        process.stdout.write("\n");
+        process.exit(130);
+      }
+      if (key.ctrl && key.name === "d" && !buffer) {
+        finish(null);
+        return;
+      }
+      if (key.ctrl && key.name === "j") {
+        insertText("\n");
+        return;
+      }
+      if (str === "\r" || str === "\n" || key.name === "return" || key.name === "enter") {
+        finish(buffer);
+        return;
+      }
+      if (key.name === "escape") {
+        buffer = "";
+        render();
+        return;
+      }
+      if (key.name === "up") {
+        const next = history.navigate(buffer, -1);
+        if (next !== null) {
+          buffer = next;
+          render();
+        }
+        return;
+      }
+      if (key.name === "down") {
+        const next = history.navigate(buffer, 1);
+        if (next !== null) {
+          buffer = next;
+          render();
+        }
+        return;
+      }
+      if (key.name === "backspace") {
+        buffer = buffer.slice(0, -1);
+        render();
+        return;
+      }
+      if (key.name === "tab") {
+        buffer = autocompleteSlashCommand(buffer);
+        render();
+        return;
+      }
+      if (str && !key.ctrl && !key.meta) insertText(str);
+    };
+
+    process.stdout.write(ansi.cursorShow);
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    render();
+    process.stdin.on("keypress", keypressHandler);
+  });
 }
 
 async function startChat(options) {
   const projectDir = path.resolve(options.project || ".");
-  let backend = String(options.backend || process.env.AAPS_BACKEND || "aginti").toLowerCase();
+  let backend = normalizePromptBackend(options.backend);
   let webResult = { ok: false, url: "", error: "", disabled: Boolean(options.noWebapp) };
   if (!options.noWebapp) {
     webResult = await commandWebapp({ ...options, project: projectDir, silent: true }, { manual: false });
@@ -715,78 +1096,102 @@ async function startChat(options) {
     : webResult.ok
       ? ""
       : `webapp unavailable - use /webapp to retry; error: ${compactLine(webResult.error || "unknown", 84)}`;
-  printChatHeader({ webAppUrl: webResult.ok ? webResult.url : "", webAppNotice: notice });
-  printProjectStatus(projectDir);
-  console.log(chatHelp());
+  printChatHeader({ webAppUrl: webResult.ok ? webResult.url : "", webAppNotice: notice, backend });
+  printProjectStatus(projectDir, backend);
+  printAapsMessage(chatHelp());
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: "aaps> ",
     terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
   });
-  rl.prompt();
+  const history = new ComposerHistory();
 
-  for await (const rawLine of rl) {
+  async function handleLine(rawLine) {
     const line = String(rawLine || "").trim();
     if (!line) {
-      rl.prompt();
-      continue;
+      return false;
     }
-    if (line === "/exit" || line === "/quit" || line === "exit" || line === "quit") break;
+    history.record(line);
+    if (line === "/exit" || line === "/quit" || line === "exit" || line === "quit") return true;
     if (line === "/help" || line === "help") {
-      console.log(chatHelp());
-      rl.prompt();
-      continue;
+      printAapsMessage(chatHelp());
+      return false;
     }
     if (line.startsWith("/webapp") || line.startsWith("/web ")) {
       const words = splitCliWords(line);
       const port = words[1] || options.port || DEFAULT_PORT;
       await commandWebapp({ ...options, project: projectDir, port, json: false }, { manual: true });
-      rl.prompt();
-      continue;
+      return false;
     }
-    if (line.startsWith("/backend")) {
+    if (line === "/codex" || line === "/aginti" || line === "/print" || line.startsWith("/backend")) {
       const words = splitCliWords(line);
-      backend = String(words[1] || backend).toLowerCase();
-      console.log(`backend=${backend}`);
-      rl.prompt();
-      continue;
+      backend = normalizePromptBackend(line === "/codex" ? "codex" : line === "/aginti" ? "aginti" : line === "/print" ? "print" : words[1] || backend);
+      printStateMessage(`backend=${backend}`);
+      return false;
     }
     if (line === "/status") {
-      printProjectStatus(projectDir);
-      rl.prompt();
-      continue;
+      printProjectStatus(projectDir, backend);
+      return false;
+    }
+    if (line === "/files") {
+      printAapsMessage(projectFilesText(projectDir));
+      return false;
     }
     if (line.startsWith("/validate")) {
       const words = splitCliWords(line);
-      runCliInProject(projectDir, ["validate", ...(words[1] ? [words[1]] : []), "--project", "."], {});
-      rl.prompt();
-      continue;
+      runCliAndPrint(projectDir, ["validate", ...(words[1] ? [words[1]] : []), "--project", "."]);
+      return false;
     }
     if (line.startsWith("/parse")) {
       const words = splitCliWords(line);
-      if (!words[1]) console.log("Usage: /parse <file>");
-      else runCliInProject(projectDir, ["parse", words[1], "--project", "."], {});
-      rl.prompt();
-      continue;
+      if (!words[1]) printAapsMessage("Usage: /parse <file>");
+      else runCliAndPrint(projectDir, ["parse", words[1], "--project", "."]);
+      return false;
     }
-    if (line.startsWith("/compile")) {
+    if (line.startsWith("/compile") || line.startsWith("/check")) {
       const words = splitCliWords(line);
-      if (!words[1]) console.log("Usage: /compile <file> [check|suggest|apply|force]");
-      else runCliInProject(projectDir, ["compile", words[1], "--project", ".", "--mode", words[2] || "check"], {});
-      rl.prompt();
-      continue;
+      if (!words[1]) printAapsMessage("Usage: /compile <file> [check|suggest|apply|force]");
+      else runCliAndPrint(projectDir, ["compile", words[1], "--project", ".", "--mode", line.startsWith("/check") ? "check" : words[2] || "check"]);
+      return false;
     }
     if (line.startsWith("/run")) {
       const words = splitCliWords(line);
-      if (!words[1]) console.log("Usage: /run <file>");
-      else runCliInProject(projectDir, ["run", words[1], "--project", "."], {});
-      rl.prompt();
-      continue;
+      if (!words[1]) printAapsMessage("Usage: /run <file>");
+      else runCliAndPrint(projectDir, ["run", words[1], "--project", "."]);
+      return false;
     }
-    runCliInProject(projectDir, ["prompt", line, "--project", ".", "--backend", backend], {});
+    if (line === "/update") {
+      await maybeAutoUpdate({
+        argv: ["update"],
+        manual: true,
+        force: true,
+        packageDir: path.resolve(__dirname, ".."),
+        packageVersion: packageVersion(),
+      });
+      return false;
+    }
+    runCliAndPrint(projectDir, ["prompt", line, "--project", ".", "--backend", backend]);
+    return false;
+  }
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== "function") {
+    rl.setPrompt("aaps> ");
     rl.prompt();
+    for await (const rawLine of rl) {
+      const done = await handleLine(rawLine);
+      if (done) break;
+      rl.prompt();
+    }
+    rl.close();
+    return;
+  }
+
+  while (true) {
+    const rawLine = await readComposerLine(history);
+    if (rawLine === null) break;
+    const done = await handleLine(rawLine);
+    if (done) break;
   }
 
   rl.close();
@@ -809,6 +1214,8 @@ async function main() {
     "web",
     "chat",
     "interactive",
+    "update",
+    "upgrade",
     "compile",
     "compile-project",
     "missing",
@@ -831,6 +1238,22 @@ async function main() {
     console.log(packageVersion());
     return;
   }
+  if (command === "update" || command === "upgrade") {
+    await maybeAutoUpdate({
+      argv: ["update"],
+      manual: true,
+      force: true,
+      packageDir: path.resolve(__dirname, ".."),
+      packageVersion: packageVersion(),
+    });
+    return;
+  }
+  await maybeAutoUpdate({
+    argv: process.argv.slice(2),
+    force: Boolean(options.autoUpdate),
+    packageDir: path.resolve(__dirname, ".."),
+    packageVersion: packageVersion(),
+  });
   if (command === "prompt") {
     commandPrompt(positional.join(" "), options);
     return;

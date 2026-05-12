@@ -21,7 +21,7 @@ aaps webapp --project .
 aaps chat --project .
 ```
 
-`aaps webapp` starts or reuses the local Studio process, trying port `8797` first and then later ports if needed. `aaps chat` shows the active Studio URL below the CLI header and supports `/webapp`, `/parse`, `/compile`, `/run`, and backend prompt handoffs against the same project.
+`aaps webapp` starts or reuses the local Studio process, trying port `8797` first and then later ports if needed. `aaps chat` shows the active Studio URL below the CLI header and supports an AAPS-focused shell: Ctrl-J multiline prompts, Up/Down history, `/files`, `/status`, `/webapp`, `/parse`, `/compile`, `/check`, `/run`, `/update`, and `/backend codex|aginti|print` against the same project.
 
 ## Environment
 
@@ -30,6 +30,7 @@ aaps chat --project .
 | `AAPS_CODEX_MODEL` | `gpt-5.3-codex` | Model passed to `codex exec`. |
 | `AAPS_CODEX_REASONING` | `medium` | Reasoning effort config. |
 | `AAPS_CODEX_TIMEOUT` | `240` | Synchronous wrapper timeout in seconds. |
+| `AAPS_CODEX_TIMEOUT_MS` | `900000` | Direct `aaps prompt --backend codex` timeout in milliseconds. |
 | `AAPS_AGENT_PROVIDER` | `codex` | Default backend provider. Supported values: `codex`, `deepseek`, `aginti`. |
 | `AAPS_DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek OpenAI-compatible base URL. |
 | `AAPS_DEEPSEEK_MODEL` | `deepseek-v4-pro` | Preferred DeepSeek model for the current stage. |

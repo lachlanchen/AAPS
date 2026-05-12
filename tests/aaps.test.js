@@ -3,6 +3,7 @@ const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const AAPS = require("../src/aaps");
+const AutoUpdate = require("../src/auto-update");
 
 function parseFile(file) {
   return AAPS.parseAAPS(fs.readFileSync(file, "utf8"));
@@ -73,6 +74,10 @@ assert.strictEqual(reparsed.pipeline.requiredTools.includes("cellpose"), true);
 assert.strictEqual(reparsed.diagnostics.length, 0, JSON.stringify(reparsed.diagnostics));
 
 assert.strictEqual(AAPS.PROJECT_VERSION, "aaps_project/0.1");
+assert.strictEqual(AutoUpdate.isNewerVersion("0.4.29", "0.4.28"), true);
+assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["chat"]), true);
+assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["parse"]), false);
+assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["chat", "--no-auto-update"]), false);
 const projectCheck = AAPS.validateProjectManifest(AAPS.sampleProject, AAPS.projectFileIndex(AAPS.sampleProject));
 assert.strictEqual(projectCheck.ok, true, JSON.stringify(projectCheck.diagnostics));
 assert(projectCheck.files.includes("blocks/qc_image.aaps"));
@@ -378,11 +383,16 @@ assert.strictEqual(JSON.parse(webappReuse.stdout).reused, true);
 const webappChat = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--no-webapp"],
-  { cwd: path.join(__dirname, ".."), input: "/webapp 8897\n/status\n/exit\n", encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), input: "/webapp 8897\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n", encoding: "utf8" }
 );
 assert.strictEqual(webappChat.status, 0, webappChat.stderr || webappChat.stdout);
 assert(webappChat.stdout.includes("AAPS v"), webappChat.stdout);
 assert(webappChat.stdout.includes(`AAPS Studio reused: http://127.0.0.1:${webappPort}`), webappChat.stdout);
+assert(webappChat.stdout.includes("workflows/main.aaps"), webappChat.stdout);
+assert(webappChat.stdout.includes("backend=aginti"), webappChat.stdout);
+assert(webappChat.stdout.includes("backend=codex"), webappChat.stdout);
+assert(webappChat.stdout.includes("backend=print"), webappChat.stdout);
+assert(webappChat.stdout.includes("Ctrl-J inserts a newline"), webappChat.stdout);
 childProcess.spawnSync("pkill", ["-f", `aaps_codex_server.py --host 127.0.0.1 --port ${webappPort}`]);
 
 const blockRun = childProcess.spawnSync(
