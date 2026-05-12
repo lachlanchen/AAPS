@@ -175,6 +175,26 @@ function installLatest(packageName) {
   });
 }
 
+async function restartCurrentProcess() {
+  return await new Promise((resolve) => {
+    const child = childProcess.spawn(process.argv[0], process.argv.slice(1), {
+      cwd: process.cwd(),
+      detached: false,
+      stdio: "inherit",
+      env: process.env,
+    });
+    child.on("error", (error) => resolve({ ok: false, error: error.message, exitCode: 1 }));
+    child.on("exit", (code, signal) => {
+      resolve({
+        ok: code === 0,
+        exitCode: code ?? (signal ? 130 : 1),
+        signal: signal || "",
+        error: code === 0 ? "" : `restarted process exited with ${signal || code}`,
+      });
+    });
+  });
+}
+
 function renderSelector(output, { current, latest, packageName, selectedIndex, renderedLines }) {
   const rows = [
     `AAPS update available: ${current} -> ${latest}`,
@@ -241,6 +261,11 @@ async function maybeAutoUpdate({
   packageDir = "",
   packageName = DEFAULT_PACKAGE_NAME,
   packageVersion = "",
+  latestVersion = npmLatestVersion,
+  installPackage = installLatest,
+  selectUpdateAction = promptUpdateChoice,
+  restart = false,
+  restartProcess = restartCurrentProcess,
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
@@ -268,7 +293,7 @@ async function maybeAutoUpdate({
 
   if (stale || !latest) {
     try {
-      latest = String(await npmLatestVersion(packageName, intervalFromEnv("AAPS_AUTO_UPDATE_TIMEOUT_MS", 5000)) || "");
+      latest = String(await latestVersion(packageName, intervalFromEnv("AAPS_AUTO_UPDATE_TIMEOUT_MS", 5000)) || "");
       await writeCache({ ...cache, checkedAt: now, latest, packageName, latestCheckedBy: "npm-view" });
     } catch (error) {
       if (manual) stderr.write(`Could not check npm latest version: ${error.message}\n`);
@@ -290,7 +315,7 @@ async function maybeAutoUpdate({
     if (cache.skippedVersion === latest) {
       return { checked: true, latest, current: packageVersion, updated: false, skipped: "skipped-version" };
     }
-    const choice = await promptUpdateChoice({ current: packageVersion, latest, packageName, input: process.stdin, output: stdout });
+    const choice = await selectUpdateAction({ current: packageVersion, latest, packageName, input: process.stdin, output: stdout });
     if (choice === "skip-version") {
       await writeCache({ ...cache, checkedAt: now, latest, skippedVersion: latest, skippedAt: now, packageName });
       stdout.write(`Skipped AAPS ${latest}. Run \`aaps update\` to install it later.\n`);
@@ -304,7 +329,7 @@ async function maybeAutoUpdate({
 
   stdout.write(`AAPS update available: ${packageVersion} -> ${latest}\n`);
   stdout.write(`Running: npm install -g ${packageName}@latest\n`);
-  const install = await installLatest(packageName);
+  const install = await installPackage(packageName);
   if (!install.ok) {
     await writeCache({ ...cache, checkedAt: now, latest, lastInstallFailedAt: now, lastInstallError: install.error, packageName });
     stderr.write(`AAPS auto-update failed: ${install.error}\n`);
@@ -313,6 +338,19 @@ async function maybeAutoUpdate({
   }
   await writeCache({ ...cache, checkedAt: now, latest, lastInstallSucceededAt: now, lastInstallFailedAt: 0, lastInstallError: "", packageName });
   stdout.write(`AAPS updated to ${latest}.\n`);
+  if (restart) {
+    stdout.write("Restarting AAPS with the updated package...\n");
+    const restarted = await restartProcess();
+    return {
+      checked: true,
+      latest,
+      current: packageVersion,
+      updated: true,
+      restarted: true,
+      exitCode: restarted.exitCode,
+      error: restarted.error,
+    };
+  }
   return { checked: true, latest, current: packageVersion, updated: true };
 }
 
@@ -321,5 +359,6 @@ module.exports = {
   isGlobalNpmInstall,
   isNewerVersion,
   maybeAutoUpdate,
+  promptUpdateChoice,
   shouldAutoUpdateCommand,
 };

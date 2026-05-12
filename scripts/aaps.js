@@ -873,7 +873,8 @@ function chatHelp() {
     "  /update                 Check npm for a newer global AAPS release.",
     "  /exit                   Exit the CLI.",
     "",
-    "Editing: Ctrl-J inserts a newline; Up/Down recalls previous messages in TTY mode.",
+    "Editing: Ctrl-J inserts a newline; Enter submits; Left/Right, Home/End, Ctrl-A/E/U/K, Delete, and Backspace work in TTY mode.",
+    "History: Up/Down recalls previous messages from an empty prompt or moves within a multi-line prompt.",
     "Plain messages are sent through `aaps prompt` so the selected backend can edit, parse, compile, and verify AAPS.",
   ].join("\n");
 }
@@ -922,18 +923,31 @@ class ComposerHistory {
     this.entries = [];
     this.cursor = null;
     this.draft = "";
+    this.lastRecalledText = null;
     entries.forEach((entry) => this.record(entry));
   }
 
   record(value) {
     const text = String(value || "");
     if (text.trim() && this.entries[this.entries.length - 1] !== text) this.entries.push(text);
+    this.resetBrowsing();
+  }
+
+  resetBrowsing() {
     this.cursor = null;
     this.draft = "";
+    this.lastRecalledText = null;
+  }
+
+  shouldNavigate(buffer = "", direction = -1) {
+    if (!this.entries.length) return false;
+    const text = String(buffer || "");
+    if (!text) return direction < 0;
+    return this.cursor !== null && text === this.lastRecalledText;
   }
 
   navigate(buffer, direction) {
-    if (!this.entries.length) return null;
+    if (!this.shouldNavigate(buffer, direction)) return null;
     if (this.cursor === null) {
       this.cursor = this.entries.length;
       this.draft = String(buffer || "");
@@ -942,13 +956,14 @@ class ComposerHistory {
       this.cursor = Math.max(this.cursor - 1, 0);
     } else if (this.cursor >= this.entries.length - 1) {
       const draft = this.draft;
-      this.cursor = null;
-      this.draft = "";
-      return draft;
+      this.resetBrowsing();
+      return { buffer: draft, cursor: draft.length, browsing: false };
     } else {
       this.cursor += 1;
     }
-    return this.entries[this.cursor] || "";
+    const recalled = this.entries[this.cursor] || "";
+    this.lastRecalledText = recalled;
+    return { buffer: recalled, cursor: recalled.length, browsing: true };
   }
 }
 
@@ -977,6 +992,70 @@ function autocompleteSlashCommand(buffer) {
   return matches.length === 1 ? matches[0] : text;
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function insertAt(buffer, cursor, text) {
+  const safeCursor = clamp(cursor, 0, buffer.length);
+  const next = `${buffer.slice(0, safeCursor)}${text}${buffer.slice(safeCursor)}`;
+  return { buffer: next, cursor: safeCursor + String(text).length };
+}
+
+function removeBefore(buffer, cursor) {
+  const safeCursor = clamp(cursor, 0, buffer.length);
+  if (safeCursor === 0) return { buffer, cursor: safeCursor };
+  return { buffer: `${buffer.slice(0, safeCursor - 1)}${buffer.slice(safeCursor)}`, cursor: safeCursor - 1 };
+}
+
+function removeAt(buffer, cursor) {
+  const safeCursor = clamp(cursor, 0, buffer.length);
+  if (safeCursor >= buffer.length) return { buffer, cursor: safeCursor };
+  return { buffer: `${buffer.slice(0, safeCursor)}${buffer.slice(safeCursor + 1)}`, cursor: safeCursor };
+}
+
+function lineBounds(buffer, cursor) {
+  const safeCursor = clamp(cursor, 0, buffer.length);
+  const start = buffer.lastIndexOf("\n", safeCursor - 1) + 1;
+  const nextBreak = buffer.indexOf("\n", safeCursor);
+  return { start, end: nextBreak === -1 ? buffer.length : nextBreak };
+}
+
+function promptRows(buffer) {
+  const rows = String(buffer || "").split("\n");
+  return rows.length ? rows : [""];
+}
+
+function cursorLocation(buffer, cursor) {
+  const before = String(buffer || "").slice(0, clamp(cursor, 0, String(buffer || "").length));
+  const rows = before.split("\n");
+  return { row: rows.length - 1, column: rows[rows.length - 1].length };
+}
+
+function clearRenderedPrompt(renderedLines) {
+  if (!renderedLines) return;
+  process.stdout.write("\r");
+  if (renderedLines > 1) process.stdout.write(`\x1b[${renderedLines - 1}A`);
+  process.stdout.write("\x1b[J");
+}
+
+function renderPromptBuffer(buffer, cursor, renderedLines) {
+  clearRenderedPrompt(renderedLines);
+  const rows = promptRows(buffer);
+  rows.forEach((row, index) => {
+    const prompt = index === 0 ? label("user>", ansi.userBg) : label("", ansi.userBg);
+    if (index > 0) process.stdout.write("\n");
+    process.stdout.write(`${prompt} ${row}`);
+  });
+  const location = cursorLocation(buffer, cursor);
+  const up = rows.length - 1 - location.row;
+  if (up > 0) process.stdout.write(`\x1b[${up}A`);
+  process.stdout.write("\r");
+  const promptColumn = PROMPT_LABEL_WIDTH + 3 + location.column;
+  if (promptColumn > 0) process.stdout.write(`\x1b[${promptColumn}C`);
+  return rows.length;
+}
+
 async function readComposerLine(history) {
   if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== "function") {
     return null;
@@ -984,23 +1063,14 @@ async function readComposerLine(history) {
   readline.emitKeypressEvents(process.stdin);
   const wasRaw = process.stdin.isRaw;
   let buffer = "";
+  let cursor = 0;
   let renderedLines = 0;
   let closed = false;
   let keypressHandler = null;
+  let preferredColumn = null;
 
   function render() {
-    if (renderedLines > 0) {
-      process.stdout.write("\r");
-      if (renderedLines > 1) process.stdout.write(`\x1b[${renderedLines - 1}A`);
-      process.stdout.write("\x1b[J");
-    }
-    const rows = String(buffer || "").split("\n");
-    rows.forEach((row, index) => {
-      const prompt = index === 0 ? label("user>", ansi.userBg) : label("", ansi.userBg);
-      if (index > 0) process.stdout.write("\n");
-      process.stdout.write(`${prompt} ${row}`);
-    });
-    renderedLines = Math.max(rows.length, 1);
+    renderedLines = renderPromptBuffer(buffer, cursor, renderedLines);
   }
 
   function closeRaw() {
@@ -1014,13 +1084,39 @@ async function readComposerLine(history) {
 
   return await new Promise((resolve) => {
     function finish(value) {
+      clearRenderedPrompt(renderedLines);
       closeRaw();
-      process.stdout.write("\n");
+      if (String(value || "").trim()) printStripe("user>", value, ansi.userBg);
       resolve(value);
     }
 
     function insertText(value) {
-      buffer += String(value || "").replace(/\r/g, "");
+      history.resetBrowsing();
+      ({ buffer, cursor } = insertAt(buffer, cursor, String(value || "").replace(/\r/g, "")));
+      preferredColumn = null;
+      render();
+    }
+
+    function moveVertical(direction) {
+      const historyNext = history.navigate(buffer, direction);
+      if (historyNext) {
+        buffer = historyNext.buffer;
+        cursor = historyNext.cursor;
+        preferredColumn = null;
+        render();
+        return;
+      }
+      const rows = promptRows(buffer);
+      const location = cursorLocation(buffer, cursor);
+      const targetRow = location.row + direction;
+      if (targetRow < 0 || targetRow >= rows.length) return;
+      const wantedColumn = preferredColumn ?? location.column;
+      let nextCursor = 0;
+      for (let index = 0; index < targetRow; index += 1) nextCursor += rows[index].length + 1;
+      nextCursor += Math.min(wantedColumn, rows[targetRow].length);
+      cursor = clamp(nextCursor, 0, buffer.length);
+      preferredColumn = wantedColumn;
+      history.resetBrowsing();
       render();
     }
 
@@ -1034,46 +1130,98 @@ async function readComposerLine(history) {
         finish(null);
         return;
       }
-      if (key.ctrl && key.name === "j") {
+      if ((key.ctrl && key.name === "j") || key.sequence === "\n") {
         insertText("\n");
         return;
       }
-      if (str === "\r" || str === "\n" || key.name === "return" || key.name === "enter") {
+      if (str === "\r" || key.sequence === "\r" || key.name === "return" || key.name === "enter") {
         finish(buffer);
         return;
       }
       if (key.name === "escape") {
         buffer = "";
+        cursor = 0;
+        preferredColumn = null;
+        history.resetBrowsing();
         render();
         return;
       }
       if (key.name === "up") {
-        const next = history.navigate(buffer, -1);
-        if (next !== null) {
-          buffer = next;
-          render();
-        }
+        moveVertical(-1);
         return;
       }
       if (key.name === "down") {
-        const next = history.navigate(buffer, 1);
-        if (next !== null) {
-          buffer = next;
-          render();
-        }
+        moveVertical(1);
+        return;
+      }
+      if (key.name === "left") {
+        history.resetBrowsing();
+        cursor = Math.max(cursor - 1, 0);
+        preferredColumn = null;
+        render();
+        return;
+      }
+      if (key.name === "right") {
+        history.resetBrowsing();
+        cursor = Math.min(cursor + 1, buffer.length);
+        preferredColumn = null;
+        render();
+        return;
+      }
+      if ((key.ctrl && key.name === "a") || key.name === "home") {
+        history.resetBrowsing();
+        cursor = lineBounds(buffer, cursor).start;
+        preferredColumn = null;
+        render();
+        return;
+      }
+      if ((key.ctrl && key.name === "e") || key.name === "end") {
+        history.resetBrowsing();
+        cursor = lineBounds(buffer, cursor).end;
+        preferredColumn = null;
+        render();
         return;
       }
       if (key.name === "backspace") {
-        buffer = buffer.slice(0, -1);
+        history.resetBrowsing();
+        ({ buffer, cursor } = removeBefore(buffer, cursor));
+        preferredColumn = null;
+        render();
+        return;
+      }
+      if (key.name === "delete") {
+        history.resetBrowsing();
+        ({ buffer, cursor } = removeAt(buffer, cursor));
+        preferredColumn = null;
+        render();
+        return;
+      }
+      if (key.ctrl && key.name === "u") {
+        history.resetBrowsing();
+        const bounds = lineBounds(buffer, cursor);
+        buffer = `${buffer.slice(0, bounds.start)}${buffer.slice(cursor)}`;
+        cursor = bounds.start;
+        preferredColumn = null;
+        render();
+        return;
+      }
+      if (key.ctrl && key.name === "k") {
+        history.resetBrowsing();
+        const bounds = lineBounds(buffer, cursor);
+        buffer = `${buffer.slice(0, cursor)}${buffer.slice(bounds.end)}`;
+        preferredColumn = null;
         render();
         return;
       }
       if (key.name === "tab") {
         buffer = autocompleteSlashCommand(buffer);
+        cursor = buffer.length;
+        preferredColumn = null;
+        history.resetBrowsing();
         render();
         return;
       }
-      if (str && !key.ctrl && !key.meta) insertText(str);
+      if (str && !key.ctrl && !key.meta && !String(key.sequence || "").startsWith("\x1b")) insertText(str);
     };
 
     process.stdout.write(ansi.cursorShow);
@@ -1100,11 +1248,6 @@ async function startChat(options) {
   printProjectStatus(projectDir, backend);
   printAapsMessage(chatHelp());
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-  });
   const history = new ComposerHistory();
 
   async function handleLine(rawLine) {
@@ -1176,6 +1319,11 @@ async function startChat(options) {
   }
 
   if (!process.stdin.isTTY || !process.stdout.isTTY || typeof process.stdin.setRawMode !== "function") {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    });
     rl.setPrompt("aaps> ");
     rl.prompt();
     for await (const rawLine of rl) {
@@ -1193,8 +1341,6 @@ async function startChat(options) {
     const done = await handleLine(rawLine);
     if (done) break;
   }
-
-  rl.close();
 }
 
 async function main() {
@@ -1248,12 +1394,14 @@ async function main() {
     });
     return;
   }
-  await maybeAutoUpdate({
+  const autoUpdateResult = await maybeAutoUpdate({
     argv: process.argv.slice(2),
     force: Boolean(options.autoUpdate),
     packageDir: path.resolve(__dirname, ".."),
     packageVersion: packageVersion(),
+    restart: true,
   });
+  if (autoUpdateResult.restarted) process.exit(autoUpdateResult.exitCode ?? 0);
   if (command === "prompt") {
     commandPrompt(positional.join(" "), options);
     return;

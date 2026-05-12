@@ -1,6 +1,7 @@
 const assert = require("assert");
 const childProcess = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const AAPS = require("../src/aaps");
 const AutoUpdate = require("../src/auto-update");
@@ -78,6 +79,69 @@ assert.strictEqual(AutoUpdate.isNewerVersion("0.4.29", "0.4.28"), true);
 assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["chat"]), true);
 assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["parse"]), false);
 assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["chat", "--no-auto-update"]), false);
+const autoUpdateHome = fs.mkdtempSync(path.join(os.tmpdir(), "aaps-auto-update-"));
+const autoUpdateSmoke = childProcess.spawnSync(
+  process.execPath,
+  [
+    "-e",
+    `
+const assert = require("assert");
+const os = require("os");
+const path = require("path");
+const AutoUpdate = require("./src/auto-update");
+(async () => {
+  const updateEvents = [];
+  const updateWrites = [];
+  const result = await AutoUpdate.maybeAutoUpdate({
+    argv: ["chat"],
+    packageDir: path.join(os.tmpdir(), "global", "node_modules", "@lazyingart", "aaps"),
+    packageVersion: "0.4.28",
+    latestVersion: async () => "0.4.99",
+    selectUpdateAction: async () => {
+      updateEvents.push("selector");
+      return "update";
+    },
+    installPackage: async (packageName) => {
+      updateEvents.push(\`install:\${packageName}\`);
+      return { ok: true, code: 0 };
+    },
+    restart: true,
+    restartProcess: async () => {
+      updateEvents.push("restart");
+      return { ok: true, exitCode: 0 };
+    },
+    stdout: {
+      isTTY: true,
+      write(value) {
+        updateWrites.push(String(value));
+      },
+    },
+    stderr: {
+      write(value) {
+        updateWrites.push(String(value));
+      },
+    },
+  });
+  assert.strictEqual(result.updated, true);
+  assert.strictEqual(result.restarted, true);
+  assert(updateEvents.includes("selector"), "auto-update selector was not called");
+  assert(updateEvents.includes("install:@lazyingart/aaps"), "auto-update install hook was not called");
+  assert(updateEvents.includes("restart"), "auto-update restart hook was not called");
+  assert(updateWrites.join("").includes("Restarting AAPS with the updated package"));
+})().catch((error) => {
+  console.error(error.stack || error.message);
+  process.exit(1);
+});
+`,
+  ],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: { ...process.env, AAPS_HOME: autoUpdateHome, CI: "" },
+  }
+);
+assert.strictEqual(autoUpdateSmoke.status, 0, autoUpdateSmoke.stderr || autoUpdateSmoke.stdout);
+fs.rmSync(autoUpdateHome, { recursive: true, force: true });
 const projectCheck = AAPS.validateProjectManifest(AAPS.sampleProject, AAPS.projectFileIndex(AAPS.sampleProject));
 assert.strictEqual(projectCheck.ok, true, JSON.stringify(projectCheck.diagnostics));
 assert(projectCheck.files.includes("blocks/qc_image.aaps"));
