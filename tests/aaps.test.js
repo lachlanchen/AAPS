@@ -425,10 +425,11 @@ fs.writeFileSync(
   "utf8"
 );
 const webappPort = "8897";
+const webappEnv = { ...process.env, AAPS_HOME: path.join(webappProject, ".aaps-home") };
 const webappStart = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "webapp", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--mock-codex", "--json"],
-  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
 );
 assert.strictEqual(webappStart.status, 0, webappStart.stderr || webappStart.stdout);
 const webappPayload = JSON.parse(webappStart.stdout);
@@ -440,26 +441,27 @@ assert.strictEqual(webappHealth.app, "aaps");
 const webappReuse = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "webapp", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
-  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
 );
 assert.strictEqual(webappReuse.status, 0, webappReuse.stderr || webappReuse.stdout);
 assert.strictEqual(JSON.parse(webappReuse.stdout).reused, true);
 const webappRestart = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "webapp", "restart", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--mock-codex", "--json"],
-  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
 );
 assert.strictEqual(webappRestart.status, 0, webappRestart.stderr || webappRestart.stdout);
 assert.strictEqual(JSON.parse(webappRestart.stdout).restarted, true);
 const webappChat = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--no-webapp"],
-  { cwd: path.join(__dirname, ".."), input: "/webapp 8897\n/webapp restart 8897\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n", encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), env: webappEnv, input: "/webapp 8897\n/webapp restart\n/webapp stop\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n", encoding: "utf8" }
 );
 assert.strictEqual(webappChat.status, 0, webappChat.stderr || webappChat.stdout);
 assert(webappChat.stdout.includes("AAPS v"), webappChat.stdout);
 assert(webappChat.stdout.includes(`AAPS Studio reused: http://127.0.0.1:${webappPort}`), webappChat.stdout);
 assert(webappChat.stdout.includes(`AAPS Studio restarted: http://127.0.0.1:${webappPort}`), webappChat.stdout);
+assert(webappChat.stdout.includes(`AAPS Studio stopped: http://127.0.0.1:${webappPort}`), webappChat.stdout);
 assert(webappChat.stdout.includes("workflows/main.aaps"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=aginti"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=codex"), webappChat.stdout);
@@ -468,10 +470,10 @@ assert(webappChat.stdout.includes("Ctrl-J inserts a newline"), webappChat.stdout
 const webappStop = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "webapp", "stop", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
-  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
 );
 assert.strictEqual(webappStop.status, 0, webappStop.stderr || webappStop.stdout);
-assert.strictEqual(JSON.parse(webappStop.stdout).stopped, true);
+assert.strictEqual(JSON.parse(webappStop.stdout).alreadyStopped, true);
 let stoppedHealthResponded = true;
 try {
   httpJson(`${webappPayload.url}/api/health`);
@@ -479,6 +481,27 @@ try {
   stoppedHealthResponded = false;
 }
 assert.strictEqual(stoppedHealthResponded, false, "AAPS Studio should not respond after webapp stop");
+const webappDisable = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "disable", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
+);
+assert.strictEqual(webappDisable.status, 0, webappDisable.stderr || webappDisable.stdout);
+assert.strictEqual(JSON.parse(webappDisable.stdout).autoStart, false);
+const webappDisabledChat = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort],
+  { cwd: path.join(__dirname, ".."), env: webappEnv, input: "/exit\n", encoding: "utf8" }
+);
+assert.strictEqual(webappDisabledChat.status, 0, webappDisabledChat.stderr || webappDisabledChat.stdout);
+assert(webappDisabledChat.stdout.includes("webapp auto-start disabled - use /webapp to start manually"), webappDisabledChat.stdout);
+const webappEnable = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "enable", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
+);
+assert.strictEqual(webappEnable.status, 0, webappEnable.stderr || webappEnable.stdout);
+assert.strictEqual(JSON.parse(webappEnable.stdout).autoStart, true);
 
 const blockRun = childProcess.spawnSync(
   "node",

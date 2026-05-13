@@ -1,8 +1,10 @@
 "use strict";
 
 const childProcess = require("child_process");
+const fs = require("fs");
 const http = require("http");
 const net = require("net");
+const os = require("os");
 const path = require("path");
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -20,6 +22,35 @@ function normalizePort(port) {
 
 function webUrl(host, port) {
   return `http://${host}:${port}`;
+}
+
+function aapsHome() {
+  return path.resolve(process.env.AAPS_HOME || path.join(os.homedir(), ".aaps"));
+}
+
+function webPreferencePath() {
+  return path.join(aapsHome(), "webapp.json");
+}
+
+function readWebAppPreference() {
+  try {
+    const data = JSON.parse(fs.readFileSync(webPreferencePath(), "utf8"));
+    return { autoStart: data.autoStart !== false, path: webPreferencePath() };
+  } catch (_error) {
+    return { autoStart: true, path: webPreferencePath() };
+  }
+}
+
+function writeWebAppPreference({ autoStart = true } = {}) {
+  const file = webPreferencePath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({ autoStart: Boolean(autoStart), updatedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
+  return readWebAppPreference();
+}
+
+function webAutoStartDisabled() {
+  if (process.env.AAPS_NO_WEB_AUTO_START === "1" || process.env.AAPS_SKIP_WEB_AUTO_START === "1") return true;
+  return readWebAppPreference().autoStart === false;
 }
 
 function fetchHealthDetails(host, port, timeoutMs = 450) {
@@ -169,7 +200,7 @@ async function ensureAapsWebApp({
   restart = false,
   respectAutoStartDisable = true,
 } = {}) {
-  if (respectAutoStartDisable && (process.env.AAPS_NO_WEB_AUTO_START === "1" || process.env.AAPS_SKIP_WEB_AUTO_START === "1")) {
+  if (respectAutoStartDisable && webAutoStartDisabled()) {
     return { ok: false, disabled: true, url: "" };
   }
 
@@ -211,5 +242,8 @@ module.exports = {
   fetchHealth,
   fetchHealthDetails,
   findReusableOrFreeWebPort,
+  readWebAppPreference,
   stopAapsWebApp,
+  webAutoStartDisabled,
+  writeWebAppPreference,
 };

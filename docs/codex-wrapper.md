@@ -18,12 +18,14 @@ Detached/local startup:
 
 ```bash
 aaps webapp --project .
+aaps webapp disable
+aaps webapp enable
 aaps webapp stop --project .
 aaps webapp restart --project .
 aaps chat --project .
 ```
 
-`aaps webapp` starts or reuses the local Studio process, trying port `8797` first and then later ports if needed. `aaps webapp stop` stops the selected local Studio process; `aaps webapp restart` stops and relaunches it. `aaps chat` shows the active Studio URL below the CLI header and supports an AAPS-focused shell: Ctrl-J multiline prompts, Up/Down history, `/files`, `/status`, `/webapp start|stop|restart|reuse`, `/parse`, `/compile`, `/check`, `/run`, `/update`, and `/backend codex|aginti|print` against the same project.
+`aaps webapp` starts or reuses the local Studio process, trying port `8797` first and then later ports if needed. `aaps webapp disable` persistently disables automatic Studio startup; `aaps webapp enable` restores it. `aaps webapp stop` stops the selected local Studio process; `aaps webapp restart` stops and relaunches it. `aaps chat` shows the active Studio URL below the CLI header and supports an AAPS-focused shell: Ctrl-J multiline prompts, Up/Down history, `/files`, `/status`, `/webapp start|stop|restart|reuse|enable|disable|status`, `/parse`, `/compile`, `/check`, `/run`, `/update`, and `/backend codex|aginti|print` against the same project.
 
 ## Environment
 

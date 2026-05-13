@@ -8,7 +8,13 @@ const path = require("path");
 const readline = require("readline");
 const AAPS = require("../src/aaps");
 const { maybeAutoUpdate } = require("../src/auto-update");
-const { DEFAULT_PORT, ensureAapsWebApp, stopAapsWebApp } = require("../src/web-autostart");
+const {
+  DEFAULT_PORT,
+  ensureAapsWebApp,
+  readWebAppPreference,
+  stopAapsWebApp,
+  writeWebAppPreference,
+} = require("../src/web-autostart");
 
 const SKIP_DIRS = new Set([".git", ".aaps-work", "node_modules", "vendor", "runtime", "__pycache__"]);
 const useColor = Boolean(process.stdin.isTTY && process.stdout.isTTY && process.env.AAPS_NO_COLOR !== "1");
@@ -58,7 +64,7 @@ function usage() {
     "  aaps \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
     "  aaps chat [--project .] [--backend codex|aginti|print]",
-    "  aaps webapp [start|stop|restart|reuse] [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
+    "  aaps webapp [start|stop|restart|reuse|enable|disable|status] [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
     "  aaps studio [--project .] [--host 127.0.0.1] [--port 8797] [--mock-codex]",
     "  aaps update",
     "  aaps --version",
@@ -981,7 +987,7 @@ function commandStudio(options) {
   process.exit(result.status || 0);
 }
 
-const WEBAPP_ACTIONS = new Set(["start", "stop", "restart", "reuse"]);
+const WEBAPP_ACTIONS = new Set(["start", "stop", "restart", "reuse", "enable", "disable", "status"]);
 
 function parseWebappAction(values = [], defaultPort = DEFAULT_PORT) {
   let action = "start";
@@ -1001,6 +1007,36 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
   const host = String(options.host || "127.0.0.1");
   const packageDir = path.resolve(__dirname, "..");
   const normalizedAction = WEBAPP_ACTIONS.has(String(action).toLowerCase()) ? String(action).toLowerCase() : "start";
+  if (normalizedAction === "enable" || normalizedAction === "disable" || normalizedAction === "status") {
+    const preference =
+      normalizedAction === "status"
+        ? readWebAppPreference()
+        : writeWebAppPreference({ autoStart: normalizedAction === "enable" });
+    const payload = {
+      ok: true,
+      action: normalizedAction,
+      autoStart: Boolean(preference.autoStart),
+      preferencePath: preference.path || "",
+      url: "",
+      host,
+      port: Number(options.port || DEFAULT_PORT),
+      started: false,
+      reused: false,
+      restarted: false,
+      stopped: false,
+      alreadyStopped: false,
+      disabled: preference.autoStart === false,
+      error: "",
+    };
+    if (options.silent) return payload;
+    if (options.json) print(payload, true);
+    else {
+      const state = payload.autoStart ? "enabled" : "disabled";
+      console.log(`AAPS Studio auto-start ${state}.`);
+      if (!payload.autoStart) console.log("Use `aaps webapp stop` or `/webapp stop` to stop a currently running Studio.");
+    }
+    return payload;
+  }
   const webOptions = {
     packageDir,
     cwd: projectDir,
@@ -1053,7 +1089,7 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
 function chatHelp() {
   return [
     "AAPS chat commands:",
-    "  /webapp [port|start|stop|restart|reuse]  Control AAPS Studio and print the URL.",
+    "  /webapp [port|start|stop|restart|reuse|enable|disable|status]  Control AAPS Studio and auto-start.",
     "  /status                 Show project manifest, active file, and backend.",
     "  /files                  List project .aaps files.",
     "  /validate [file]        Validate the project or selected file.",
@@ -1448,6 +1484,7 @@ async function startChat(options) {
   printAapsMessage(chatHelp());
 
   const history = new ComposerHistory();
+  let activeWebPort = webResult.ok && webResult.port ? webResult.port : options.port || DEFAULT_PORT;
 
   async function handleLine(rawLine) {
     const line = String(rawLine || "").trim();
@@ -1462,12 +1499,13 @@ async function startChat(options) {
     }
     if (line.startsWith("/webapp") || line.startsWith("/web ")) {
       const words = splitCliWords(line);
-      const parsedWebapp = parseWebappAction(words.slice(1), options.port || DEFAULT_PORT);
+      const parsedWebapp = parseWebappAction(words.slice(1), activeWebPort);
       if (!parsedWebapp.valid) {
-        printAapsMessage("Usage: /webapp [port|start|stop|restart|reuse]");
+        printAapsMessage("Usage: /webapp [port|start|stop|restart|reuse|enable|disable|status]");
         return false;
       }
-      await commandWebapp({ ...options, project: projectDir, port: parsedWebapp.port, json: false }, { manual: true, action: parsedWebapp.action });
+      const payload = await commandWebapp({ ...options, project: projectDir, port: parsedWebapp.port, json: false }, { manual: true, action: parsedWebapp.action });
+      if (payload.port) activeWebPort = payload.port;
       return false;
     }
     if (line === "/codex" || line === "/aginti" || line === "/print" || line.startsWith("/backend")) {
@@ -1628,7 +1666,7 @@ async function main() {
   if (command === "webapp" || command === "web") {
     const parsedWebapp = parseWebappAction(positional, options.port || DEFAULT_PORT);
     if (!parsedWebapp.valid) {
-      console.error("Usage: aaps webapp [start|stop|restart|reuse] [--port 8797] [--host 127.0.0.1]");
+      console.error("Usage: aaps webapp [start|stop|restart|reuse|enable|disable|status] [--port 8797] [--host 127.0.0.1]");
       process.exit(1);
     }
     const payload = await commandWebapp({ ...options, port: parsedWebapp.port }, { manual: true, action: parsedWebapp.action });
