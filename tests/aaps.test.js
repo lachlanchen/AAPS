@@ -444,20 +444,41 @@ const webappReuse = childProcess.spawnSync(
 );
 assert.strictEqual(webappReuse.status, 0, webappReuse.stderr || webappReuse.stdout);
 assert.strictEqual(JSON.parse(webappReuse.stdout).reused, true);
+const webappRestart = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "restart", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--mock-codex", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(webappRestart.status, 0, webappRestart.stderr || webappRestart.stdout);
+assert.strictEqual(JSON.parse(webappRestart.stdout).restarted, true);
 const webappChat = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--no-webapp"],
-  { cwd: path.join(__dirname, ".."), input: "/webapp 8897\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n", encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), input: "/webapp 8897\n/webapp restart 8897\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n", encoding: "utf8" }
 );
 assert.strictEqual(webappChat.status, 0, webappChat.stderr || webappChat.stdout);
 assert(webappChat.stdout.includes("AAPS v"), webappChat.stdout);
 assert(webappChat.stdout.includes(`AAPS Studio reused: http://127.0.0.1:${webappPort}`), webappChat.stdout);
+assert(webappChat.stdout.includes(`AAPS Studio restarted: http://127.0.0.1:${webappPort}`), webappChat.stdout);
 assert(webappChat.stdout.includes("workflows/main.aaps"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=aginti"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=codex"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=print"), webappChat.stdout);
 assert(webappChat.stdout.includes("Ctrl-J inserts a newline"), webappChat.stdout);
-childProcess.spawnSync("pkill", ["-f", `aaps_codex_server.py --host 127.0.0.1 --port ${webappPort}`]);
+const webappStop = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "stop", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(webappStop.status, 0, webappStop.stderr || webappStop.stdout);
+assert.strictEqual(JSON.parse(webappStop.stdout).stopped, true);
+let stoppedHealthResponded = true;
+try {
+  httpJson(`${webappPayload.url}/api/health`);
+} catch (_error) {
+  stoppedHealthResponded = false;
+}
+assert.strictEqual(stoppedHealthResponded, false, "AAPS Studio should not respond after webapp stop");
 
 const blockRun = childProcess.spawnSync(
   "node",

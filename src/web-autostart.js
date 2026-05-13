@@ -22,7 +22,7 @@ function webUrl(host, port) {
   return `http://${host}:${port}`;
 }
 
-function fetchHealth(host, port, timeoutMs = 450) {
+function fetchHealthDetails(host, port, timeoutMs = 450) {
   return new Promise((resolve) => {
     const req = http.get(`${webUrl(host, port)}/api/health`, { timeout: timeoutMs }, (res) => {
       let body = "";
@@ -33,18 +33,26 @@ function fetchHealth(host, port, timeoutMs = 450) {
       res.on("end", () => {
         try {
           const json = JSON.parse(body || "{}");
-          resolve(Boolean(res.statusCode === 200 && json.ok && (json.app === "aaps" || json.settings || json.runtime)));
+          resolve({
+            ok: Boolean(res.statusCode === 200 && json.ok && (json.app === "aaps" || json.settings || json.runtime)),
+            statusCode: res.statusCode,
+            ...json,
+          });
         } catch (_error) {
-          resolve(false);
+          resolve({ ok: false });
         }
       });
     });
     req.on("timeout", () => {
       req.destroy();
-      resolve(false);
+      resolve({ ok: false });
     });
-    req.on("error", () => resolve(false));
+    req.on("error", () => resolve({ ok: false }));
   });
+}
+
+async function fetchHealth(host, port, timeoutMs = 450) {
+  return (await fetchHealthDetails(host, port, timeoutMs)).ok;
 }
 
 function canListen(host, port) {
@@ -66,14 +74,84 @@ async function waitForHealth(host, port, timeoutMs = 7000) {
   return false;
 }
 
-async function findReusableOrFreeWebPort({ host = DEFAULT_HOST, preferredPort = DEFAULT_PORT, attempts = MAX_PORT_ATTEMPTS } = {}) {
+function listenerPids(port) {
+  return new Promise((resolve) => {
+    childProcess.execFile("lsof", [`-tiTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" }, (error, stdout) => {
+      if (error) {
+        resolve([]);
+        return;
+      }
+      resolve(
+        String(stdout || "")
+          .split(/\s+/)
+          .map((value) => Number(value))
+          .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+      );
+    });
+  });
+}
+
+async function waitForPortRelease(host, port, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await fetchHealth(host, port, 220)) && (await canListen(host, port))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return false;
+}
+
+async function stopAapsWebApp({ host = DEFAULT_HOST, preferredPort = DEFAULT_PORT } = {}) {
+  const normalizedHost = normalizeHost(host);
+  const port = normalizePort(preferredPort);
+  const url = webUrl(normalizedHost, port);
+  const health = await fetchHealthDetails(normalizedHost, port);
+
+  if (!health.ok) {
+    if (await canListen(normalizedHost, port)) return { ok: true, stopped: false, alreadyStopped: true, host: normalizedHost, port, url };
+    return { ok: false, stopped: false, host: normalizedHost, port, url, error: `No AAPS Studio health endpoint responded on ${url}.` };
+  }
+
+  const pids = new Set();
+  if (Number.isInteger(Number(health.pid)) && Number(health.pid) > 0) pids.add(Number(health.pid));
+  for (const pid of await listenerPids(port)) pids.add(pid);
+  if (pids.size === 0) return { ok: false, stopped: false, host: normalizedHost, port, url, error: `Could not identify AAPS Studio process on ${url}.` };
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (_error) {
+      // Already stopped or not owned by this user.
+    }
+  }
+  if (await waitForPortRelease(normalizedHost, port, 3500)) return { ok: true, stopped: true, host: normalizedHost, port, url, pids: [...pids], forced: false };
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch (_error) {
+      // Ignore.
+    }
+  }
+  const released = await waitForPortRelease(normalizedHost, port, 2000);
+  return released
+    ? { ok: true, stopped: true, host: normalizedHost, port, url, pids: [...pids], forced: true }
+    : { ok: false, stopped: false, host: normalizedHost, port, url, pids: [...pids], error: `AAPS Studio on ${url} did not stop.` };
+}
+
+async function findReusableOrFreeWebPort({ host = DEFAULT_HOST, preferredPort = DEFAULT_PORT, attempts = MAX_PORT_ATTEMPTS, restart = false } = {}) {
   const normalizedHost = normalizeHost(host);
   const startPort = normalizePort(preferredPort);
   for (let offset = 0; offset < attempts; offset += 1) {
     const port = startPort + offset;
     if (port >= 65536) break;
-    if (await fetchHealth(normalizedHost, port)) {
-      return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: true, available: false };
+    const health = await fetchHealthDetails(normalizedHost, port);
+    if (health.ok) {
+      if (restart) {
+        const stopped = await stopAapsWebApp({ host: normalizedHost, preferredPort: port });
+        if (!stopped.ok) return { port, host: normalizedHost, url: "", reused: false, available: false, stopped, error: stopped.error };
+        return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: false, available: true, restarted: true, stopped };
+      }
+      return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: true, available: false, health };
     }
     if (await canListen(normalizedHost, port)) {
       return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: false, available: true };
@@ -88,16 +166,18 @@ async function ensureAapsWebApp({
   host = DEFAULT_HOST,
   preferredPort = DEFAULT_PORT,
   mockCodex = false,
+  restart = false,
   respectAutoStartDisable = true,
 } = {}) {
   if (respectAutoStartDisable && (process.env.AAPS_NO_WEB_AUTO_START === "1" || process.env.AAPS_SKIP_WEB_AUTO_START === "1")) {
     return { ok: false, disabled: true, url: "" };
   }
 
-  const candidate = await findReusableOrFreeWebPort({ host, preferredPort });
+  const candidate = await findReusableOrFreeWebPort({ host, preferredPort, restart });
   if (!candidate.port) {
-    return { ok: false, error: `No available AAPS Studio port from ${normalizePort(preferredPort)}.`, url: "" };
+    return { ok: false, error: candidate.error || `No available AAPS Studio port from ${normalizePort(preferredPort)}.`, url: "" };
   }
+  if (candidate.error) return { ok: false, error: candidate.error, url: "" };
   if (candidate.reused) {
     return { ok: true, reused: true, started: false, ...candidate };
   }
@@ -120,7 +200,7 @@ async function ensureAapsWebApp({
 
   const healthy = await waitForHealth(candidate.host, candidate.port);
   return healthy
-    ? { ok: true, reused: false, started: true, pid: child.pid, ...candidate }
+    ? { ok: true, reused: false, started: true, restarted: Boolean(candidate.restarted), stopped: candidate.stopped, pid: child.pid, ...candidate }
     : { ok: false, error: `Started AAPS Studio process ${child.pid}, but ${candidate.url}/api/health did not become ready.`, url: "" };
 }
 
@@ -129,5 +209,7 @@ module.exports = {
   DEFAULT_PORT,
   ensureAapsWebApp,
   fetchHealth,
+  fetchHealthDetails,
   findReusableOrFreeWebPort,
+  stopAapsWebApp,
 };

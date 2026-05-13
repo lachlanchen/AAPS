@@ -150,6 +150,8 @@ npm install:
 ```bash
 npm install -g @lazyingart/aaps
 aaps webapp
+aaps webapp stop
+aaps webapp restart
 aaps chat
 aaps studio --host 127.0.0.1 --port 8797
 aaps parse examples/hello.aaps --project .
@@ -161,13 +163,15 @@ CLI and Studio entry points:
 
 ```bash
 aaps webapp --project .                 # detached Studio, tries 8797 then 8798, 8799...
+aaps webapp stop --project .            # stop the local Studio on the selected port
+aaps webapp restart --project .         # stop and relaunch Studio for the same project
 aaps chat --project .                   # AAPS-focused chat CLI with history, Ctrl-J multiline, /webapp, /parse, /compile, /run
 aaps                                    # same as aaps chat
 aaps studio --project .                 # foreground Studio server
 aaps update                             # update a global npm install when a newer release exists
 ```
 
-`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/compile`, `/check`, `/run`, `/webapp`, and `/backend codex|aginti|print`. In a real terminal it supports Ctrl-J for multiline prompts, ignores Ctrl-J on an empty prompt, and uses Up/Down for prompt history or multi-line cursor movement.
+`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/compile`, `/check`, `/run`, `/webapp start|stop|restart|reuse`, and `/backend codex|aginti|print`. In a real terminal it supports Ctrl-J for multiline prompts, ignores Ctrl-J on an empty prompt, and uses Up/Down for prompt history or multi-line cursor movement.
 
 Direct prompt handoff:
 

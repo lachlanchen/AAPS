@@ -3563,8 +3563,10 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 {
                     "ok": True,
                     "app": "aaps",
+                    "pid": os.getpid(),
                     "host": getattr(self.server, "server_name", ""),
                     "port": getattr(self.server, "server_port", None),
+                    "package_root": str(ROOT),
                     "codex": bool(find_command("codex", "AAPS_CODEX_BIN")),
                     "agintiflow_submodule": (ROOT / "vendor" / "AgInTiFlow").exists(),
                     "runtime": str(RUNTIME_DIR),
