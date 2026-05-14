@@ -88,6 +88,40 @@ const plannedRoundTrip = AAPS.parseAAPS(AAPS.serializeAAPS(programPlan.ir));
 assert.strictEqual(plannedRoundTrip.diagnostics.length, 0, JSON.stringify(plannedRoundTrip.diagnostics));
 assert(plannedRoundTrip.pipeline.tasks.length >= 5, "program chat planning should update the program, not only append a block");
 
+const novelPlan = AAPS.planProgramFromPrompt(
+  AAPS.parseAAPS('pipeline "Novel Studio Smoke" {\n  domain "writing"\n}\n'),
+  "Write a novel with a careful step-by-step pipeline: story brief, outline, character bible, chapter draft, continuity review, and manuscript export."
+);
+assert.strictEqual(novelPlan.changed, true);
+assert(novelPlan.blockIds.includes("novel_studio_smoke_story_brief"), JSON.stringify(novelPlan));
+assert(novelPlan.blockIds.includes("novel_studio_smoke_character_bible"), JSON.stringify(novelPlan));
+assert(novelPlan.taskIds.includes("novel_studio_smoke_draft_selected_chapter"), JSON.stringify(novelPlan));
+assert(novelPlan.ir.pipeline.tasks.some((task) => task.calls.some((call) => call.skill === "novel_studio_smoke_draft_chapter")));
+const novelRefined = AAPS.planProgramFromPrompt(novelPlan.ir, "Add a more meticulous continuity review before revising chapter one.");
+assert.strictEqual(novelRefined.changed, true);
+assert.strictEqual(novelRefined.ir.pipeline.blocks.length, novelPlan.ir.pipeline.blocks.length, "same-domain refinements should be incremental, not duplicate the whole writing pipeline");
+assert(novelRefined.ir.pipeline.notes.some((note) => note.includes("Latest program refinement request")));
+const novelRoundTrip = AAPS.parseAAPS(AAPS.serializeAAPS(novelRefined.ir));
+assert.strictEqual(novelRoundTrip.diagnostics.length, 0, JSON.stringify(novelRoundTrip.diagnostics));
+assert(novelRoundTrip.pipeline.notes.some((note) => note.includes("Latest program refinement request")));
+
+const crossDomainPlan = AAPS.planProgramFromPrompt(
+  AAPS.parseAAPS('pipeline "Biology Existing" {\n  domain "biology"\n  block app81_segment_images {\n    prompt "segment microscopy images"\n  }\n}\n'),
+  "Now write a fantasy novel pipeline."
+);
+assert.strictEqual(crossDomainPlan.changed, false);
+assert.strictEqual(crossDomainPlan.needsConfirmation, true);
+
+const blockPlan = AAPS.planBlockFromPrompt(
+  AAPS.parseAAPS('pipeline "Block Chat Smoke" {\n  domain "biology"\n}\n'),
+  "Create a reusable App81 segmentation block that can run a preview and produce masks overlays metrics and a report."
+);
+assert.strictEqual(blockPlan.changed, true);
+assert.strictEqual(blockPlan.blockId, "app81_segment_images");
+assert(blockPlan.ir.pipeline.blocks[0].outputs.some((output) => output.name === "masks"));
+const blockRoundTrip = AAPS.parseAAPS(AAPS.serializeAAPS(blockPlan.ir));
+assert.strictEqual(blockRoundTrip.diagnostics.length, 0, JSON.stringify(blockRoundTrip.diagnostics));
+
 assert.strictEqual(AAPS.PROJECT_VERSION, "aaps_project/0.1");
 assert.strictEqual(AutoUpdate.isNewerVersion("0.4.29", "0.4.28"), true);
 assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["chat"]), true);

@@ -902,6 +902,7 @@
     (pipeline.validations || []).forEach((check) => lines.push(`  validate ${quote(check)}`));
     (pipeline.recovery || []).forEach((step) => lines.push(`  recover ${quote(step)}`));
     (pipeline.reviews || []).forEach((review) => lines.push(`  review ${quote(review)}`));
+    (pipeline.notes || []).forEach((note) => lines.push(`  note ${quote(note)}`));
     [...(pipeline.agents || []), ...(pipeline.blocks || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach((node) => {
       lines.push("");
       lines.push(...serializeNode(node, 1));
@@ -1704,7 +1705,7 @@
     if (/^(explain|summarize|summarise|show|what is|what are|list)\b/.test(text) && !/\b(create|add|edit|update|optimi[sz]e|build|implement|finish|analy[sz]e|pipeline|workflow|program)\b/.test(text)) {
       return false;
     }
-    return /\b(program|pipeline|workflow|experiment|analysis|analy[sz]e|create|build|design|implement|finish|complete|update|edit|optimi[sz]e|refine|loop|batch|segmentation|segment|quantification|quantify|visuali[sz]e|report|app80|app65|app81|deo|microscopy|biology)\b/.test(text);
+    return /\b(program|pipeline|workflow|experiment|analysis|analy[sz]e|create|build|design|implement|finish|complete|update|edit|optimi[sz]e|refine|loop|batch|segmentation|segment|quantification|quantify|visuali[sz]e|report|app80|app65|app81|deo|microscopy|biology|write|writing|novel|book|story|chapter|manuscript|outline|character|scene|draft|revise|revision|latex|paper)\b/.test(text);
   }
 
   function promptStudy(message) {
@@ -1727,6 +1728,24 @@
     if (study === "app65") return "data/App65 DEO+Alginate";
     if (study === "app81") return "data/DEO App81 P8";
     return "data";
+  }
+
+  function confirmationIntent(message) {
+    return /\b(new\s+(aaps|workflow|program|project|pipeline)|override|replace|switch\s+domain|convert\s+this|start\s+over)\b/i.test(String(message || ""));
+  }
+
+  function existingDomain(pipeline) {
+    const domain = String(pipeline.domain || "").trim().toLowerCase();
+    if (domain && !["general", "software", "appdev"].includes(domain)) return domain;
+    const text = [
+      pipeline.goal || "",
+      (pipeline.tags || []).join(" "),
+      ...(pipeline.blocks || []).map((node) => `${node.id} ${node.title || ""} ${node.prompt || ""}`),
+      ...(pipeline.tasks || []).map((node) => `${node.id} ${node.title || ""} ${node.prompt || ""}`),
+    ].join(" ").toLowerCase();
+    if (/\b(app80|app65|app81|deo|microscopy|segmentation|quantification|cell|organoid|biology)\b/.test(text)) return "biology";
+    if (/\b(novel|book|story|chapter|manuscript|outline|character|scene|draft|revision|writing)\b/.test(text)) return "writing";
+    return "";
   }
 
   function ensureRootNode(collection, node) {
@@ -1897,6 +1916,184 @@
     });
   }
 
+  function writingProgramBlock(kind, prefix, message) {
+    const writerAgent = "dedicated_writing_agent";
+    const requirements = {
+      tools: ["llm_writer", "markdown"],
+      models: [],
+      agents: [writerAgent],
+      commands: [],
+      files: [],
+      pythonPackages: [],
+      nodePackages: [],
+    };
+    const environment = { python: "", requirements: [], commands: [], nodePackages: [], files: [], env: {}, setup: [] };
+    const common = {
+      requirements,
+      environment,
+      compile: {
+        agent: writerAgent,
+        prompt: "Use only the story/writing context and the block contract. Do not include unrelated agent, build, or system-management context. Produce polished manuscript artifacts plus concise revision notes.",
+        onMissing: "prompt",
+      },
+      repair: true,
+    };
+    if (kind === "brief") {
+      return createNode("block", `${prefix}_story_brief`, {
+        ...common,
+        title: "Story brief and source context",
+        inputs: [{ name: "user_intent", type: "text", value: message }],
+        outputs: [
+          { name: "story_brief", type: "markdown", value: `drafts/${prefix}/story_brief.md`, validation: "nonempty" },
+          { name: "context_pack", type: "json", value: `drafts/${prefix}/context_pack.json`, validation: "json" },
+        ],
+        artifacts: [
+          { name: "story_brief", type: "markdown", value: `drafts/${prefix}/story_brief.md`, validation: "nonempty" },
+          { name: "context_pack", type: "json", value: `drafts/${prefix}/context_pack.json`, validation: "json" },
+        ],
+        prompt: "Clarify premise, target reader, genre, POV, tone, constraints, known facts, and open questions. Preserve user-provided story clues without inventing irreversible canon unless marked as a proposal.",
+        verify: ["The brief separates confirmed canon, proposed ideas, open questions, and style constraints."],
+        reviews: ["Human author approves or edits the story brief before drafting."],
+      });
+    }
+    if (kind === "outline") {
+      return createNode("block", `${prefix}_outline_arc`, {
+        ...common,
+        title: "Outline plot, arcs, chapters, and scenes",
+        inputs: [{ name: "story_brief", type: "markdown", value: `drafts/${prefix}/story_brief.md`, validation: "nonempty" }],
+        outputs: [
+          { name: "outline", type: "markdown", value: `drafts/${prefix}/outline.md`, validation: "nonempty" },
+          { name: "scene_table", type: "csv", value: `drafts/${prefix}/scene_table.csv`, validation: "nonempty" },
+        ],
+        artifacts: [
+          { name: "outline", type: "markdown", value: `drafts/${prefix}/outline.md`, validation: "nonempty" },
+          { name: "scene_table", type: "table", value: `drafts/${prefix}/scene_table.csv`, validation: "nonempty" },
+        ],
+        prompt: "Create a stepwise novel outline: premise, act structure, chapter list, scene beats, emotional turns, mysteries/questions, and reader promises.",
+        verify: ["Every chapter has purpose, conflict, progression, and dependency on previous events."],
+      });
+    }
+    if (kind === "bible") {
+      return createNode("block", `${prefix}_character_bible`, {
+        ...common,
+        title: "Character bible and world rules",
+        inputs: [{ name: "story_brief", type: "markdown", value: `drafts/${prefix}/story_brief.md`, validation: "nonempty" }],
+        outputs: [
+          { name: "character_bible", type: "markdown", value: `drafts/${prefix}/character_bible.md`, validation: "nonempty" },
+          { name: "world_rules", type: "markdown", value: `drafts/${prefix}/world_rules.md`, validation: "nonempty" },
+        ],
+        artifacts: [
+          { name: "character_bible", type: "markdown", value: `drafts/${prefix}/character_bible.md`, validation: "nonempty" },
+          { name: "world_rules", type: "markdown", value: `drafts/${prefix}/world_rules.md`, validation: "nonempty" },
+        ],
+        prompt: "Build reusable continuity context: character goals, wounds, voices, relationships, secrets, timelines, locations, and world rules.",
+        verify: ["Character motivation, voice, and continuity constraints are explicit enough for downstream chapter drafting."],
+      });
+    }
+    if (kind === "draft") {
+      return createNode("block", `${prefix}_draft_chapter`, {
+        ...common,
+        title: "Draft selected chapter or scene",
+        inputs: [
+          { name: "outline", type: "markdown", value: `drafts/${prefix}/outline.md`, validation: "nonempty" },
+          { name: "character_bible", type: "markdown", value: `drafts/${prefix}/character_bible.md`, validation: "nonempty" },
+          { name: "chapter_request", type: "text", value: "selected chapter or scene" },
+        ],
+        outputs: [
+          { name: "chapter_draft", type: "markdown", value: `drafts/${prefix}/chapters/chapter_001.md`, validation: "nonempty" },
+          { name: "draft_notes", type: "markdown", value: `drafts/${prefix}/chapters/chapter_001_notes.md`, validation: "nonempty" },
+        ],
+        artifacts: [
+          { name: "chapter_draft", type: "markdown", value: `drafts/${prefix}/chapters/chapter_001.md`, validation: "nonempty" },
+          { name: "draft_notes", type: "markdown", value: `drafts/${prefix}/chapters/chapter_001_notes.md`, validation: "nonempty" },
+        ],
+        prompt: "Write only the selected chapter/scene using the approved story context. Optimize prose, pacing, voice, image, and emotional movement. Do not re-outline the entire novel unless requested.",
+        verify: ["Draft follows the selected scene goal and preserves established canon."],
+        reviews: ["Human author can request targeted rewrite before continuity review."],
+      });
+    }
+    if (kind === "continuity") {
+      return createNode("block", `${prefix}_continuity_review`, {
+        ...common,
+        title: "Continuity, style, and pacing review",
+        inputs: [
+          { name: "chapter_draft", type: "markdown", value: `drafts/${prefix}/chapters/chapter_001.md`, validation: "nonempty" },
+          { name: "character_bible", type: "markdown", value: `drafts/${prefix}/character_bible.md`, validation: "nonempty" },
+        ],
+        outputs: [
+          { name: "review_notes", type: "markdown", value: `drafts/${prefix}/reviews/chapter_001_review.md`, validation: "nonempty" },
+          { name: "revision_plan", type: "markdown", value: `drafts/${prefix}/reviews/chapter_001_revision_plan.md`, validation: "nonempty" },
+        ],
+        artifacts: [
+          { name: "review_notes", type: "markdown", value: `drafts/${prefix}/reviews/chapter_001_review.md`, validation: "nonempty" },
+          { name: "revision_plan", type: "markdown", value: `drafts/${prefix}/reviews/chapter_001_revision_plan.md`, validation: "nonempty" },
+        ],
+        prompt: "Review the selected draft for continuity, character voice, causality, pacing, sensory texture, scene objective, and line-level prose. Return actionable notes, not a full rewrite unless requested.",
+        verify: ["Every critique points to a concrete passage, risk, or revision action."],
+      });
+    }
+    return createNode("block", `${prefix}_export_manuscript`, {
+      ...common,
+      title: "Assemble and export manuscript",
+      inputs: [{ name: "chapter_drafts", type: "folder", value: `drafts/${prefix}/chapters`, validation: "nonempty" }],
+      outputs: [
+        { name: "manuscript_md", type: "markdown", value: `manuscripts/${prefix}/manuscript.md`, validation: "nonempty" },
+        { name: "manuscript_report", type: "markdown", value: `manuscripts/${prefix}/report.md`, validation: "nonempty" },
+      ],
+      artifacts: [
+        { name: "manuscript_md", type: "markdown", value: `manuscripts/${prefix}/manuscript.md`, validation: "nonempty" },
+        { name: "manuscript_report", type: "markdown", value: `manuscripts/${prefix}/report.md`, validation: "nonempty" },
+      ],
+      prompt: "Assemble approved chapters into a manuscript artifact, preserve front matter placeholders, and report missing chapters or unresolved continuity blockers.",
+      verify: ["Export report lists included chapters, missing chapters, warnings, and next revision targets."],
+    });
+  }
+
+  function writingProgramTask(kind, prefix, blockIds, message) {
+    if (kind === "brief") {
+      return createNode("task", `${prefix}_capture_story_brief`, {
+        title: "Capture and approve story brief",
+        calls: [{ skill: blockIds.brief }],
+        prompt: `Convert the user's writing request into an approved, reusable story context. User request: ${message}`,
+        verify: ["Story brief records confirmed canon, proposals, open questions, and target style."],
+      });
+    }
+    if (kind === "outline") {
+      return createNode("task", `${prefix}_outline_novel`, {
+        title: "Outline the novel before drafting",
+        after: [`${prefix}_capture_story_brief`],
+        calls: [{ skill: blockIds.outline }, { skill: blockIds.bible }],
+        prompt: "Create plot outline, character bible, and world rules as editable reusable artifacts.",
+        verify: ["Outline and character bible are approved or marked with open questions before chapter drafting."],
+      });
+    }
+    if (kind === "draft") {
+      return createNode("task", `${prefix}_draft_selected_chapter`, {
+        title: "Draft one selected chapter at a time",
+        after: [`${prefix}_outline_novel`],
+        calls: [{ skill: blockIds.draft }],
+        prompt: "Draft the next selected chapter or scene. Keep the change bounded so later chat refinements are incremental.",
+        verify: ["Only the selected chapter artifact changes unless the user asks for a broader rewrite."],
+      });
+    }
+    if (kind === "review") {
+      return createNode("task", `${prefix}_review_and_refine`, {
+        title: "Review continuity and refine draft",
+        after: [`${prefix}_draft_selected_chapter`],
+        calls: [{ skill: blockIds.continuity }],
+        prompt: "Review the selected draft and produce a revision plan before rewriting.",
+        verify: ["Review notes are specific, actionable, and traceable to the selected draft."],
+      });
+    }
+    return createNode("task", `${prefix}_assemble_manuscript`, {
+      title: "Assemble manuscript when chapters are accepted",
+      after: [`${prefix}_review_and_refine`],
+      calls: [{ skill: blockIds.export }],
+      prompt: "Export only accepted chapters and report missing or unresolved sections.",
+      verify: ["Manuscript export and report are visible as Studio artifacts."],
+    });
+  }
+
   function programTask(kind, prefix, blockIds, message) {
     if (kind === "inspect") {
       return createNode("task", `${prefix}_inspect_data`, {
@@ -1962,46 +2159,141 @@
     next.pipeline = pipeline;
     const study = promptStudy(message);
     const domain = promptDomain(message, pipeline);
+    const currentDomain = existingDomain(pipeline);
+    if (currentDomain && domain && currentDomain !== domain && !confirmationIntent(message)) {
+      return {
+        changed: false,
+        needsConfirmation: true,
+        ir: next,
+        summary: `This request looks like a ${domain} workflow, but the current AAPS looks like ${currentDomain}. Ask to create a new AAPS/workflow or explicitly say override/switch before I rewrite the program.`,
+      };
+    }
     const seed = study || slug(pipeline.name || message, "program").split("_").slice(0, 3).join("_") || "program";
     const prefix = slug(seed, "program");
     const dataRoot = dataRootForStudy(study);
     pipeline.domain = domain;
-    pipeline.goal = String(message || pipeline.goal || "Create a complete AAPS program.").trim();
-    pipeline.requiredAgents = uniqueList([...(pipeline.requiredAgents || []), "codex_repair_agent"]);
-    pipeline.requiredTools = uniqueList([...(pipeline.requiredTools || []), "python"]);
-    pipeline.requiredCommands = uniqueList([...(pipeline.requiredCommands || []), "python3"]);
+    if (!pipeline.goal) pipeline.goal = String(message || "Create a complete AAPS program.").trim();
     if (domain === "biology") {
+      pipeline.requiredAgents = uniqueList([...(pipeline.requiredAgents || []), "codex_repair_agent"]);
+      pipeline.requiredTools = uniqueList([...(pipeline.requiredTools || []), "python"]);
+      pipeline.requiredCommands = uniqueList([...(pipeline.requiredCommands || []), "python3"]);
       pipeline.requiredPythonPackages = uniqueList([...(pipeline.requiredPythonPackages || []), "numpy", "pandas", "matplotlib", "tifffile", "pillow", "scikit-image"]);
       pipeline.tags = uniqueList([...(pipeline.tags || []), study || "biology", "segmentation", "quantification", "artifacts"]);
     }
+    if (domain === "writing") {
+      pipeline.requiredAgents = uniqueList([...(pipeline.requiredAgents || []), "dedicated_writing_agent"]);
+      pipeline.requiredTools = uniqueList([...(pipeline.requiredTools || []), "llm_writer", "markdown"]);
+      pipeline.requiredCommands = uniqueList(pipeline.requiredCommands || []);
+      pipeline.tags = uniqueList([...(pipeline.tags || []), "writing", "novel", "outline", "draft", "revision"]);
+    }
 
-    const blockIds = {
-      discover: `${prefix}_discover_data`,
-      segment: `${prefix}_segment_images`,
-      quantify: `${prefix}_quantify_metrics`,
-      visualize: `${prefix}_visualize_report`,
-    };
     pipeline.blocks = pipeline.blocks || [];
-    ["discover", "segment", "quantify", "visualize"].forEach((kind) => {
-      ensureRootNode(pipeline.blocks, programBlock(kind, prefix, study, dataRoot, message));
-    });
-
     pipeline.tasks = pipeline.tasks || [];
-    ["inspect", "preview", "quantify", "report", "qc"].forEach((kind) => {
-      ensureRootNode(pipeline.tasks, programTask(kind, prefix, blockIds, message));
-    });
+    let blockIds;
+    let taskKinds;
+    if (domain === "writing") {
+      blockIds = {
+        brief: `${prefix}_story_brief`,
+        outline: `${prefix}_outline_arc`,
+        bible: `${prefix}_character_bible`,
+        draft: `${prefix}_draft_chapter`,
+        continuity: `${prefix}_continuity_review`,
+        export: `${prefix}_export_manuscript`,
+      };
+      ["brief", "outline", "bible", "draft", "continuity", "export"].forEach((kind) => {
+        ensureRootNode(pipeline.blocks, writingProgramBlock(kind, prefix, message));
+      });
+      taskKinds = ["brief", "outline", "draft", "review", "export"];
+      taskKinds.forEach((kind) => {
+        ensureRootNode(pipeline.tasks, writingProgramTask(kind, prefix, blockIds, message));
+      });
+    } else {
+      blockIds = {
+        discover: `${prefix}_discover_data`,
+        segment: `${prefix}_segment_images`,
+        quantify: `${prefix}_quantify_metrics`,
+        visualize: `${prefix}_visualize_report`,
+      };
+      ["discover", "segment", "quantify", "visualize"].forEach((kind) => {
+        ensureRootNode(pipeline.blocks, programBlock(kind, prefix, study, dataRoot, message));
+      });
+      taskKinds = ["inspect", "preview", "quantify", "report", "qc"];
+      taskKinds.forEach((kind) => {
+        ensureRootNode(pipeline.tasks, programTask(kind, prefix, blockIds, message));
+      });
+    }
 
     pipeline.notes = uniqueList([
       ...(pipeline.notes || []),
       "Program chat generated a structured workflow plan instead of a single generic block.",
       "Reusable blocks must remain editable from Blocks and compile-ready before full-scale runs.",
+      `Latest program refinement request: ${String(message || "").trim()}`,
     ]);
     return {
       changed: true,
       ir: next,
-      summary: `Created/updated a structured ${study ? study.toUpperCase() : domain} program plan with ${Object.keys(blockIds).length} reusable block contracts and ${5} orchestration tasks.`,
+      summary: `Incrementally created/updated a structured ${study ? study.toUpperCase() : domain} program plan with ${Object.keys(blockIds).length} reusable block contracts and ${taskKinds.length} orchestration tasks.`,
       blockIds: Object.values(blockIds),
       taskIds: pipeline.tasks.filter((task) => task.id.startsWith(prefix)).map((task) => task.id),
+    };
+  }
+
+  function blockPlanningIntent(message) {
+    const text = String(message || "").toLowerCase();
+    return /\b(create|build|design|write|make|add|implement|draft|segment|quantify|visuali[sz]e|report|novel|chapter|story|block|skill)\b/.test(text);
+  }
+
+  function planBlockFromPrompt(ir, message, options = {}) {
+    const sourceIr = ir && ir.pipeline ? ir : parseAAPS("");
+    if (!blockPlanningIntent(message)) {
+      return { changed: false, ir: cloneJson(sourceIr), summary: "No block-planning edit was inferred." };
+    }
+    const next = cloneJson(sourceIr);
+    const pipeline = next.pipeline || createPipeline();
+    next.pipeline = pipeline;
+    const domain = promptDomain(message, pipeline);
+    const study = promptStudy(message);
+    const seed = study || slug(message, "block").split("_").slice(0, 3).join("_") || "block";
+    const prefix = slug(seed, "block");
+    pipeline.domain = pipeline.domain || domain;
+    pipeline.blocks = pipeline.blocks || [];
+    let block;
+    if (domain === "biology" && /\b(segment|segmentation|mask|image|microscopy|app80|app65|app81|deo)\b/i.test(message)) {
+      block = programBlock("segment", prefix, study, dataRootForStudy(study), message);
+    } else if (domain === "biology" && /\b(quantify|quantification|metric|measure)\b/i.test(message)) {
+      block = programBlock("quantify", prefix, study, dataRootForStudy(study), message);
+    } else if (domain === "writing") {
+      const kind = /\b(outline|plot|arc)\b/i.test(message)
+        ? "outline"
+        : /\b(character|bible|world)\b/i.test(message)
+          ? "bible"
+          : /\b(review|revise|continuity|critique)\b/i.test(message)
+            ? "continuity"
+            : "draft";
+      block = writingProgramBlock(kind, prefix, message);
+    } else {
+      block = createNode("block", `${prefix}_task_block`, {
+        title: "Reusable task block",
+        inputs: [{ name: "request", type: "text", value: message }],
+        outputs: [{ name: "result", type: "artifact", value: `artifacts/${prefix}/result.md`, validation: "nonempty" }],
+        artifacts: [{ name: "result", type: "markdown", value: `artifacts/${prefix}/result.md`, validation: "nonempty" }],
+        compile: {
+          agent: "codex_repair_agent",
+          prompt: `Create the smallest safe implementation for this reusable block. User request: ${message}`,
+          onMissing: "prompt",
+        },
+        prompt: `Reusable block generated from chat. It must declare inputs, outputs, validation, recovery, and artifact paths before being used in a program. User request: ${message}`,
+        verify: ["Declared output exists and is meaningful for the user's task."],
+        recovery: ["If implementation is missing, run compile/apply and verify the generated artifact before program use."],
+      });
+    }
+    const inserted = ensureRootNode(pipeline.blocks, block);
+    pipeline.notes = uniqueList([...(pipeline.notes || []), `Latest block design request: ${String(message || "").trim()}`]);
+    return {
+      changed: true,
+      ir: next,
+      summary: `Created/updated reusable ${domain} block ${inserted.id} with typed outputs, artifacts, validation, recovery, and compile instructions.`,
+      blockId: inserted.id,
     };
   }
 
@@ -2054,6 +2346,7 @@
     buildExecutionPlan,
     buildAgentCompilePlan,
     planProgramFromPrompt,
+    planBlockFromPrompt,
     createProjectManifest,
     normalizeProjectManifest,
     validateProjectManifest,

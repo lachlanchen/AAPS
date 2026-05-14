@@ -2978,6 +2978,7 @@ function rootCounts(ir) {
     skills: (ir.pipeline.skills || []).length,
     tasks: (ir.pipeline.tasks || []).length,
     agents: (ir.pipeline.agents || []).length,
+    taskCalls: (ir.pipeline.tasks || []).reduce((sum, task) => sum + ((task.calls || []).length), 0),
   };
 }
 
@@ -2992,10 +2993,52 @@ function backendEditLooksBlockOnly(previousSource, nextSource) {
   }
 }
 
+function backendProgramEditLooksWeak(previousSource, nextSource) {
+  if (!nextSource || nextSource === previousSource) return true;
+  try {
+    const before = rootCounts(AAPS.parseAAPS(previousSource));
+    const after = rootCounts(AAPS.parseAAPS(nextSource));
+    const addedOnlyUnwiredTasks = after.tasks > before.tasks && after.blocks <= before.blocks && after.taskCalls <= before.taskCalls;
+    const changedWithoutStructure = after.blocks <= before.blocks && after.tasks <= before.tasks && after.taskCalls <= before.taskCalls;
+    return addedOnlyUnwiredTasks || changedWithoutStructure;
+  } catch (_error) {
+    return false;
+  }
+}
+
 function structuredProgramPlanForChat(message, baseSource, priorResult = {}) {
   if (activeTab !== "program" || typeof AAPS.planProgramFromPrompt !== "function") return null;
   const baseIr = AAPS.parseAAPS(baseSource || sourceEl.value);
   const plan = AAPS.planProgramFromPrompt(baseIr, message, {
+    selected: nodeRefs.get(selectedRef) || null,
+    selectedRef,
+  });
+  if (plan.needsConfirmation) {
+    return {
+      mode: "review",
+      route: "domain_switch_confirmation",
+      message: plan.summary || "This looks like a different workflow domain. Ask for a new AAPS/workflow or explicitly override before I rewrite the current program.",
+      source: baseSource,
+      diagnostics: [],
+    };
+  }
+  if (!plan.changed) return null;
+  const plannedSource = AAPS.serializeAAPS(plan.ir);
+  if (!plannedSource || plannedSource === baseSource) return null;
+  const prefix = priorResult.message && !/mock router|source left unchanged/i.test(priorResult.message) ? `${priorResult.message} ` : "";
+  return {
+    mode: "edit",
+    route: "structured_program_plan",
+    message: `${prefix}${plan.summary}`,
+    source: plannedSource,
+    diagnostics: (plan.ir.diagnostics || []).map((diagnostic) => diagnostic.message || String(diagnostic)),
+  };
+}
+
+function structuredBlockPlanForChat(message, baseSource, priorResult = {}) {
+  if (activeTab !== "lab" || typeof AAPS.planBlockFromPrompt !== "function") return null;
+  const baseIr = AAPS.parseAAPS(baseSource || sourceEl.value);
+  const plan = AAPS.planBlockFromPrompt(baseIr, message, {
     selected: nodeRefs.get(selectedRef) || null,
     selectedRef,
   });
@@ -3005,7 +3048,7 @@ function structuredProgramPlanForChat(message, baseSource, priorResult = {}) {
   const prefix = priorResult.message && !/mock router|source left unchanged/i.test(priorResult.message) ? `${priorResult.message} ` : "";
   return {
     mode: "edit",
-    route: "structured_program_plan",
+    route: "structured_block_plan",
     message: `${prefix}${plan.summary}`,
     source: plannedSource,
     diagnostics: (plan.ir.diagnostics || []).map((diagnostic) => diagnostic.message || String(diagnostic)),
@@ -3173,9 +3216,17 @@ function localChatEdit(text) {
   }
   const structuredProgramPlan = structuredProgramPlanForChat(raw, sourceEl.value);
   if (structuredProgramPlan) {
-    sourceEl.value = structuredProgramPlan.source;
-    render();
+    if (structuredProgramPlan.source && structuredProgramPlan.source !== sourceEl.value) {
+      sourceEl.value = structuredProgramPlan.source;
+      render();
+    }
     return structuredProgramPlan.message;
+  }
+  const structuredBlockPlan = structuredBlockPlanForChat(raw, sourceEl.value);
+  if (structuredBlockPlan) {
+    sourceEl.value = structuredBlockPlan.source;
+    render();
+    return structuredBlockPlan.message;
   }
   const task = templateNode("task", ir);
   task.id = uniqueId(raw.split(/\s+/).slice(0, 4).join("_"), allNodes(ir));
@@ -3217,10 +3268,15 @@ async function requestChatEdit(instruction) {
   const routedSource = typeof result.source === "string" && result.source ? result.source : previousSource;
   const shouldUpgradeProgramPlan =
     activeTab === "program" &&
-    (routedSource === previousSource || backendEditLooksBlockOnly(previousSource, routedSource));
+    (routedSource === previousSource || backendEditLooksBlockOnly(previousSource, routedSource) || backendProgramEditLooksWeak(previousSource, routedSource));
   if (shouldUpgradeProgramPlan) {
-    const structuredProgramPlan = structuredProgramPlanForChat(instruction, routedSource, result);
+    const structuredProgramPlan = structuredProgramPlanForChat(instruction, previousSource, result);
     if (structuredProgramPlan) Object.assign(result, structuredProgramPlan);
+  }
+  const shouldUpgradeBlockPlan = activeTab === "lab" && routedSource === previousSource;
+  if (shouldUpgradeBlockPlan) {
+    const structuredBlockPlan = structuredBlockPlanForChat(instruction, previousSource, result);
+    if (structuredBlockPlan) Object.assign(result, structuredBlockPlan);
   }
   if (result.source) {
     sourceEl.value = result.source;
