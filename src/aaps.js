@@ -1684,6 +1684,327 @@
     return merged;
   }
 
+  function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function allPipelineNodes(pipeline) {
+    const nodes = [];
+    function walk(node) {
+      nodes.push(node);
+      (node.children || []).forEach(walk);
+    }
+    [...(pipeline.agents || []), ...(pipeline.blocks || []), ...(pipeline.skills || []), ...(pipeline.tasks || [])].forEach(walk);
+    return nodes;
+  }
+
+  function programPlanningIntent(message) {
+    const text = String(message || "").toLowerCase();
+    if (!text.trim()) return false;
+    if (/^(explain|summarize|summarise|show|what is|what are|list)\b/.test(text) && !/\b(create|add|edit|update|optimi[sz]e|build|implement|finish|analy[sz]e|pipeline|workflow|program)\b/.test(text)) {
+      return false;
+    }
+    return /\b(program|pipeline|workflow|experiment|analysis|analy[sz]e|create|build|design|implement|finish|complete|update|edit|optimi[sz]e|refine|loop|batch|segmentation|segment|quantification|quantify|visuali[sz]e|report|app80|app65|app81|deo|microscopy|biology)\b/.test(text);
+  }
+
+  function promptStudy(message) {
+    const text = String(message || "").toLowerCase();
+    if (/\bapp80\b/.test(text) || /y[- ]?27632|fusion/.test(text)) return "app80";
+    if (/\bapp65\b/.test(text) || /alginate/.test(text)) return "app65";
+    if (/\bapp81\b/.test(text) || /density/.test(text)) return "app81";
+    return "";
+  }
+
+  function promptDomain(message, pipeline) {
+    const text = String(message || "").toLowerCase();
+    if (promptStudy(text) || /\b(deo|microscopy|image|segmentation|segment|mask|quantification|quantify|cell|organoid|biology)\b/.test(text)) return "biology";
+    if (/\b(article|paper|latex|novel|book|story|manuscript|writing)\b/.test(text)) return "writing";
+    return pipeline.domain || "general";
+  }
+
+  function dataRootForStudy(study) {
+    if (study === "app80") return "data/App80 DEO";
+    if (study === "app65") return "data/App65 DEO+Alginate";
+    if (study === "app81") return "data/DEO App81 P8";
+    return "data";
+  }
+
+  function ensureRootNode(collection, node) {
+    const existing = collection.find((item) => item.id === node.id && item.kind === node.kind);
+    if (existing) {
+      existing.title = existing.title || node.title;
+      existing.prompt = existing.prompt || node.prompt;
+      existing.compile = existing.compile && (existing.compile.agent || existing.compile.prompt) ? existing.compile : node.compile;
+      existing.requirements = existing.requirements || node.requirements;
+      existing.environment = existing.environment || node.environment;
+      existing.inputs = existing.inputs && existing.inputs.length ? existing.inputs : node.inputs;
+      existing.outputs = existing.outputs && existing.outputs.length ? existing.outputs : node.outputs;
+      existing.artifacts = existing.artifacts && existing.artifacts.length ? existing.artifacts : node.artifacts;
+      existing.validations = existing.validations && existing.validations.length ? existing.validations : node.validations;
+      existing.verify = existing.verify && existing.verify.length ? existing.verify : node.verify;
+      existing.recovery = existing.recovery && existing.recovery.length ? existing.recovery : node.recovery;
+      existing.reviews = existing.reviews && existing.reviews.length ? existing.reviews : node.reviews;
+      return existing;
+    }
+    collection.push(node);
+    return node;
+  }
+
+  function programBlock(kind, prefix, study, dataRoot, message) {
+    const commonRequirements = {
+      tools: ["python"],
+      models: [],
+      agents: ["codex_repair_agent"],
+      commands: ["python3"],
+      files: [],
+      pythonPackages: [],
+      nodePackages: [],
+    };
+    const commonEnvironment = {
+      python: "python3",
+      requirements: [],
+      commands: ["python3"],
+      nodePackages: [],
+      files: [],
+      env: {},
+      setup: ["python3 -m venv .venv", ".venv/bin/python -m pip install -r environments/requirements.txt"],
+    };
+    const studyLabel = study ? study.toUpperCase() : "project";
+    if (kind === "discover") {
+      return createNode("block", `${prefix}_discover_data`, {
+        title: "Discover input data and experimental groups",
+        requirements: commonRequirements,
+        environment: commonEnvironment,
+        compile: {
+          agent: "codex_repair_agent",
+          prompt: `Implement a deterministic project-local data discovery script for ${studyLabel}. It must scan ${dataRoot}, infer dates/conditions/replicates when present, write a preview manifest JSON and a CSV table, and fail truthfully when no images are found.`,
+          onMissing: "prompt",
+        },
+        inputs: [{ name: "data_root", type: "folder", required: true, value: dataRoot, validation: "exists" }],
+        outputs: [
+          { name: "image_manifest", type: "json", value: `outputs/${prefix}/manifest/images.json`, validation: "json" },
+          { name: "image_table", type: "csv", value: `outputs/${prefix}/manifest/images.csv`, validation: "nonempty" },
+        ],
+        artifacts: [
+          { name: "image_manifest", type: "json", value: `outputs/${prefix}/manifest/images.json`, validation: "json" },
+          { name: "image_table", type: "table", value: `outputs/${prefix}/manifest/images.csv`, validation: "nonempty" },
+        ],
+        exec: [{ type: "python_script", entry: `scripts/${prefix}_discover_data.py`, args: { data_root: dataRoot, output_dir: `outputs/${prefix}/manifest` } }],
+        validations: [`validate exists outputs/${prefix}/manifest/images.json`, `validate nonempty outputs/${prefix}/manifest/images.csv`],
+        verify: ["At least one real input image is listed unless a QC blocker is recorded."],
+        recovery: ["If no images are found, ask the user to confirm the data root and file extensions before changing analysis logic."],
+        prompt: `Analyze the user request and project files to discover the real ${studyLabel} data layout. Preserve biological labels, conditions, dates, replicates, and channel naming in a machine-readable manifest. User request: ${message}`,
+      });
+    }
+    if (kind === "segment") {
+      commonRequirements.pythonPackages = ["numpy", "tifffile", "pandas", "matplotlib", "pillow", "scikit-image"];
+      return createNode("block", `${prefix}_segment_images`, {
+        title: "Segment microscopy images with QC overlays",
+        requirements: commonRequirements,
+        environment: commonEnvironment,
+        compile: {
+          agent: "codex_repair_agent",
+          prompt: `Implement ${studyLabel} segmentation with method routing. Prefer Cellpose if installed; otherwise use deterministic threshold/morphology fallback. The script must self-debug on a small preview and write masks, overlays, per-image metrics CSV/JSON, summary JSON/CSV, figures, logs, report.md, and run_manifest.json.`,
+          onMissing: "prompt",
+        },
+        inputs: [
+          { name: "image_manifest", type: "json", required: true, value: `outputs/${prefix}/manifest/images.json`, validation: "json" },
+          { name: "preview_limit", type: "integer", value: "8" },
+        ],
+        outputs: [
+          { name: "masks", type: "folder", value: `outputs/${prefix}/segmentation/masks`, validation: "nonempty" },
+          { name: "overlays", type: "folder", value: `outputs/${prefix}/segmentation/overlays`, validation: "nonempty" },
+          { name: "per_image_metrics", type: "csv", value: `outputs/${prefix}/segmentation/per_image_metrics.csv`, validation: "nonempty" },
+          { name: "run_manifest", type: "json", value: `outputs/${prefix}/segmentation/run_manifest.json`, validation: "json" },
+        ],
+        artifacts: [
+          { name: "masks", type: "image_directory", value: `outputs/${prefix}/segmentation/masks`, validation: "nonempty" },
+          { name: "overlays", type: "image_directory", value: `outputs/${prefix}/segmentation/overlays`, validation: "nonempty" },
+          { name: "per_image_metrics", type: "table", value: `outputs/${prefix}/segmentation/per_image_metrics.csv`, validation: "nonempty" },
+          { name: "segmentation_report", type: "markdown", value: `outputs/${prefix}/segmentation/report.md`, validation: "nonempty" },
+        ],
+        exec: [{ type: "python_script", entry: `scripts/${prefix}_segment_images.py`, args: { manifest: `outputs/${prefix}/manifest/images.json`, output_dir: `outputs/${prefix}/segmentation`, preview_limit: "8" } }],
+        validations: [
+          `validate exists outputs/${prefix}/segmentation/run_manifest.json`,
+          `validate nonempty outputs/${prefix}/segmentation/per_image_metrics.csv`,
+          `validate nonempty outputs/${prefix}/segmentation/overlays`,
+        ],
+        verify: [
+          "Metrics rows match processed image count.",
+          "Masks and overlays are non-empty for valid preview images unless a QC blocker is recorded.",
+          "Report states method, fallback reason, counts, warnings, and output paths.",
+        ],
+        recovery: ["If masks are empty or foreground is implausible, tune threshold/morphology parameters and rerun the preview before full batch."],
+        reviews: ["Human QC must inspect representative overlays before accepting full-run segmentation."],
+        prompt: `Create a reusable, testable segmentation block for ${studyLabel}. It must run on real data, expose preview parameters, and produce visible Studio artifacts.`,
+      });
+    }
+    if (kind === "quantify") {
+      return createNode("block", `${prefix}_quantify_metrics`, {
+        title: "Quantify masks and group-level metrics",
+        requirements: commonRequirements,
+        environment: commonEnvironment,
+        compile: {
+          agent: "codex_repair_agent",
+          prompt: `Implement quantification for ${studyLabel}. Read segmentation masks and per-image metrics, infer condition/date/replicate groups, write per-object/per-image/group summaries as CSV/JSON, and validate row counts against segmentation outputs.`,
+          onMissing: "prompt",
+        },
+        inputs: [
+          { name: "per_image_metrics", type: "csv", required: true, value: `outputs/${prefix}/segmentation/per_image_metrics.csv`, validation: "nonempty" },
+          { name: "masks", type: "folder", required: true, value: `outputs/${prefix}/segmentation/masks`, validation: "nonempty" },
+        ],
+        outputs: [
+          { name: "group_summary_csv", type: "csv", value: `outputs/${prefix}/quantification/group_summary.csv`, validation: "nonempty" },
+          { name: "group_summary_json", type: "json", value: `outputs/${prefix}/quantification/group_summary.json`, validation: "json" },
+        ],
+        artifacts: [
+          { name: "group_summary", type: "table", value: `outputs/${prefix}/quantification/group_summary.csv`, validation: "nonempty" },
+          { name: "quantification_json", type: "json", value: `outputs/${prefix}/quantification/group_summary.json`, validation: "json" },
+        ],
+        exec: [{ type: "python_script", entry: `scripts/${prefix}_quantify_metrics.py`, args: { segmentation_dir: `outputs/${prefix}/segmentation`, output_dir: `outputs/${prefix}/quantification` } }],
+        validations: [`validate nonempty outputs/${prefix}/quantification/group_summary.csv`, `validate json outputs/${prefix}/quantification/group_summary.json`],
+        verify: ["Required metric columns are present.", "Group counts and per-image row counts match the processed image manifest."],
+        prompt: `Quantify segmentation outputs for downstream biological interpretation. Preserve condition/date/replicate metadata and make summaries easy to inspect in Studio.`,
+      });
+    }
+    return createNode("block", `${prefix}_visualize_report`, {
+      title: "Visualize results and write report",
+      requirements: commonRequirements,
+      environment: commonEnvironment,
+      compile: {
+        agent: "codex_repair_agent",
+        prompt: `Implement final visualization/report generation for ${studyLabel}. Produce figures, captions, report.md, and a JSON artifact index that Studio can preview.`,
+        onMissing: "prompt",
+      },
+      inputs: [
+        { name: "group_summary_csv", type: "csv", required: true, value: `outputs/${prefix}/quantification/group_summary.csv`, validation: "nonempty" },
+        { name: "segmentation_report", type: "markdown", value: `outputs/${prefix}/segmentation/report.md`, validation: "nonempty" },
+      ],
+      outputs: [
+        { name: "summary_figure", type: "image", value: `outputs/${prefix}/report/summary.png`, validation: "nonempty" },
+        { name: "report", type: "markdown", value: `outputs/${prefix}/report/report.md`, validation: "nonempty" },
+        { name: "artifact_index", type: "json", value: `outputs/${prefix}/report/artifacts.json`, validation: "json" },
+      ],
+      artifacts: [
+        { name: "summary_figure", type: "image", value: `outputs/${prefix}/report/summary.png`, validation: "nonempty" },
+        { name: "report", type: "markdown", value: `outputs/${prefix}/report/report.md`, validation: "nonempty" },
+        { name: "artifact_index", type: "json", value: `outputs/${prefix}/report/artifacts.json`, validation: "json" },
+      ],
+      exec: [{ type: "python_script", entry: `scripts/${prefix}_visualize_report.py`, args: { metrics: `outputs/${prefix}/quantification/group_summary.csv`, output_dir: `outputs/${prefix}/report` } }],
+      validations: [`validate nonempty outputs/${prefix}/report/report.md`, `validate json outputs/${prefix}/report/artifacts.json`],
+      verify: ["Figures have captions and nonzero file size.", "Report includes methods, warnings, counts, and output paths."],
+      prompt: `Create user-facing figures and a concise scientific report from the verified ${studyLabel} outputs.`,
+    });
+  }
+
+  function programTask(kind, prefix, blockIds, message) {
+    if (kind === "inspect") {
+      return createNode("task", `${prefix}_inspect_data`, {
+        title: "Inspect project data",
+        calls: [{ skill: blockIds.discover }],
+        prompt: `Inspect the dataset and experimental structure before changing analysis code. User request: ${message}`,
+        verify: ["The image manifest exists and records real project files."],
+      });
+    }
+    if (kind === "preview") {
+      return createNode("task", `${prefix}_preview_segmentation`, {
+        title: "Run representative segmentation preview",
+        after: [`${prefix}_inspect_data`],
+        calls: [{ skill: blockIds.segment }],
+        children: [
+          createNode("for_each", "preview_image", {
+            iterator: { item: "image", source: "representative_preview_images" },
+            prompt: "Run the selected segmentation method on a bounded preview image set and collect QC overlays.",
+            children: [
+              createNode("action", "inspect_overlay_quality", {
+                prompt: "Inspect overlay, mask foreground fraction, object count, and warning flags before accepting the method.",
+                verify: ["Overlay is visible in Studio artifacts.", "QC blocker is recorded if segmentation is not meaningful."],
+              }),
+            ],
+          }),
+        ],
+        verify: ["Preview outputs include masks, overlays, metrics, manifest, logs, and report."],
+      });
+    }
+    if (kind === "quantify") {
+      return createNode("task", `${prefix}_quantify_outputs`, {
+        title: "Quantify accepted segmentation outputs",
+        after: [`${prefix}_preview_segmentation`],
+        calls: [{ skill: blockIds.quantify }],
+        prompt: "Compute per-image and grouped biological metrics only after preview segmentation passes QC.",
+        verify: ["Quantification row counts match segmentation outputs.", "Group summary includes expected condition/date/replicate columns."],
+      });
+    }
+    if (kind === "report") {
+      return createNode("task", `${prefix}_visualize_and_report`, {
+        title: "Visualize and report verified outputs",
+        after: [`${prefix}_quantify_outputs`],
+        calls: [{ skill: blockIds.visualize }],
+        prompt: "Generate figures, tables, method notes, warnings, and final artifact index for Studio.",
+        verify: ["Report, figure, summary CSV/JSON, and artifact index are visible from Studio."],
+      });
+    }
+    return createNode("task", `${prefix}_human_qc_gate`, {
+      title: "Human QC and refinement gate",
+      after: [`${prefix}_visualize_and_report`],
+      prompt: "A domain expert reviews masks, overlays, figures, metrics, warnings, and the report. If QC fails, refine the selected block parameters and rerun the preview.",
+      verify: ["Human accept/reject decision and refinement notes are recorded before full-scale use."],
+    });
+  }
+
+  function planProgramFromPrompt(ir, message, options = {}) {
+    const sourceIr = ir && ir.pipeline ? ir : parseAAPS("");
+    if (!programPlanningIntent(message)) {
+      return { changed: false, ir: cloneJson(sourceIr), summary: "No program-planning edit was inferred." };
+    }
+    const next = cloneJson(sourceIr);
+    const pipeline = next.pipeline || createPipeline();
+    next.pipeline = pipeline;
+    const study = promptStudy(message);
+    const domain = promptDomain(message, pipeline);
+    const seed = study || slug(pipeline.name || message, "program").split("_").slice(0, 3).join("_") || "program";
+    const prefix = slug(seed, "program");
+    const dataRoot = dataRootForStudy(study);
+    pipeline.domain = domain;
+    pipeline.goal = String(message || pipeline.goal || "Create a complete AAPS program.").trim();
+    pipeline.requiredAgents = uniqueList([...(pipeline.requiredAgents || []), "codex_repair_agent"]);
+    pipeline.requiredTools = uniqueList([...(pipeline.requiredTools || []), "python"]);
+    pipeline.requiredCommands = uniqueList([...(pipeline.requiredCommands || []), "python3"]);
+    if (domain === "biology") {
+      pipeline.requiredPythonPackages = uniqueList([...(pipeline.requiredPythonPackages || []), "numpy", "pandas", "matplotlib", "tifffile", "pillow", "scikit-image"]);
+      pipeline.tags = uniqueList([...(pipeline.tags || []), study || "biology", "segmentation", "quantification", "artifacts"]);
+    }
+
+    const blockIds = {
+      discover: `${prefix}_discover_data`,
+      segment: `${prefix}_segment_images`,
+      quantify: `${prefix}_quantify_metrics`,
+      visualize: `${prefix}_visualize_report`,
+    };
+    pipeline.blocks = pipeline.blocks || [];
+    ["discover", "segment", "quantify", "visualize"].forEach((kind) => {
+      ensureRootNode(pipeline.blocks, programBlock(kind, prefix, study, dataRoot, message));
+    });
+
+    pipeline.tasks = pipeline.tasks || [];
+    ["inspect", "preview", "quantify", "report", "qc"].forEach((kind) => {
+      ensureRootNode(pipeline.tasks, programTask(kind, prefix, blockIds, message));
+    });
+
+    pipeline.notes = uniqueList([
+      ...(pipeline.notes || []),
+      "Program chat generated a structured workflow plan instead of a single generic block.",
+      "Reusable blocks must remain editable from Blocks and compile-ready before full-scale runs.",
+    ]);
+    return {
+      changed: true,
+      ir: next,
+      summary: `Created/updated a structured ${study ? study.toUpperCase() : domain} program plan with ${Object.keys(blockIds).length} reusable block contracts and ${5} orchestration tasks.`,
+      blockIds: Object.values(blockIds),
+      taskIds: pipeline.tasks.filter((task) => task.id.startsWith(prefix)).map((task) => task.id),
+    };
+  }
+
   const sampleProject = createProjectManifest({
     name: "Organoid Analysis Project",
     description: "Reusable AAPS blocks and workflows for microscopy QC, organoid segmentation, quantification, and report generation.",
@@ -1732,6 +2053,7 @@
     toMarkdown,
     buildExecutionPlan,
     buildAgentCompilePlan,
+    planProgramFromPrompt,
     createProjectManifest,
     normalizeProjectManifest,
     validateProjectManifest,

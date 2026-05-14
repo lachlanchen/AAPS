@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const AAPS = require("../src/aaps");
 const AutoUpdate = require("../src/auto-update");
+const WebAutostart = require("../src/web-autostart");
 
 function parseFile(file) {
   return AAPS.parseAAPS(fs.readFileSync(file, "utf8"));
@@ -73,6 +74,19 @@ assert.strictEqual(reparsed.pipeline.skills[0].id, "segment_image");
 assert.strictEqual(reparsed.pipeline.tasks[0].children[0].kind, "for_each");
 assert.strictEqual(reparsed.pipeline.requiredTools.includes("cellpose"), true);
 assert.strictEqual(reparsed.diagnostics.length, 0, JSON.stringify(reparsed.diagnostics));
+
+const programPlan = AAPS.planProgramFromPrompt(
+  AAPS.parseAAPS('pipeline "Program Chat Smoke" {\n  task start {\n    prompt "Initial placeholder."\n  }\n}\n'),
+  "Create a complete App81 DEO microscopy segmentation, quantification, visualization, and QC workflow that can run a real preview."
+);
+assert.strictEqual(programPlan.changed, true);
+assert(programPlan.blockIds.includes("app81_segment_images"), JSON.stringify(programPlan));
+assert(programPlan.taskIds.includes("app81_preview_segmentation"), JSON.stringify(programPlan));
+assert(programPlan.ir.pipeline.tasks.some((task) => task.calls.some((call) => call.skill === "app81_segment_images")));
+assert(programPlan.ir.pipeline.tasks.some((task) => task.id === "app81_human_qc_gate"));
+const plannedRoundTrip = AAPS.parseAAPS(AAPS.serializeAAPS(programPlan.ir));
+assert.strictEqual(plannedRoundTrip.diagnostics.length, 0, JSON.stringify(plannedRoundTrip.diagnostics));
+assert(plannedRoundTrip.pipeline.tasks.length >= 5, "program chat planning should update the program, not only append a block");
 
 assert.strictEqual(AAPS.PROJECT_VERSION, "aaps_project/0.1");
 assert.strictEqual(AutoUpdate.isNewerVersion("0.4.29", "0.4.28"), true);
@@ -426,6 +440,25 @@ fs.writeFileSync(
 );
 const webappPort = "8897";
 const webappEnv = { ...process.env, AAPS_HOME: path.join(webappProject, ".aaps-home") };
+const missingPython = WebAutostart.resolvePythonLauncher({
+  env: { ...process.env, AAPS_PYTHON_BIN: path.join(webappProject, "missing-python") },
+  cwd: webappProject,
+});
+assert.strictEqual(missingPython.ok, false);
+assert(missingPython.error.includes("Python 3 was not found"), missingPython.error);
+const webappMissingPython = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", "8896", "--json"],
+  {
+    cwd: path.join(__dirname, ".."),
+    env: { ...webappEnv, AAPS_PYTHON_BIN: path.join(webappProject, "missing-python") },
+    encoding: "utf8",
+  }
+);
+assert.strictEqual(webappMissingPython.status, 1, webappMissingPython.stderr || webappMissingPython.stdout);
+const webappMissingPythonPayload = JSON.parse(webappMissingPython.stdout);
+assert.strictEqual(webappMissingPythonPayload.ok, false);
+assert(webappMissingPythonPayload.error.includes("Python 3 was not found"), webappMissingPythonPayload.error);
 const webappStart = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "webapp", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--mock-codex", "--json"],

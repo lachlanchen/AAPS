@@ -1853,6 +1853,9 @@ AAPS v0.2 supports:
 - Blocks are the reusable working parts. They should be editable, versioned, richly documented, and compile-ready.
 - The selected workflow, block, and program are persistent Studio scope. Backend changes between Codex, DeepSeek, and AgInTiFlow must preserve the same AAPS source unless the user explicitly switches files.
 - Programs should reference reusable blocks; every referenced block must be discoverable in the project manifest and editable from Blocks.
+- Program-tab requests are not block-append commands by default. First infer the user's analysis goal, then update the selected program/workflow with orchestration tasks, loops, method routes, calls to reusable blocks, validation gates, and artifact expectations.
+- Only create a single new block when the user explicitly asks for exactly one block. For broad requests such as "finish this analysis", "create/update/optimize the pipeline", "segment and quantify", or "can it finish the task", return a real program edit with at least inspect -> preview/run -> quantify -> visualize/report -> QC/verify stages.
+- If a required reusable block is missing, either include a complete compile-ready block contract in the source or state the missing block file explicitly in diagnostics; never silently append a vague block without wiring it into the program.
 - For backend-agent generated blocks/scripts, include self-debug instructions: run a small representative preview, inspect logs, verify declared outputs, and refine until masks/metrics/artifacts are meaningful.
 - For biology segmentation, prefer a clear method route such as Cellpose/multiscale Cellpose when available, and deterministic threshold/morphology fallback when unavailable. Always declare how the compiler/runtime proves the result.
 

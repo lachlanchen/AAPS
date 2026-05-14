@@ -11,7 +11,9 @@ const { maybeAutoUpdate } = require("../src/auto-update");
 const {
   DEFAULT_PORT,
   ensureAapsWebApp,
+  fetchHealthDetails,
   readWebAppPreference,
+  resolvePythonLauncher,
   stopAapsWebApp,
   writeWebAppPreference,
 } = require("../src/web-autostart");
@@ -65,6 +67,7 @@ function usage() {
     "  aaps validate [file] [--project .] [--json]",
     "  aaps chat [--project .] [--backend codex|aginti|print]",
     "  aaps webapp [start|stop|restart|reuse|enable|disable|status] [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
+    "  aaps doctor [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
     "  aaps studio [--project .] [--host 127.0.0.1] [--port 8797] [--mock-codex]",
     "  aaps update",
     "  aaps --version",
@@ -462,6 +465,25 @@ function resolveCommand(command, cwd, envVar = "") {
       "/usr/local/bin",
     ]),
   };
+}
+
+function allExecutableCommandPaths(command, cwd = process.cwd()) {
+  const fromShell = [];
+  const shellArgs =
+    process.platform === "win32"
+      ? ["where", command]
+      : ["sh", "-lc", `command -v -a ${shellQuote(command)} 2>/dev/null || which -a ${shellQuote(command)} 2>/dev/null || true`];
+  const result =
+    process.platform === "win32"
+      ? childProcess.spawnSync(shellArgs[0], shellArgs.slice(1), { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2500 })
+      : childProcess.spawnSync(shellArgs[0], shellArgs.slice(1), { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2500 });
+  String(result.stdout || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((item) => fromShell.push(item));
+  const fromScan = commandPathCandidates(command).filter(isExecutableFile);
+  return unique([...fromShell, ...fromScan]);
 }
 
 function normalizePromptBackend(value) {
@@ -979,7 +1001,12 @@ function commandStudio(options) {
     "--port",
     port,
   ];
-  const result = childProcess.spawnSync("python3", args, {
+  const python = resolvePythonLauncher({ env, cwd: projectDir });
+  if (!python.ok) {
+    console.error(python.error);
+    process.exit(1);
+  }
+  const result = childProcess.spawnSync(python.command, [...python.prefixArgs, ...args], {
     cwd: projectDir,
     env,
     stdio: "inherit",
@@ -1064,6 +1091,8 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
     alreadyStopped: Boolean(result.alreadyStopped),
     disabled: Boolean(result.disabled),
     error: result.error || "",
+    python: result.python || null,
+    logPath: result.logPath || "",
   };
   if (options.silent) return payload;
   if (options.json) print(payload, true);
@@ -1082,6 +1111,82 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
     console.log("AAPS Studio auto-start disabled. Run `aaps webapp` or `/webapp` from `aaps chat`.");
   } else {
     console.error(`AAPS Studio unavailable: ${payload.error || "unknown error"}`);
+  }
+  return payload;
+}
+
+async function commandDoctor(options) {
+  const projectDir = path.resolve(options.project || ".");
+  const host = String(options.host || "127.0.0.1");
+  const port = Number(options.port || DEFAULT_PORT);
+  const aapsPaths = allExecutableCommandPaths("aaps", projectDir);
+  const firstAaps = aapsPaths[0] || "";
+  const runningScript = path.resolve(__filename);
+  const firstAapsReal = firstAaps ? fs.realpathSync(firstAaps) : "";
+  const runningScriptReal = fs.realpathSync(runningScript);
+  const python = resolvePythonLauncher({ env: process.env, cwd: projectDir });
+  const webPreference = readWebAppPreference();
+  const health = await fetchHealthDetails(host, port, 600);
+  const nodeMajor = Number(String(process.versions.node || "0").split(".")[0]);
+  const problems = [];
+  const warnings = [];
+  if (nodeMajor < 18) problems.push("Node.js 18+ is required for AAPS. Install a current LTS with nvm/fnm/NodeSource/Homebrew and reinstall AAPS.");
+  if (!python.ok) problems.push("Python 3 is not available for AAPS Studio. `aaps webapp` and `aaps studio` need Python 3.");
+  if (aapsPaths.length > 1) warnings.push("Multiple `aaps` executables are visible on PATH. If an old install runs first, remove the stale npm-global shim or put the desired Node manager bin first.");
+  if (firstAaps && firstAapsReal !== runningScriptReal && !runningScript.includes("node_modules")) {
+    warnings.push(`The first PATH match is ${firstAaps}; this running script is ${runningScript}. Check PATH order if versions look inconsistent.`);
+  }
+  const payload = {
+    ok: problems.length === 0,
+    packageVersion: packageVersion(),
+    platform: `${process.platform} ${process.arch}`,
+    project: projectDir,
+    node: {
+      ok: nodeMajor >= 18,
+      version: process.version,
+      execPath: process.execPath,
+    },
+    aaps: {
+      script: runningScript,
+      paths: aapsPaths.slice(0, 12),
+      hiddenPathCount: Math.max(0, aapsPaths.length - 12),
+    },
+    python,
+    webapp: {
+      url: `http://${host}:${port}`,
+      autoStart: webPreference.autoStart !== false,
+      preferencePath: webPreference.path || "",
+      health,
+    },
+    problems,
+    warnings,
+    recovery: {
+      node: "Use nvm/fnm/Volta/Homebrew/NodeSource for Node 18+; remove stale ~/.npm-global AAPS shims when switching Node managers.",
+      python: "Install Python 3 and set AAPS_PYTHON_BIN if it is not on PATH.",
+      webapp: "Use `aaps webapp restart`, `aaps webapp stop`, `aaps webapp disable`, or `aaps webapp enable` to control Studio auto-start.",
+    },
+  };
+  if (options.json) print(payload, true);
+  else {
+    console.log(`AAPS doctor v${payload.packageVersion}`);
+    console.log(`platform: ${payload.platform}`);
+    console.log(`project: ${payload.project}`);
+    console.log(`node: ${payload.node.ok ? "ok" : "problem"} ${payload.node.version} at ${payload.node.execPath}`);
+    console.log(`python: ${python.ok ? `ok ${python.version} via ${python.label}` : "missing"}`);
+    console.log(`webapp: ${payload.webapp.health.ok ? "running" : "not running"} ${payload.webapp.url} autoStart=${payload.webapp.autoStart}`);
+    if (aapsPaths.length) {
+      console.log("aaps paths:");
+      payload.aaps.paths.forEach((item, index) => console.log(`  ${index + 1}. ${item}`));
+      if (payload.aaps.hiddenPathCount) console.log(`  ... ${payload.aaps.hiddenPathCount} more`);
+    }
+    if (problems.length) {
+      console.log("problems:");
+      problems.forEach((problem) => console.log(`  - ${problem}`));
+    }
+    if (warnings.length) {
+      console.log("warnings:");
+      warnings.forEach((warning) => console.log(`  - ${warning}`));
+    }
   }
   return payload;
 }
@@ -1599,6 +1704,7 @@ async function main() {
     "studio",
     "webapp",
     "web",
+    "doctor",
     "chat",
     "interactive",
     "update",
@@ -1670,6 +1776,10 @@ async function main() {
       process.exit(1);
     }
     const payload = await commandWebapp({ ...options, port: parsedWebapp.port }, { manual: true, action: parsedWebapp.action });
+    process.exit(payload.ok ? 0 : 1);
+  }
+  if (command === "doctor") {
+    const payload = await commandDoctor(options);
     process.exit(payload.ok ? 0 : 1);
   }
   if (command === "chat" || command === "interactive") {

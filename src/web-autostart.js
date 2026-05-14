@@ -24,12 +24,92 @@ function webUrl(host, port) {
   return `http://${host}:${port}`;
 }
 
+function pythonRecoveryLines() {
+  const lines = [
+    "AAPS Studio needs Python 3 to run backend/aaps_codex_server.py.",
+    "Install Python 3, then verify one of these commands works: python3 --version, python --version, or py -3 --version.",
+    "If Python is installed but not on PATH, set AAPS_PYTHON_BIN to the absolute Python executable path.",
+  ];
+  if (process.platform === "win32") {
+    lines.push("Windows: install Python 3 from python.org or the Microsoft Store; the `py -3` launcher is supported.");
+  } else if (process.platform === "darwin") {
+    lines.push("macOS: use python.org, Homebrew (`brew install python`), or pyenv, then reinstall/run AAPS from a shell with that Python on PATH.");
+  } else {
+    lines.push("Linux: install python3 with your distro package manager, for example `sudo apt install python3` on Ubuntu/Debian.");
+  }
+  return lines;
+}
+
+function formatPythonRecovery(error = "") {
+  return `${error ? `${error}\n` : ""}${pythonRecoveryLines().join("\n")}`;
+}
+
+function splitCommand(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function pythonCandidates(env = process.env) {
+  const override = String(env.AAPS_PYTHON_BIN || env.PYTHON || "").trim();
+  if (override) {
+    const parts = splitCommand(override);
+    return [{ command: parts[0], prefixArgs: parts.slice(1), explicit: true, label: override }];
+  }
+  const candidates = process.platform === "win32" ? ["python3", "python", "py -3"] : ["python3", "python"];
+  return candidates.map((item) => {
+    const parts = splitCommand(item);
+    return { command: parts[0], prefixArgs: parts.slice(1), explicit: false, label: item };
+  });
+}
+
+function resolvePythonLauncher({ env = process.env, cwd = process.cwd() } = {}) {
+  const failures = [];
+  for (const candidate of pythonCandidates(env)) {
+    if (!candidate.command) continue;
+    const result = childProcess.spawnSync(candidate.command, [...candidate.prefixArgs, "--version"], {
+      cwd,
+      env,
+      encoding: "utf8",
+      timeout: 2500,
+      windowsHide: true,
+    });
+    const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
+    if (!result.error && result.status === 0 && /^Python\s+3\./i.test(output)) {
+      return {
+        ok: true,
+        command: candidate.command,
+        prefixArgs: candidate.prefixArgs,
+        label: candidate.label,
+        version: output,
+        explicit: candidate.explicit,
+      };
+    }
+    failures.push(`${candidate.label}: ${result.error ? result.error.message : output || `exit ${result.status}`}`);
+    if (candidate.explicit) break;
+  }
+  return {
+    ok: false,
+    command: "",
+    prefixArgs: [],
+    label: "",
+    version: "",
+    failures,
+    error: formatPythonRecovery(`Python 3 was not found for AAPS Studio startup. Tried: ${failures.join("; ") || "(none)"}`),
+  };
+}
+
 function aapsHome() {
   return path.resolve(process.env.AAPS_HOME || path.join(os.homedir(), ".aaps"));
 }
 
 function webPreferencePath() {
   return path.join(aapsHome(), "webapp.json");
+}
+
+function startupLogPath() {
+  return path.join(aapsHome(), "webapp-startup.log");
 }
 
 function readWebAppPreference() {
@@ -220,19 +300,41 @@ async function ensureAapsWebApp({
     AAPS_STUDIO_PROJECT: cwd,
   };
   if (mockCodex || process.env.AAPS_MOCK_CODEX === "1") env.AAPS_MOCK_CODEX = "1";
+  const python = resolvePythonLauncher({ env, cwd });
+  if (!python.ok) {
+    return {
+      ok: false,
+      error: python.error,
+      url: "",
+      host: candidate.host,
+      port: candidate.port,
+      python,
+    };
+  }
 
-  const child = childProcess.spawn("python3", [path.join(packageDir, "backend", "aaps_codex_server.py"), "--host", candidate.host, "--port", String(candidate.port)], {
+  const logPath = startupLogPath();
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  const logFd = fs.openSync(logPath, "a");
+  let spawnError = null;
+  const child = childProcess.spawn(python.command, [...python.prefixArgs, path.join(packageDir, "backend", "aaps_codex_server.py"), "--host", candidate.host, "--port", String(candidate.port)], {
     cwd,
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     env,
+  });
+  fs.closeSync(logFd);
+  child.on("error", (error) => {
+    spawnError = error;
   });
   child.unref();
 
   const healthy = await waitForHealth(candidate.host, candidate.port);
+  if (!healthy && spawnError) {
+    return { ok: false, error: `Could not start AAPS Studio with ${python.label}: ${spawnError.message}\nStartup log: ${logPath}`, url: "", host: candidate.host, port: candidate.port, python, logPath };
+  }
   return healthy
-    ? { ok: true, reused: false, started: true, restarted: Boolean(candidate.restarted), stopped: candidate.stopped, pid: child.pid, ...candidate }
-    : { ok: false, error: `Started AAPS Studio process ${child.pid}, but ${candidate.url}/api/health did not become ready.`, url: "" };
+    ? { ok: true, reused: false, started: true, restarted: Boolean(candidate.restarted), stopped: candidate.stopped, pid: child.pid, python, logPath, ...candidate }
+    : { ok: false, error: `Started AAPS Studio process ${child.pid} with ${python.label}, but ${candidate.url}/api/health did not become ready. Startup log: ${logPath}`, url: "", host: candidate.host, port: candidate.port, python, logPath };
 }
 
 module.exports = {
@@ -242,7 +344,9 @@ module.exports = {
   fetchHealth,
   fetchHealthDetails,
   findReusableOrFreeWebPort,
+  formatPythonRecovery,
   readWebAppPreference,
+  resolvePythonLauncher,
   stopAapsWebApp,
   webAutoStartDisabled,
   writeWebAppPreference,
