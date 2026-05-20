@@ -403,10 +403,14 @@ def scan_aaps_files(project_dir: Path) -> list[str]:
     if not project_dir.exists():
         return files
     for current, dirnames, filenames in os.walk(project_dir):
+        current_path = Path(current)
+        if current_path != project_dir and PROJECT_MANIFEST in filenames:
+            dirnames[:] = []
+            continue
         dirnames[:] = [name for name in dirnames if name not in SKIP_SCAN_DIRS]
         for filename in filenames:
             if filename.endswith(".aaps"):
-                full = Path(current) / filename
+                full = current_path / filename
                 files.append(full.relative_to(project_dir).as_posix())
     return sorted(files)
 
@@ -416,12 +420,33 @@ def scan_project_files(project_dir: Path, extensions: set[str]) -> list[str]:
     if not project_dir.exists():
         return files
     for current, dirnames, filenames in os.walk(project_dir):
+        current_path = Path(current)
+        if current_path != project_dir and PROJECT_MANIFEST in filenames:
+            dirnames[:] = []
+            continue
         dirnames[:] = [name for name in dirnames if name not in SKIP_SCAN_DIRS]
         for filename in filenames:
-            full = Path(current) / filename
+            full = current_path / filename
             if full.suffix.lower() in extensions:
                 files.append(full.relative_to(project_dir).as_posix())
     return sorted(files)
+
+
+def count_project_artifacts(project_dir: Path) -> int:
+    artifact_roots = ["artifacts", "runs", "reports", "outputs"]
+    count = 0
+    for root_name in artifact_roots:
+        root = project_dir / root_name
+        if not root.exists():
+            continue
+        for current, dirnames, filenames in os.walk(root):
+            current_path = Path(current)
+            if current_path != project_dir and PROJECT_MANIFEST in filenames:
+                dirnames[:] = []
+                continue
+            dirnames[:] = [name for name in dirnames if name not in SKIP_SCAN_DIRS]
+            count += len([name for name in filenames if not name.startswith(".")])
+    return count
 
 
 def ensure_text_file(file_path: Path) -> None:
@@ -1218,6 +1243,7 @@ def read_project(project_dir: Path) -> dict:
         "project_path": project_label(project_dir),
         "absolute_path": str(project_dir.resolve()),
         "files": scan_aaps_files(project_dir),
+        "artifactCount": count_project_artifacts(project_dir),
         "script_files": scan_project_files(project_dir, SCRIPT_FILE_EXTENSIONS),
         "environment_files": [
             file
@@ -1241,6 +1267,7 @@ def read_project(project_dir: Path) -> dict:
 def list_studio_projects(base_dir: Path, limit: int = 120) -> dict:
     projects: list[dict] = []
     seen: set[str] = set()
+    selected_dir = base_dir.resolve()
 
     def add_project(project_dir: Path, source: str) -> None:
         try:
@@ -1264,13 +1291,20 @@ def list_studio_projects(base_dir: Path, limit: int = 120) -> dict:
                     "description": str(manifest.get("description") or ""),
                     "manifestExists": manifest_path.exists(),
                     "source": source,
+                    "selected": project_dir.resolve() == selected_dir,
+                    "aapsFiles": scan_aaps_files(project_dir),
+                    "artifactCount": count_project_artifacts(project_dir),
+                    "activeFile": str(manifest.get("activeFile") or manifest.get("defaultMain") or ""),
+                    "defaultMain": str(manifest.get("defaultMain") or ""),
                 }
             )
         except Exception:
             return
 
     add_project(PROJECT_ROOT, "current")
-    root = base_dir.resolve()
+    if selected_dir != PROJECT_ROOT:
+        add_project(selected_dir, "selected")
+    root = PROJECT_ROOT.resolve()
     max_depth = 4
     for current, dirnames, filenames in os.walk(root):
         current_path = Path(current)

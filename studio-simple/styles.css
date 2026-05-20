@@ -206,6 +206,21 @@ p {
   flex: 0 0 auto;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.small-action-button {
+  min-height: 32px;
+  border-radius: 999px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .panel-title h1 {
   font-size: 18px;
   line-height: 1.2;
@@ -266,28 +281,7 @@ p {
   gap: 8px;
 }
 
-.create-project-details {
-  display: grid;
-  gap: 8px;
-}
-
-.create-project-details summary {
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.create-project-details[open] {
-  padding-top: 2px;
-}
-
-.create-project-details[open] input,
-.create-project-details[open] .inline-controls {
-  margin-top: 8px;
-}
-
+.project-entry,
 .project-item,
 .program-item,
 .block-item,
@@ -296,6 +290,26 @@ p {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+}
+
+.project-entry {
+  display: grid;
+  overflow: hidden;
+}
+
+.project-header-row {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  align-items: stretch;
+}
+
+.project-toggle {
+  min-height: 58px;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 
 .project-item {
@@ -308,6 +322,9 @@ p {
   min-height: 58px;
   align-content: start;
   overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .project-item strong,
@@ -317,12 +334,58 @@ p {
   white-space: normal;
 }
 
-.project-item.is-selected,
+.project-entry.is-selected,
 .program-item.is-selected,
 .block-item.is-selected {
   border-color: var(--accent);
   box-shadow: inset 3px 0 0 var(--accent);
   background: var(--accent-soft);
+}
+
+.project-entry.is-selected .project-item {
+  background: transparent;
+}
+
+.project-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.project-aaps-list {
+  display: grid;
+  gap: 5px;
+  padding: 0 10px 10px 22px;
+}
+
+.project-aaps-file {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.72);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.project-aaps-file.is-active {
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.project-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 10px 10px 22px;
 }
 
 .project-item small,

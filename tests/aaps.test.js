@@ -1776,6 +1776,17 @@ fs.writeFileSync(path.join(studioProject, "data", "secret-ish.json"), '{"raw": t
 fs.writeFileSync(path.join(studioProject, "outputs", "runs", "large.json"), '{"generated": true}\n', "utf8");
 fs.writeFileSync(path.join(studioProject, "outputs", "runs", "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"));
 fs.writeFileSync(path.join(studioProject, ".aginti-sessions", "session.json"), '{"private": true}\n', "utf8");
+fs.mkdirSync(path.join(studioProject, "child-project", "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(studioProject, "child-project", "aaps.project.json"),
+  JSON.stringify({ name: "Child Project", activeFile: "workflows/child.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(studioProject, "child-project", "workflows", "child.aaps"),
+  'pipeline "Child" {\n  task child { prompt "Child workflow." }\n}\n',
+  "utf8"
+);
 
 const studioPort = "8898";
 const studio = childProcess.spawn(
@@ -1810,6 +1821,14 @@ try {
   assert(currentStudioProject, JSON.stringify(studioProjects));
   assert.strictEqual(currentStudioProject.absolutePath, studioProject);
   assert.strictEqual(currentStudioProject.manifestExists, true);
+  assert.deepStrictEqual(currentStudioProject.aapsFiles, ["workflows/main.aaps"]);
+  assert.strictEqual(typeof currentStudioProject.artifactCount, "number");
+  const childStudioProject = studioProjects.items.find((item) => item.path === "child-project");
+  assert(childStudioProject, JSON.stringify(studioProjects));
+  assert.deepStrictEqual(childStudioProject.aapsFiles, ["workflows/child.aaps"]);
+  const stableProjectList = httpJson(`${base}/api/aaps/projects?path=child-project`);
+  assert(stableProjectList.items.some((item) => item.path === "."), JSON.stringify(stableProjectList));
+  assert(stableProjectList.items.some((item) => item.path === "child-project"), JSON.stringify(stableProjectList));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("data/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith("outputs/")));
   assert(!studioProjectPayload.text_files.some((file) => file.startsWith(".aginti")));

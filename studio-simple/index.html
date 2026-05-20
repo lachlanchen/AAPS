@@ -34,7 +34,10 @@
             <h1 id="projects-title">Projects</h1>
             <p>Open a topic workspace.</p>
           </div>
-          <button id="refresh-projects" type="button" class="icon-button" title="Refresh projects" aria-label="Refresh projects">R</button>
+          <div class="panel-actions">
+            <button id="new-project-button" type="button" class="small-action-button">+ New Project</button>
+            <button id="refresh-projects" type="button" class="icon-button" title="Refresh projects" aria-label="Refresh projects">R</button>
+          </div>
         </div>
 
         <div id="project-list" class="project-list" aria-label="AAPS projects"></div>
@@ -45,14 +48,6 @@
             <button id="open-project-button" type="button">Open</button>
           </div>
 
-          <details class="create-project-details">
-            <summary>New project</summary>
-            <input id="new-project-name" type="text" placeholder="Project name" autocomplete="off" />
-            <div class="inline-controls">
-              <input id="new-project-path" type="text" placeholder=".aaps-work/studio-simple-demo" autocomplete="off" />
-              <button id="create-project-button" type="button">Create</button>
-            </div>
-          </details>
         </div>
       </section>
 
@@ -157,6 +152,26 @@
         </div>
         <div id="history-list" class="history-list"></div>
       </div>
+    </div>
+
+    <div id="new-project-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="new-project-title">
+      <form class="modal-card editor-card" id="new-project-form">
+        <div class="modal-head">
+          <div>
+            <h2 id="new-project-title">New Project</h2>
+            <p>Create a topic workspace with its own `.aaps` files, artifacts, runs, and chat sessions.</p>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="new-project-modal" aria-label="Close new project">x</button>
+        </div>
+        <div class="editor-grid">
+          <label>Name <input id="new-project-name" name="name" type="text" placeholder="AAPS Research Project" autocomplete="off" /></label>
+          <label>Working directory <input id="new-project-path" name="path" type="text" placeholder=".aaps-work/studio-simple-demo" autocomplete="off" /></label>
+          <p class="span-2 form-hint">A project is a topic workspace. It can contain many `.aaps` programs, reusable blocks, scripts, artifacts, runs, and multiple attached chat sessions.</p>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="primary-button">Create Project</button>
+        </div>
+      </form>
     </div>
 
     <div id="new-session-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="new-session-title">

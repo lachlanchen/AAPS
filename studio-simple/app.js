@@ -152,6 +152,8 @@
     manifest: null,
     manifestExists: false,
     activeFile: "",
+    projectAapsFiles: [],
+    projectArtifactCount: 0,
     source: DEFAULT_SOURCE,
     ir: null,
     selectedElementId: "",
@@ -165,6 +167,7 @@
     historySyncTimer: null,
     settings: {},
     chatPanelOpen: false,
+    projectGroupsOpen: {},
     blockGroupsOpen: { system: false, user: true },
     artifacts: [],
     artifactCategory: "image",
@@ -561,6 +564,20 @@
         : `Applies to selected ${state.focus.type}: ${state.focus.label}`;
   }
 
+  function projectKey(project) {
+    return project.absolutePath || project.path || project.name || "";
+  }
+
+  function projectIsOpen(project) {
+    const key = projectKey(project);
+    return state.projectGroupsOpen[key] !== false;
+  }
+
+  function toggleProjectGroup(key) {
+    state.projectGroupsOpen[key] = state.projectGroupsOpen[key] === false;
+    renderProjects();
+  }
+
   function renderProjects() {
     const list = $("#project-list");
     const currentProject = {
@@ -569,12 +586,17 @@
       absolutePath: state.projectAbsolutePath || state.projectPath || "",
       manifestExists: state.manifestExists,
       current: true,
+      selected: true,
+      aapsFiles: state.projectAapsFiles || [],
+      artifactCount: state.projectArtifactCount || 0,
+      activeFile: state.activeFile || "",
     };
     const seen = new Set();
     const projects = [currentProject, ...state.projects].filter((project) => {
-      const key = project.absolutePath || project.path || project.name || "";
+      const key = projectKey(project);
       if (!key || seen.has(key)) return false;
       seen.add(key);
+      if (!(key in state.projectGroupsOpen)) state.projectGroupsOpen[key] = true;
       return true;
     });
     if (!projects.length) {
@@ -585,11 +607,46 @@
           const selected = project.path === state.projectPath || project.absolutePath === state.projectAbsolutePath;
           const name = project.name || project.path || "AAPS project";
           const path = project.absolutePath || project.path || "";
+          const key = projectKey(project);
+          const open = projectIsOpen(project);
+          const aapsFiles = Array.isArray(project.aapsFiles) ? project.aapsFiles : [];
+          const activeFile = project.activeFile || project.defaultMain || "";
+          const files = open
+            ? aapsFiles.length
+              ? `<div class="project-aaps-list" data-project-aaps-list="${escapeHtml(key)}">
+                  ${aapsFiles
+                    .map(
+                      (file) => `
+                        <button
+                          type="button"
+                          class="project-aaps-file${selected && file === state.activeFile ? " is-active" : ""}"
+                          data-project-path="${escapeHtml(path)}"
+                          data-project-file="${escapeHtml(file)}"
+                          title="${escapeHtml(file)}"
+                        >${escapeHtml(file)}</button>
+                      `
+                    )
+                    .join("")}
+                </div>`
+              : `<div class="project-empty">No .aaps files yet.</div>`
+            : "";
           return `
-            <button type="button" class="project-item${selected ? " is-selected" : ""}" data-project-path="${escapeHtml(path)}">
-              <strong>${escapeHtml(name)}${project.current ? " · selected" : ""}</strong>
-              <small>${escapeHtml(project.absolutePath || path)}</small>
-            </button>
+            <section class="project-entry${selected ? " is-selected" : ""}" data-project-entry="${escapeHtml(key)}">
+              <div class="project-header-row">
+                <button type="button" class="project-toggle" data-toggle-project="${escapeHtml(key)}" aria-expanded="${open ? "true" : "false"}" title="${open ? "Fold project" : "Unfold project"}">
+                  <span class="project-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span>
+                </button>
+                <button type="button" class="project-item" data-project-path="${escapeHtml(path)}">
+                  <strong>${escapeHtml(name)}${selected ? " · selected" : ""}</strong>
+                  <small>${escapeHtml(project.absolutePath || path)}</small>
+                  <span class="project-meta-row">
+                    <small>${aapsFiles.length} .aaps${activeFile ? ` · main ${escapeHtml(activeFile)}` : ""}</small>
+                    <small>${Number(project.artifactCount || 0)} artifacts</small>
+                  </span>
+                </button>
+              </div>
+              ${files}
+            </section>
           `;
         })
         .join("");
@@ -842,7 +899,7 @@
     return manifest.activeFile || manifest.defaultMain || workflows[0] || files.find((file) => file.startsWith("workflows/")) || files[0] || "";
   }
 
-  async function loadProject(pathValue = ".") {
+  async function loadProject(pathValue = ".", fileToOpen = "") {
     state.projectPath = pathValue || state.projectPath || ".";
     $("#chat-status").textContent = "loading";
     try {
@@ -851,7 +908,9 @@
       state.manifestExists = Boolean(payload.manifest_exists);
       state.projectPath = payload.project_path || state.projectPath;
       state.projectAbsolutePath = payload.absolute_path || "";
-      state.activeFile = activeFileFromPayload(payload);
+      state.projectAapsFiles = Array.isArray(payload.files) ? payload.files : [];
+      state.projectArtifactCount = Number(payload.artifactCount || 0);
+      state.activeFile = fileToOpen || activeFileFromPayload(payload);
       if (state.activeFile) {
         const filePayload = await jsonFetch(
           `/api/aaps/project/file?path=${encodeURIComponent(state.projectPath)}&file=${encodeURIComponent(state.activeFile)}`
@@ -876,6 +935,8 @@
       state.manifestExists = false;
       state.projectAbsolutePath = "";
       state.activeFile = "";
+      state.projectAapsFiles = [];
+      state.projectArtifactCount = 0;
       resetProgram(DEFAULT_SOURCE);
       setFocus("project", state.projectPath, "local draft");
       $("#chat-status").textContent = "local draft";
@@ -1300,6 +1361,16 @@
     openModal("artifacts-modal");
   }
 
+  function openNewProjectModal() {
+    const nameField = $("#new-project-name");
+    const pathField = $("#new-project-path");
+    const stampValue = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    if (nameField && !nameField.value.trim()) nameField.value = "AAPS Project";
+    if (pathField && !pathField.value.trim()) pathField.value = `.aaps-work/projects/aaps-project-${stampValue}`;
+    openModal("new-project-modal");
+    if (nameField) nameField.focus();
+  }
+
   async function createProject() {
     const name = $("#new-project-name").value.trim() || "AAPS Simple Project";
     const pathValue = $("#new-project-path").value.trim() || ".aaps-work/studio-simple-demo";
@@ -1312,6 +1383,7 @@
         goal: "Create a structured AAPS program with reusable blocks.",
       });
       await loadProject(payload.project_path || pathValue);
+      closeModal("new-project-modal");
       addMessage("assistant", `Created project ${name} at ${payload.absolute_path || pathValue}.`);
     } catch (error) {
       addMessage("assistant", `Project creation failed: ${error.message}`);
@@ -1334,6 +1406,7 @@
       await loadProjects();
       renderProjects();
     });
+    $("#new-project-button").addEventListener("click", openNewProjectModal);
     $("#open-project-button").addEventListener("click", openProjectFromInput);
     $("#project-path-input").addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -1341,7 +1414,10 @@
         openProjectFromInput();
       }
     });
-    $("#create-project-button").addEventListener("click", createProject);
+    $("#new-project-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      createProject();
+    });
     $("#chat-form").addEventListener("submit", handleChatSubmit);
     $("#chat-panel-toggle").addEventListener("click", () => setChatPanelOpen(!state.chatPanelOpen));
     $("#new-session-button").addEventListener("click", openNewSessionModal);
@@ -1375,7 +1451,9 @@
       const target = event.target.closest("button");
       if (!target) return;
       if (target.dataset.closeModal) closeModal(target.dataset.closeModal);
-      if (target.dataset.projectPath) loadProject(target.dataset.projectPath);
+      if (target.dataset.toggleProject) toggleProjectGroup(target.dataset.toggleProject);
+      if (target.dataset.projectFile) loadProject(target.dataset.projectPath, target.dataset.projectFile);
+      else if (target.dataset.projectPath) loadProject(target.dataset.projectPath);
       if (target.dataset.toggleBlockGroup) toggleBlockGroup(target.dataset.toggleBlockGroup);
       if (target.dataset.selectProgram) selectProgram(target.dataset.selectProgram);
       if (target.dataset.focusBlock) selectBlock(target.dataset.focusBlock);
@@ -1438,6 +1516,20 @@
       record("chat transcript hidden from dock", getComputedStyle($("#chat-stream")).display === "none");
       record("chat history button is explicit", $("#history-button").textContent.trim() === "Chat History");
       record("project list remains visible", $("#project-list").clientHeight > 24);
+      record("project aaps files default unfolded", Boolean($(".project-aaps-list .project-aaps-file")));
+      const selectedProjectEntry = $(".project-entry.is-selected");
+      if (selectedProjectEntry) {
+        selectedProjectEntry.querySelector("[data-toggle-project]").click();
+        record("project aaps files can fold", !$(".project-entry.is-selected .project-aaps-list"));
+        $(".project-entry.is-selected [data-toggle-project]").click();
+        record("project aaps files can unfold", Boolean($(".project-entry.is-selected .project-aaps-list .project-aaps-file")));
+      } else {
+        record("project aaps files can fold", false, "No selected project entry rendered.");
+        record("project aaps files can unfold", false, "No selected project entry rendered.");
+      }
+      $("#new-project-button").click();
+      record("new project modal opens", !$("#new-project-modal").hidden);
+      closeModal("new-project-modal");
       record("current project card removed", !$("#current-project-card"));
       record("open path starts blank", $("#project-path-input").value === "");
       record("default system blocks render", SYSTEM_BLOCKS.every((block) => document.body.textContent.includes(block.title)));
