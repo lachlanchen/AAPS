@@ -153,6 +153,7 @@
     messages: [],
     settings: {},
     chatPanelOpen: false,
+    blockGroupsOpen: { system: false, user: true },
     artifacts: [],
     artifactCategory: "image",
     editingElementId: "",
@@ -272,6 +273,12 @@
 
   function selectedBlock() {
     return findUserBlock(state.selectedBlockId) || systemBlock(state.selectedBlockId);
+  }
+
+  function blockGroupForId(id) {
+    if (findUserBlock(id)) return "user";
+    if (systemBlock(id)) return "system";
+    return "";
   }
 
   function titleForNode(node) {
@@ -425,12 +432,18 @@
   function renderBlocks() {
     const userBlocks = allUserBlocks();
     const sections = [
-      { title: "System blocks", source: "system", blocks: SYSTEM_BLOCKS },
-      { title: "User / domain blocks", source: "user", blocks: userBlocks },
+      { title: "System blocks", source: "system", blocks: SYSTEM_BLOCKS, empty: "" },
+      {
+        title: "User / domain blocks",
+        source: "user",
+        blocks: userBlocks,
+        empty: "Domain blocks appear here when chat creates a program or reusable skill.",
+      },
     ];
     $("#block-count").textContent = String(SYSTEM_BLOCKS.length + userBlocks.length);
     $("#blocks-list").innerHTML = sections
       .map((section) => {
+        const open = state.blockGroupsOpen[section.source] !== false;
         const cards = section.blocks.length
           ? section.blocks
               .map((block) => {
@@ -465,8 +478,22 @@
                 `;
               })
               .join("")
-          : '<div class="empty-state">Domain blocks appear here when chat creates a program or reusable skill.</div>';
-        return `<h3 class="block-group-title">${escapeHtml(section.title)}</h3>${cards}`;
+          : `<div class="empty-state">${escapeHtml(section.empty || "No blocks in this group.")}</div>`;
+        return `
+          <section class="block-group${open ? "" : " is-folded"}" data-block-group="${escapeHtml(section.source)}">
+            <button
+              type="button"
+              class="block-group-title"
+              data-toggle-block-group="${escapeHtml(section.source)}"
+              aria-expanded="${open ? "true" : "false"}"
+            >
+              <span>${escapeHtml(section.title)}</span>
+              <span class="block-group-meta">${section.blocks.length} ${section.blocks.length === 1 ? "block" : "blocks"}</span>
+              <span class="fold-label">${open ? "Fold" : "Unfold"}</span>
+            </button>
+            <div class="block-group-body">${cards}</div>
+          </section>
+        `;
       })
       .join("");
   }
@@ -676,8 +703,16 @@
   function selectBlock(id) {
     const block = findUserBlock(id) || systemBlock(id);
     if (!block) return;
+    const group = blockGroupForId(id);
+    if (group) state.blockGroupsOpen[group] = true;
     state.selectedBlockId = id;
     setFocus("block/skill", id, titleForNode(block));
+    renderBlocks();
+  }
+
+  function toggleBlockGroup(source) {
+    if (!source) return;
+    state.blockGroupsOpen[source] = state.blockGroupsOpen[source] === false;
     renderBlocks();
   }
 
@@ -1061,6 +1096,7 @@
       if (!target) return;
       if (target.dataset.closeModal) closeModal(target.dataset.closeModal);
       if (target.dataset.projectPath) loadProject(target.dataset.projectPath);
+      if (target.dataset.toggleBlockGroup) toggleBlockGroup(target.dataset.toggleBlockGroup);
       if (target.dataset.selectProgram) selectProgram(target.dataset.selectProgram);
       if (target.dataset.focusBlock) selectBlock(target.dataset.focusBlock);
       if (target.dataset.selectBlock) selectBlock(target.dataset.selectBlock);
@@ -1114,6 +1150,12 @@
       record("current project card removed", !$("#current-project-card"));
       record("open path starts blank", $("#project-path-input").value === "");
       record("default system blocks render", SYSTEM_BLOCKS.every((block) => document.body.textContent.includes(block.title)));
+      record("system blocks default folded", $('[data-block-group="system"]').classList.contains("is-folded"));
+      record("user blocks default unfolded", !$('[data-block-group="user"]').classList.contains("is-folded"));
+      $('[data-toggle-block-group="system"]').click();
+      record("system blocks unfold from header", !$('[data-block-group="system"]').classList.contains("is-folded"));
+      $('[data-toggle-block-group="system"]').click();
+      record("system blocks fold from header", $('[data-block-group="system"]').classList.contains("is-folded"));
       const firstElement = $(".program-item");
       if (firstElement) {
         firstElement.querySelector("[data-select-program]").click();

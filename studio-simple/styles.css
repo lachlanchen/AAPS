@@ -447,12 +447,55 @@ p {
   padding: 0 9px;
 }
 
-.block-group-title {
+.block-group {
+  display: grid;
+  gap: 8px;
   margin-top: 8px;
+}
+
+.block-group-title {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+}
+
+.block-group-title:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.block-group-meta,
+.fold-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: none;
+}
+
+.fold-label {
+  min-width: 52px;
+  text-align: right;
+}
+
+.block-group-body {
+  display: grid;
+  gap: 10px;
+}
+
+.block-group.is-folded .block-group-body {
+  display: none;
 }
 
 .chat-dock {
