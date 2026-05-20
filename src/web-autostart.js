@@ -171,6 +171,10 @@ async function fetchHealth(host, port, timeoutMs = 450) {
   return (await fetchHealthDetails(host, port, timeoutMs)).ok;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function canListen(host, port) {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -185,7 +189,7 @@ async function waitForHealth(host, port, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await fetchHealth(host, port, 700)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await sleep(250);
   }
   return false;
 }
@@ -211,7 +215,7 @@ async function waitForPortRelease(host, port, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!(await fetchHealth(host, port, 220)) && (await canListen(host, port))) return true;
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await sleep(150);
   }
   return false;
 }
@@ -261,7 +265,7 @@ async function findReusableOrFreeWebPort({ host = DEFAULT_HOST, preferredPort = 
   for (let offset = 0; offset < attempts; offset += 1) {
     const port = startPort + offset;
     if (port >= 65536) break;
-    const health = await fetchHealthDetails(normalizedHost, port);
+    let health = await fetchHealthDetails(normalizedHost, port, 1000);
     if (health.ok) {
       if (normalizeUi(health.ui || "classic") !== desiredUi && !restart) continue;
       if (restart) {
@@ -271,7 +275,22 @@ async function findReusableOrFreeWebPort({ host = DEFAULT_HOST, preferredPort = 
       }
       return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: true, available: false, health };
     }
-    if (await canListen(normalizedHost, port)) {
+    const available = await canListen(normalizedHost, port);
+    if (!available) {
+      await sleep(350);
+      health = await fetchHealthDetails(normalizedHost, port, 1200);
+      if (health.ok) {
+        if (normalizeUi(health.ui || "classic") !== desiredUi && !restart) continue;
+        if (restart) {
+          const stopped = await stopAapsWebApp({ host: normalizedHost, preferredPort: port });
+          if (!stopped.ok) return { port, host: normalizedHost, url: "", reused: false, available: false, stopped, error: stopped.error };
+          return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: false, available: true, restarted: true, stopped };
+        }
+        return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: true, available: false, health };
+      }
+      continue;
+    }
+    if (available) {
       return { port, host: normalizedHost, url: webUrl(normalizedHost, port), reused: false, available: true };
     }
   }

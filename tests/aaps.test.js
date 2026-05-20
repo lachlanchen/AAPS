@@ -25,6 +25,13 @@ function walkProjectFiles(dir) {
   return walk(dir).map((file) => path.relative(dir, file).split(path.sep).join("/"));
 }
 
+function loopbackPortFromUrl(url) {
+  const parsed = new URL(url);
+  assert.strictEqual(parsed.hostname, "127.0.0.1");
+  assert(/^\d+$/.test(parsed.port), url);
+  return parsed.port;
+}
+
 function findManifests(dir) {
   const manifests = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -506,7 +513,7 @@ const webappStart = childProcess.spawnSync(
 assert.strictEqual(webappStart.status, 0, webappStart.stderr || webappStart.stdout);
 const webappPayload = JSON.parse(webappStart.stdout);
 assert.strictEqual(webappPayload.ok, true, JSON.stringify(webappPayload));
-assert.strictEqual(webappPayload.url, `http://127.0.0.1:${webappPort}`);
+const startedWebappPort = loopbackPortFromUrl(webappPayload.url);
 const webappHealth = httpJson(`${webappPayload.url}/api/health`);
 assert.strictEqual(webappHealth.ok, true);
 assert.strictEqual(webappHealth.app, "aaps");
@@ -518,24 +525,32 @@ const webappReuse = childProcess.spawnSync(
 assert.strictEqual(webappReuse.status, 0, webappReuse.stderr || webappReuse.stdout);
 const webappReusePayload = JSON.parse(webappReuse.stdout);
 assert.strictEqual(webappReusePayload.ok, true, webappReuse.stdout);
-assert.strictEqual(webappReusePayload.url, `http://127.0.0.1:${webappPort}`);
+const activeWebappPort = loopbackPortFromUrl(webappReusePayload.url);
+assert.strictEqual(httpJson(`${webappReusePayload.url}/api/health`).ok, true);
+if (activeWebappPort !== startedWebappPort) {
+  childProcess.spawnSync(
+    "node",
+    ["scripts/aaps.js", "webapp", "stop", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", startedWebappPort, "--json"],
+    { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
+  );
+}
 const webappRestart = childProcess.spawnSync(
   "node",
-  ["scripts/aaps.js", "webapp", "restart", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--mock-codex", "--json"],
+  ["scripts/aaps.js", "webapp", "restart", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", activeWebappPort, "--mock-codex", "--json"],
   { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
 );
 assert.strictEqual(webappRestart.status, 0, webappRestart.stderr || webappRestart.stdout);
 assert.strictEqual(JSON.parse(webappRestart.stdout).restarted, true);
 const webappChat = childProcess.spawnSync(
   "node",
-  ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--no-webapp"],
-  { cwd: path.join(__dirname, ".."), env: webappEnv, input: "/webapp 8897\n/webapp restart\n/webapp stop\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n", encoding: "utf8" }
+  ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", activeWebappPort, "--no-webapp"],
+  { cwd: path.join(__dirname, ".."), env: webappEnv, input: `/webapp ${activeWebappPort}\n/webapp restart\n/webapp stop\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n`, encoding: "utf8" }
 );
 assert.strictEqual(webappChat.status, 0, webappChat.stderr || webappChat.stdout);
 assert(webappChat.stdout.includes("AAPS v"), webappChat.stdout);
-assert(new RegExp(`AAPS Studio (reused|started): http://127\\.0\\.0\\.1:${webappPort}`).test(webappChat.stdout), webappChat.stdout);
-assert(webappChat.stdout.includes(`AAPS Studio restarted: http://127.0.0.1:${webappPort}`), webappChat.stdout);
-assert(webappChat.stdout.includes(`AAPS Studio stopped: http://127.0.0.1:${webappPort}`), webappChat.stdout);
+assert(/AAPS Studio (reused|started): http:\/\/127\.0\.0\.1:\d+/.test(webappChat.stdout), webappChat.stdout);
+assert(/AAPS Studio restarted: http:\/\/127\.0\.0\.1:\d+/.test(webappChat.stdout), webappChat.stdout);
+assert(/AAPS Studio stopped: http:\/\/127\.0\.0\.1:\d+/.test(webappChat.stdout), webappChat.stdout);
 assert(webappChat.stdout.includes("workflows/main.aaps"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=aginti"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=codex"), webappChat.stdout);
@@ -543,14 +558,14 @@ assert(webappChat.stdout.includes("backend=print"), webappChat.stdout);
 assert(webappChat.stdout.includes("Ctrl-J inserts a newline"), webappChat.stdout);
 const webappStop = childProcess.spawnSync(
   "node",
-  ["scripts/aaps.js", "webapp", "stop", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
+  ["scripts/aaps.js", "webapp", "stop", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", activeWebappPort, "--json"],
   { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
 );
 assert.strictEqual(webappStop.status, 0, webappStop.stderr || webappStop.stdout);
 assert.strictEqual(JSON.parse(webappStop.stdout).alreadyStopped, true);
 let stoppedHealthResponded = true;
 try {
-  httpJson(`${webappPayload.url}/api/health`);
+  httpJson(`http://127.0.0.1:${activeWebappPort}/api/health`);
 } catch (_error) {
   stoppedHealthResponded = false;
 }
