@@ -169,13 +169,13 @@ aaps webapp disable                     # persistently disable automatic Studio 
 aaps webapp enable                      # re-enable automatic Studio startup
 aaps webapp stop --project .            # stop the local Studio on the selected port
 aaps webapp restart --project .         # stop and relaunch Studio for the same project
-aaps chat --project .                   # AAPS-focused chat CLI with history, Ctrl-J multiline, /webapp, /parse, /compile, /run
+aaps chat --project . --session default # synced CLI/Studio chat with Ctrl-J multiline, /webapp, /parse, /compile, /run
 aaps                                    # same as aaps chat
 aaps studio --project .                 # foreground Studio server
 aaps update                             # update a global npm install when a newer release exists
 ```
 
-`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/compile`, `/check`, `/run`, `/webapp start|stop|restart|reuse|enable|disable|status`, and `/backend codex|aginti|print`. In a real terminal it supports Ctrl-J for multiline prompts, ignores Ctrl-J on an empty prompt, and uses Up/Down for prompt history or multi-line cursor movement.
+`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/compile`, `/check`, `/run`, `/webapp start|stop|restart|reuse|enable|disable|status`, `/session <id>`, `/history`, and `/backend codex|aginti|print`. Plain messages use the running Studio backend when available, so the terminal and web UI share the same named session history. Open Studio with `?session=<id>` or use the default session to see the same transcript. In a real terminal it supports Ctrl-J for multiline prompts, ignores Ctrl-J on an empty prompt, and uses Up/Down for prompt history or multi-line cursor movement.
 
 Direct prompt handoff:
 

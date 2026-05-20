@@ -464,6 +464,17 @@ def write_studio_chat_event(project_dir: Path, scope: str, scope_id: str, messag
     return history_path.relative_to(project_dir).as_posix(), artifact_path.relative_to(project_dir).as_posix()
 
 
+def chat_session_scope(body: dict, context: dict | None = None) -> tuple[str, str]:
+    active_context = context if isinstance(context, dict) else {}
+    session_id = str(body.get("sessionId") or active_context.get("sessionId") or "").strip()
+    if session_id:
+        return "session", session_id
+    return (
+        str(active_context.get("tab") or "program"),
+        str(active_context.get("workingFile") or active_context.get("activeFile") or body.get("file") or "active"),
+    )
+
+
 def snapshot_file(project_dir: Path, file_path: Path, action: str) -> str:
     if not file_path.exists() or not file_path.is_file():
         return ""
@@ -3900,20 +3911,26 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 return
             if os.environ.get("AAPS_MOCK_CODEX") == "1":
                 project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
+                scope, scope_id = chat_session_scope(body, context)
                 result = {
                     "mode": "reply",
                     "route": "mock",
                     "message": "Mock router accepted the message; source left unchanged.",
                     "source": source,
                     "diagnostics": [],
+                    "sessionId": str(body.get("sessionId") or context.get("sessionId") or ""),
                 }
                 history_path, artifact_path = write_studio_chat_event(
                     project_dir,
-                    str(context.get("tab") or "program"),
-                    str(context.get("workingFile") or context.get("activeFile") or body.get("file") or "active"),
+                    scope,
+                    scope_id,
                     message,
                     result,
-                    {"context": context},
+                    {
+                        "context": context,
+                        "source": str(context.get("tab") or "studio"),
+                        "sessionId": str(body.get("sessionId") or context.get("sessionId") or ""),
+                    },
                 )
                 result["historyPath"] = history_path
                 result["artifactPath"] = artifact_path
@@ -3935,8 +3952,10 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             )
             try:
                 project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
+                scope, scope_id = chat_session_scope(body, context)
                 result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
                 if isinstance(result, dict):
+                    result.setdefault("sessionId", str(body.get("sessionId") or context.get("sessionId") or ""))
                     persist_agent_chat_edit(
                         project_dir,
                         body,
@@ -3947,8 +3966,8 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     )
                 history_path, artifact_path = write_studio_chat_event(
                     project_dir,
-                    str(context.get("tab") or "program"),
-                    str(context.get("workingFile") or context.get("activeFile") or body.get("file") or "active"),
+                    scope,
+                    scope_id,
                     message,
                     result,
                     {
@@ -3956,6 +3975,8 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         "job_id": job_id,
                         "backend": str(read_settings().get("agentProvider") or "codex"),
                         "agintiSessionId": outcome.get("agintiSessionId", ""),
+                        "source": str(context.get("tab") or "studio"),
+                        "sessionId": str(body.get("sessionId") or context.get("sessionId") or ""),
                     },
                 )
                 if isinstance(outcome.get("result"), dict):

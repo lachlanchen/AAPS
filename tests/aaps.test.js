@@ -541,6 +541,19 @@ const webappRestart = childProcess.spawnSync(
 );
 assert.strictEqual(webappRestart.status, 0, webappRestart.stderr || webappRestart.stdout);
 assert.strictEqual(JSON.parse(webappRestart.stdout).restarted, true);
+const webappSyncedChat = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", activeWebappPort, "--session", "cli-sync"],
+  { cwd: path.join(__dirname, ".."), env: webappEnv, input: "hello synced terminal session\n/history\n/exit\n", encoding: "utf8" }
+);
+assert.strictEqual(webappSyncedChat.status, 0, webappSyncedChat.stderr || webappSyncedChat.stdout);
+assert(webappSyncedChat.stdout.includes("session=cli-sync"), webappSyncedChat.stdout);
+assert(webappSyncedChat.stdout.includes("Mock router accepted the message"), webappSyncedChat.stdout);
+const syncedHistory = httpJson(`http://127.0.0.1:${activeWebappPort}/api/aaps/history?path=.&scope=session&id=cli-sync`);
+assert.strictEqual(syncedHistory.ok, true);
+assert.strictEqual(syncedHistory.events.length, 1, JSON.stringify(syncedHistory));
+assert.strictEqual(syncedHistory.events[0].message, "hello synced terminal session");
+assert.strictEqual(syncedHistory.events[0].metadata.source, "terminal");
 const webappChat = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", activeWebappPort, "--no-webapp"],

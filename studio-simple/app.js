@@ -125,6 +125,13 @@
     { id: "explorer", label: "File Explorer", extensions: [] },
   ];
   const TDV_MODE = new URLSearchParams(window.location.search).has("tdv");
+  const SESSION_ID = (() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("session") || params.get("aapsSession");
+    const fromStorage = window.localStorage ? window.localStorage.getItem("aaps.simple.sessionId") : "";
+    const raw = String(fromUrl || fromStorage || "default").trim();
+    return raw.replace(/[^0-9A-Za-z_.-]+/g, "_").slice(0, 80) || "default";
+  })();
 
   const DEFAULT_SOURCE = [
     'pipeline "Simple AAPS Program" {',
@@ -151,6 +158,10 @@
     selectedBlockId: "",
     focus: { type: "project", id: "selected project/program", label: "selected project/program" },
     messages: [],
+    sessionId: SESSION_ID,
+    lastHistorySignature: "",
+    chatInFlight: false,
+    historySyncTimer: null,
     settings: {},
     chatPanelOpen: false,
     blockGroupsOpen: { system: false, user: true },
@@ -199,6 +210,7 @@
       projectPath: state.projectPath || ".",
       activeFile: state.activeFile || "",
       workingFile: state.activeFile || "",
+      sessionId: state.sessionId,
       focus: state.focus,
       selectedElement,
       selectedBlock: selectedBlockValue,
@@ -213,6 +225,75 @@
         agintiProvider: state.settings.agintiProvider || "",
       },
     };
+  }
+
+  function syncSessionBadge() {
+    if ($("#session-status")) $("#session-status").textContent = `session: ${state.sessionId}`;
+    if (window.localStorage) window.localStorage.setItem("aaps.simple.sessionId", state.sessionId);
+  }
+
+  function messageTextFromResponse(response) {
+    if (!response) return "";
+    if (typeof response === "string") return response;
+    if (typeof response.message === "string") return response.message;
+    if (typeof response.summary === "string") return response.summary;
+    return JSON.stringify(response, null, 2);
+  }
+
+  function messagesFromHistoryEvents(events = []) {
+    const messages = [];
+    events.forEach((event) => {
+      const timestamp = event.time || "";
+      const focus = `${event.scope || "session"}:${event.scope_id || state.sessionId}`;
+      const metadata = event.metadata || {};
+      if (event.message) {
+        messages.push({
+          role: "user",
+          text: event.message,
+          timestamp,
+          focus,
+          backend: metadata.source === "terminal" ? "terminal" : "",
+        });
+      }
+      const responseText = messageTextFromResponse(event.response);
+      if (responseText) {
+        messages.push({
+          role: "assistant",
+          text: responseText,
+          timestamp,
+          focus,
+          backend: metadata.backend || event.response?.route || "",
+        });
+      }
+    });
+    return messages;
+  }
+
+  function historySignature(events = []) {
+    return JSON.stringify(events.map((event) => [event.time, event.message, event.response?.message || event.response?.summary || ""]));
+  }
+
+  async function loadSessionHistory({ quiet = false } = {}) {
+    if (!state.projectPath || !state.sessionId) return false;
+    try {
+      const query = new URLSearchParams({
+        path: state.projectPath || ".",
+        scope: "session",
+        id: state.sessionId,
+      });
+      const payload = await jsonFetch(`/api/aaps/history?${query.toString()}`);
+      const events = Array.isArray(payload.events) ? payload.events : [];
+      const signature = historySignature(events);
+      if (signature !== state.lastHistorySignature) {
+        state.lastHistorySignature = signature;
+        state.messages = messagesFromHistoryEvents(events);
+        renderChat();
+      }
+      return true;
+    } catch (error) {
+      if (!quiet) addMessage("assistant", `Session history could not be loaded: ${error.message}`);
+      return false;
+    }
   }
 
   function safeParse(source) {
@@ -650,6 +731,7 @@
       }
       await loadProjects();
       $("#chat-status").textContent = "ready";
+      await loadSessionHistory({ quiet: true });
     } catch (error) {
       state.manifest = { name: "Local draft" };
       state.manifestExists = false;
@@ -769,6 +851,7 @@
   async function applyBackendChat(message) {
     const settings = await saveSettingsFromControls();
     const backend = backendLabel(settings);
+    state.chatInFlight = true;
     setChatStatus(`routing - ${backend}`, "Backend request sent");
     const input = $("#chat-input");
     const sendButton = $("#chat-form button[type='submit']");
@@ -780,6 +863,7 @@
       const payload = await jsonFetch("/api/aaps/chat", {
         path: state.projectPath || ".",
         file: state.activeFile || "",
+        sessionId: state.sessionId,
         source: state.source,
         message,
         forceRealBackend: true,
@@ -794,10 +878,12 @@
         await persistProgram();
         showToast("AAPS source updated", state.activeFile || "active workflow", "success");
       }
-      addMessage("assistant", result.message || result.summary || JSON.stringify(result, null, 2), { backend });
+      const synced = await loadSessionHistory({ quiet: true });
+      if (!synced) addMessage("assistant", result.message || result.summary || JSON.stringify(result, null, 2), { backend });
       setChatStatus(`ready - ${backend}`, "Backend response ready", "success");
       renderAll();
     } finally {
+      state.chatInFlight = false;
       window.clearTimeout(waitingTimer);
       window.clearTimeout(slowTimer);
       if (input) input.disabled = false;
@@ -824,6 +910,14 @@
       addMessage("assistant", `Backend failed: ${error.message}`);
       setChatStatus("backend unavailable", "Backend failed", "error");
     }
+  }
+
+  function startSessionSync() {
+    syncSessionBadge();
+    if (state.historySyncTimer || TDV_MODE) return;
+    state.historySyncTimer = window.setInterval(() => {
+      if (!state.chatInFlight) loadSessionHistory({ quiet: true });
+    }, 5000);
   }
 
   function fillLinkedBlockOptions(select, selectedValue = "") {
@@ -1112,7 +1206,7 @@
   function addInitialMessage() {
     if ($("#chat-status")) $("#chat-status").textContent = "ready";
     if ($("#chat-scope") && state.focus.type === "project") {
-      $("#chat-scope").textContent = "Ready. Pick a project, inspect the program and reusable blocks, then chat about the selected scope.";
+      $("#chat-scope").textContent = `Ready. Web and terminal share session "${state.sessionId}".`;
     }
   }
 
@@ -1144,6 +1238,7 @@
       record("regions exist", ["projects", "program", "blocks", "chat"].every((name) => Boolean($(`[data-testid="${name}-region"]`))));
       record("chat dock is fixed to viewport bottom", getComputedStyle($(".chat-dock")).position === "fixed");
       record("chat panel defaults collapsed", !$(".chat-dock").classList.contains("is-expanded"));
+      record("chat session badge visible", $("#session-status").textContent.includes("session:"));
       record("chat transcript hidden from dock", getComputedStyle($("#chat-stream")).display === "none");
       record("chat history button is explicit", $("#history-button").textContent.trim() === "Chat History");
       record("project list remains visible", $("#project-list").clientHeight > 24);
@@ -1219,6 +1314,7 @@
     }
     attachEvents();
     setChatPanelOpen(false);
+    startSessionSync();
     await loadSettings();
     resetProgram(DEFAULT_SOURCE);
     await loadProject(".");

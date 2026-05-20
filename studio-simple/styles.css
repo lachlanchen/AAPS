@@ -528,6 +528,13 @@ p {
   border-bottom: 1px solid var(--line);
 }
 
+.chat-head-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .chat-head h2,
 .modal-head h2 {
   font-size: 17px;

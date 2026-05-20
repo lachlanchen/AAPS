@@ -3,6 +3,7 @@
 
 const childProcess = require("child_process");
 const fs = require("fs");
+const http = require("http");
 const os = require("os");
 const path = require("path");
 const readline = require("readline");
@@ -66,7 +67,7 @@ function usage() {
     "  aaps prompt \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
     "  aaps \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
-    "  aaps chat [--project .] [--backend codex|aginti|print]",
+    "  aaps chat [--project .] [--backend codex|aginti|print] [--session default]",
     "  aaps webapp [simple|start|stop|restart|reuse|enable|disable|status] [--project .] [--host 127.0.0.1] [--port 8797] [--ui classic|simple] [--json]",
     "  aaps doctor [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
     "  aaps studio [--project .] [--host 127.0.0.1] [--port 8797] [--ui classic|simple] [--mock-codex]",
@@ -85,6 +86,7 @@ function usage() {
     "  --set <name=value> Override an AAPS input or parameter at runtime; repeatable.",
     "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --backend <name>  Prompt backend for direct goals. Defaults to codex.",
+    "  --session <id>    Shared chat session for syncing CLI and Studio. Defaults to default.",
     "  --no-auto-update Skip startup update checks for global npm installs.",
     "  --auto-update     Force a startup update check for global npm installs.",
     "  --provider <name> Provider passed to AgInTi backend.",
@@ -1218,6 +1220,8 @@ function chatHelp() {
   return [
     "AAPS chat commands:",
     "  /webapp [simple|port|start|stop|restart|reuse|enable|disable|status]  Control AAPS Studio and auto-start.",
+    "  /session [id]           Show or switch the shared web/terminal chat session.",
+    "  /history                Print the synced session history from Studio.",
     "  /status                 Show project manifest, active file, and backend.",
     "  /files                  List project .aaps files.",
     "  /validate [file]        Validate the project or selected file.",
@@ -1234,7 +1238,7 @@ function chatHelp() {
     "",
     "Editing: Ctrl-J inserts a newline; Enter submits; Left/Right, Home/End, Ctrl-A/E/U/K, Delete, and Backspace work in TTY mode.",
     "History: Up/Down recalls previous messages from an empty prompt or moves within a multi-line prompt.",
-    "Plain messages are sent through `aaps prompt` so the selected backend can edit, parse, compile, and verify AAPS.",
+    "Plain messages use the running Studio backend when available, so web and terminal share the same session history.",
   ].join("\n");
 }
 
@@ -1275,6 +1279,76 @@ function runCliAndPrint(projectDir, args) {
   if (stderr) printErrorMessage(stderr);
   if ((result.status ?? 0) !== 0 && !stderr) printErrorMessage(`command failed with exit code ${result.status}`);
   return result;
+}
+
+function normalizeSessionId(value = "default") {
+  const raw = String(value || "default").trim();
+  return raw.replace(/[^0-9A-Za-z_.-]+/g, "_").slice(0, 80) || "default";
+}
+
+function httpJsonRequest(url, payload = null, timeoutMs = 15 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    const body = payload ? JSON.stringify(payload) : "";
+    const parsed = new URL(url);
+    const request = http.request(
+      {
+        method: payload ? "POST" : "GET",
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: `${parsed.pathname}${parsed.search}`,
+        timeout: timeoutMs,
+        headers: payload
+          ? {
+              "content-type": "application/json",
+              "content-length": Buffer.byteLength(body),
+            }
+          : {},
+      },
+      (response) => {
+        let responseBody = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+        response.on("end", () => {
+          let json = {};
+          try {
+            json = JSON.parse(responseBody || "{}");
+          } catch (error) {
+            reject(new Error(`Invalid JSON from ${url}: ${error.message}`));
+            return;
+          }
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            reject(new Error(json.error || `${url} returned ${response.statusCode}`));
+            return;
+          }
+          resolve(json);
+        });
+      }
+    );
+    request.on("timeout", () => request.destroy(new Error(`Timed out calling ${url}`)));
+    request.on("error", reject);
+    if (body) request.write(body);
+    request.end();
+  });
+}
+
+function responseTextFromWebChat(payload = {}) {
+  const result = payload.result && typeof payload.result === "object" ? payload.result : payload;
+  if (typeof result.message === "string") return result.message;
+  if (typeof result.summary === "string") return result.summary;
+  return JSON.stringify(result, null, 2);
+}
+
+function historyMessagesFromEvents(events = []) {
+  const rows = [];
+  events.forEach((event) => {
+    if (event.message) rows.push({ role: "You", text: event.message });
+    const response = event.response || {};
+    const text = typeof response === "string" ? response : response.message || response.summary || "";
+    if (text) rows.push({ role: "AAPS", text });
+  });
+  return rows;
 }
 
 class ComposerHistory {
@@ -1329,6 +1403,8 @@ class ComposerHistory {
 const SLASH_COMMANDS = [
   "/help",
   "/webapp",
+  "/session",
+  "/history",
   "/status",
   "/files",
   "/validate",
@@ -1598,6 +1674,7 @@ async function readComposerLine(history) {
 async function startChat(options) {
   const projectDir = path.resolve(options.project || ".");
   let backend = normalizePromptBackend(options.backend);
+  let sessionId = normalizeSessionId(options.session || process.env.AAPS_SESSION_ID || "default");
   let webResult = { ok: false, url: "", error: "", disabled: Boolean(options.noWebapp) };
   if (!options.noWebapp) {
     webResult = await commandWebapp({ ...options, project: projectDir, silent: true }, { manual: false });
@@ -1609,10 +1686,82 @@ async function startChat(options) {
       : `webapp unavailable - use /webapp to retry; error: ${compactLine(webResult.error || "unknown", 84)}`;
   printChatHeader({ webAppUrl: webResult.ok ? webResult.url : "", webAppNotice: notice, backend });
   printProjectStatus(projectDir, backend);
+  printStateMessage(`session=${sessionId}${webResult.ok ? ` synced=${webResult.url}?session=${encodeURIComponent(sessionId)}` : ""}`);
   printAapsMessage(chatHelp());
 
   const history = new ComposerHistory();
   let activeWebPort = webResult.ok && webResult.port ? webResult.port : options.port || DEFAULT_PORT;
+  let activeWebUrl = webResult.ok ? webResult.url : "";
+
+  function activeProjectFile() {
+    const manifest = readManifest(projectDir);
+    return (manifest && (manifest.activeFile || manifest.defaultMain)) || "";
+  }
+
+  function activeProjectSource() {
+    const file = activeProjectFile();
+    if (!file) return "";
+    try {
+      return fs.readFileSync(safeRelative(projectDir, file, "active AAPS file"), "utf8");
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  async function setWebBackendIfAvailable() {
+    if (!activeWebUrl || backend === "print") return;
+    try {
+      await httpJsonRequest(`${activeWebUrl}/api/aaps/settings`, { agentProvider: backend }, 5000);
+    } catch (error) {
+      printStateMessage(`web settings sync failed: ${compactLine(error.message, 100)}`);
+    }
+  }
+
+  async function printSyncedHistory() {
+    if (!activeWebUrl) {
+      printAapsMessage("No running Studio backend is available for synced history. Start it with /webapp simple.");
+      return false;
+    }
+    try {
+      const query = new URLSearchParams({ path: ".", scope: "session", id: sessionId });
+      const payload = await httpJsonRequest(`${activeWebUrl}/api/aaps/history?${query.toString()}`, null, 5000);
+      const rows = historyMessagesFromEvents(payload.events || []);
+      if (!rows.length) printAapsMessage(`No messages in synced session "${sessionId}" yet.`);
+      else rows.forEach((row) => (row.role === "You" ? printStripe("user>", row.text, ansi.userBg) : printAapsMessage(row.text)));
+      return true;
+    } catch (error) {
+      printErrorMessage(`History sync failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  async function sendSyncedChat(message) {
+    if (!activeWebUrl || backend === "print") return false;
+    await setWebBackendIfAvailable();
+    const activeFile = activeProjectFile();
+    const payload = await httpJsonRequest(
+      `${activeWebUrl}/api/aaps/chat`,
+      {
+        path: ".",
+        file: activeFile,
+        sessionId,
+        source: activeProjectSource(),
+        message,
+        forceRealBackend: true,
+        context: {
+          tab: "terminal",
+          projectPath: ".",
+          activeFile,
+          workingFile: activeFile,
+          sessionId,
+          focus: { type: "terminal", id: sessionId, label: `terminal session ${sessionId}` },
+        },
+      },
+      Number(options.chatTimeoutMs || 15 * 60 * 1000)
+    );
+    printAapsMessage(responseTextFromWebChat(payload));
+    return true;
+  }
 
   async function handleLine(rawLine) {
     const line = String(rawLine || "").trim();
@@ -1634,6 +1783,21 @@ async function startChat(options) {
       }
       const payload = await commandWebapp({ ...options, project: projectDir, port: parsedWebapp.port, ui: parsedWebapp.ui, json: false }, { manual: true, action: parsedWebapp.action });
       if (payload.port) activeWebPort = payload.port;
+      activeWebUrl = payload.ok && payload.url ? payload.url : "";
+      return false;
+    }
+    if (line.startsWith("/session")) {
+      const words = splitCliWords(line);
+      if (words[1]) {
+        sessionId = normalizeSessionId(words[1]);
+        printStateMessage(`session=${sessionId}${activeWebUrl ? ` synced=${activeWebUrl}?session=${encodeURIComponent(sessionId)}` : ""}`);
+      } else {
+        printStateMessage(`session=${sessionId}${activeWebUrl ? ` synced=${activeWebUrl}?session=${encodeURIComponent(sessionId)}` : ""}`);
+      }
+      return false;
+    }
+    if (line === "/history") {
+      await printSyncedHistory();
       return false;
     }
     if (line === "/codex" || line === "/aginti" || line === "/print" || line.startsWith("/backend")) {
@@ -1682,6 +1846,12 @@ async function startChat(options) {
         packageVersion: packageVersion(),
       });
       return false;
+    }
+    try {
+      if (await sendSyncedChat(line)) return false;
+    } catch (error) {
+      printErrorMessage(`Synced Studio chat failed: ${error.message}`);
+      printStateMessage("falling back to local prompt backend; this fallback is not synced to the web session");
     }
     runCliAndPrint(projectDir, ["prompt", line, "--project", ".", "--backend", backend]);
     return false;
