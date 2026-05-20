@@ -96,6 +96,19 @@ function prepareProject() {
     ].join("\n"),
     "utf8"
   );
+  fs.writeFileSync(
+    path.join(projectDir, "workflows", "secondary.aaps"),
+    [
+      'pipeline "Secondary Browser TDV" {',
+      '  domain "general"',
+      "  task inspect_secondary {",
+      '    prompt "Verify that opening a project .aaps file updates the visible program."',
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
 }
 
 function extractTdvResults(dom) {

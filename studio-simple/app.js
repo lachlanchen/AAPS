@@ -783,12 +783,18 @@
   }
 
   function toggleProjectGroup(key) {
+    if (!key) return;
     state.projectGroupsOpen[key] = state.projectGroupsOpen[key] === false;
     renderProjects();
   }
 
   function renderProjects() {
     const list = $("#project-list");
+    const activeFileLabel = $("#active-project-file");
+    if (activeFileLabel) {
+      activeFileLabel.textContent = state.activeFile ? `Active .aaps: ${state.activeFile}` : "Active .aaps: none selected";
+      activeFileLabel.title = state.activeFile || "No active .aaps file selected";
+    }
     const currentProject = {
       name: (state.manifest && state.manifest.name) || "AAPS",
       path: state.projectPath || "",
@@ -832,7 +838,10 @@
                           data-project-path="${escapeHtml(path)}"
                           data-project-file="${escapeHtml(file)}"
                           title="${escapeHtml(file)}"
-                        >${escapeHtml(file)}</button>
+                        >
+                          <span class="project-aaps-name">${escapeHtml(file)}</span>
+                          <span class="project-aaps-open">${selected && file === state.activeFile ? "Active" : "Open"}</span>
+                        </button>
                       `
                     )
                     .join("")}
@@ -844,6 +853,7 @@
               <div class="project-header-row">
                 <button type="button" class="project-toggle" data-toggle-project="${escapeHtml(key)}" aria-expanded="${open ? "true" : "false"}" title="${open ? "Fold project" : "Unfold project"}">
                   <span class="project-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span>
+                  <span class="project-toggle-label">Files</span>
                 </button>
                 <button type="button" class="project-item" data-project-path="${escapeHtml(path)}">
                   <strong>${escapeHtml(name)}${selected ? " · selected" : ""}</strong>
@@ -1755,19 +1765,54 @@
     document.addEventListener("click", (event) => {
       const target = event.target.closest("button");
       if (!target) return;
-      if (target.dataset.closeModal) closeModal(target.dataset.closeModal);
-      if (target.dataset.toggleProject) toggleProjectGroup(target.dataset.toggleProject);
-      if (target.dataset.projectFile) loadProject(target.dataset.projectPath, target.dataset.projectFile);
-      else if (target.dataset.projectPath) loadProject(target.dataset.projectPath);
-      if (target.dataset.toggleBlockGroup) toggleBlockGroup(target.dataset.toggleBlockGroup);
-      if (target.dataset.selectProgram) selectProgram(target.dataset.selectProgram);
-      if (target.dataset.focusBlock) selectBlock(target.dataset.focusBlock);
-      if (target.dataset.selectBlock) selectBlock(target.dataset.selectBlock);
-      if (target.dataset.editProgram) openElementEditor(target.dataset.editProgram);
-      if (target.dataset.editBlock) openBlockEditor(target.dataset.editBlock);
+      if (target.dataset.closeModal) {
+        closeModal(target.dataset.closeModal);
+        return;
+      }
+      if (target.dataset.toggleProject) {
+        event.preventDefault();
+        toggleProjectGroup(target.dataset.toggleProject);
+        return;
+      }
+      if (target.dataset.projectFile) {
+        event.preventDefault();
+        loadProject(target.dataset.projectPath, target.dataset.projectFile);
+        showToast("Opening .aaps", target.dataset.projectFile, "success", 1800);
+        return;
+      }
+      if (target.dataset.projectPath) {
+        event.preventDefault();
+        loadProject(target.dataset.projectPath);
+        return;
+      }
+      if (target.dataset.toggleBlockGroup) {
+        toggleBlockGroup(target.dataset.toggleBlockGroup);
+        return;
+      }
+      if (target.dataset.selectProgram) {
+        selectProgram(target.dataset.selectProgram);
+        return;
+      }
+      if (target.dataset.focusBlock) {
+        selectBlock(target.dataset.focusBlock);
+        return;
+      }
+      if (target.dataset.selectBlock) {
+        selectBlock(target.dataset.selectBlock);
+        return;
+      }
+      if (target.dataset.editProgram) {
+        openElementEditor(target.dataset.editProgram);
+        return;
+      }
+      if (target.dataset.editBlock) {
+        openBlockEditor(target.dataset.editBlock);
+        return;
+      }
       if (target.dataset.artifactCategory) {
         state.artifactCategory = target.dataset.artifactCategory;
         renderArtifactsModal();
+        return;
       }
     });
   }
@@ -1831,6 +1876,20 @@
       } else {
         record("project aaps files can fold", false, "No selected project entry rendered.");
         record("project aaps files can unfold", false, "No selected project entry rendered.");
+      }
+      record("active aaps label visible", $("#active-project-file").textContent.includes("Active .aaps:"));
+      const alternateAaps = Array.from($$(".project-entry.is-selected .project-aaps-file")).find((button) => !button.classList.contains("is-active"));
+      if (alternateAaps) {
+        const fileName = alternateAaps.dataset.projectFile;
+        record("project aaps open badge visible", Boolean(alternateAaps.querySelector(".project-aaps-open")));
+        alternateAaps.click();
+        await waitFor(() => state.activeFile === fileName && $("#program-subtitle").textContent.includes(fileName), 5000);
+        record("opening project aaps updates program", state.activeFile === fileName && $(".project-aaps-file.is-active")?.dataset.projectFile === fileName);
+        record("active aaps label updates after open", $("#active-project-file").textContent.includes(fileName));
+      } else {
+        record("project aaps open badge visible", false, "No alternate .aaps file rendered.");
+        record("opening project aaps updates program", false, "No alternate .aaps file rendered.");
+        record("active aaps label updates after open", false, "No alternate .aaps file rendered.");
       }
       $("#new-project-button").click();
       record("new project modal opens", !$("#new-project-modal").hidden);

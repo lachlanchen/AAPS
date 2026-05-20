@@ -234,6 +234,16 @@ p {
   margin-top: 4px;
 }
 
+.active-project-file {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent) !important;
+  font-size: 12px !important;
+  font-weight: 850;
+}
+
 .projects-panel {
   padding-bottom: 0;
 }
@@ -299,17 +309,27 @@ p {
 
 .project-header-row {
   display: grid;
-  grid-template-columns: 30px 1fr;
+  grid-template-columns: 62px 1fr;
   align-items: stretch;
 }
 
 .project-toggle {
   min-height: 58px;
-  padding: 0;
+  padding: 6px 4px;
   border: 0;
   border-right: 1px solid var(--line);
   border-radius: 0;
   background: transparent;
+  color: var(--muted);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+}
+
+.project-toggle:hover {
+  color: var(--accent);
+  background: rgba(223, 240, 239, 0.55);
 }
 
 .project-item {
@@ -355,8 +375,17 @@ p {
 
 .project-chevron {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: currentColor;
   font-weight: 900;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.project-toggle-label {
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .project-aaps-list {
@@ -374,12 +403,43 @@ p {
   background: rgba(255, 255, 255, 0.72);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-aaps-file:hover {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.project-aaps-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-aaps-open {
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .project-aaps-file.is-active {
   border-color: var(--accent);
   background: #fff;
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.project-aaps-file.is-active .project-aaps-open {
+  color: #fff;
+  background: var(--accent);
 }
 
 .project-empty {
