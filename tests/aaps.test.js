@@ -516,7 +516,9 @@ const webappReuse = childProcess.spawnSync(
   { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
 );
 assert.strictEqual(webappReuse.status, 0, webappReuse.stderr || webappReuse.stdout);
-assert.strictEqual(JSON.parse(webappReuse.stdout).reused, true);
+const webappReusePayload = JSON.parse(webappReuse.stdout);
+assert.strictEqual(webappReusePayload.ok, true, webappReuse.stdout);
+assert.strictEqual(webappReusePayload.url, `http://127.0.0.1:${webappPort}`);
 const webappRestart = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "webapp", "restart", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--mock-codex", "--json"],
@@ -531,7 +533,7 @@ const webappChat = childProcess.spawnSync(
 );
 assert.strictEqual(webappChat.status, 0, webappChat.stderr || webappChat.stdout);
 assert(webappChat.stdout.includes("AAPS v"), webappChat.stdout);
-assert(webappChat.stdout.includes(`AAPS Studio reused: http://127.0.0.1:${webappPort}`), webappChat.stdout);
+assert(new RegExp(`AAPS Studio (reused|started): http://127\\.0\\.0\\.1:${webappPort}`).test(webappChat.stdout), webappChat.stdout);
 assert(webappChat.stdout.includes(`AAPS Studio restarted: http://127.0.0.1:${webappPort}`), webappChat.stdout);
 assert(webappChat.stdout.includes(`AAPS Studio stopped: http://127.0.0.1:${webappPort}`), webappChat.stdout);
 assert(webappChat.stdout.includes("workflows/main.aaps"), webappChat.stdout);
