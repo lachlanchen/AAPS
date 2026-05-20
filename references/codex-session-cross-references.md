@@ -9,6 +9,50 @@ without re-reading the full Codex history first.
 
 ## Sessions
 
+### Agent Meta-AAPS Session
+
+- Session: `019da8c5-6cd9-7602-bc14-aafa6206fe5d`
+- Tmux session: `codex-meta-aaps`
+- Status context shown by Codex: `~/ProjectsLFS/Agent`, then later `~/ProjectsLFS/AAPS`
+- Rollout file: `/home/lachlan/.codex/sessions/2026/04/20/rollout-2026-04-20T10-43-24-019da8c5-6cd9-7602-bc14-aafa6206fe5d.jsonl`
+- Primary repos involved: `/home/lachlan/ProjectsLFS/Agent`, `/home/lachlan/ProjectsLFS/AAPS`
+- Role: cross-repo meta session that moved AAPS toward an installable CLI,
+  webapp, and backend-adapter workflow tool.
+
+Verified AAPS commits attributed to this session:
+
+- `b8e50b7` - Add AAPS webapp autostart and chat CLI
+- `d63868c` - Upgrade AAPS interactive CLI
+- `843ba3c` - Improve AAPS CLI composer and update restart
+- `e44e807` - Improve AAPS backend discovery and multiline input
+- `1abd8a3` - Add AAPS Studio webapp stop and restart controls
+- `69170be` - Add persistent AAPS Studio webapp preference controls
+- `51ec880` - Harden AAPS webapp startup and program chat planning
+- `63df3cd` - Deepen Studio chat planning for blocks and writing programs
+
+Key product changes from this session:
+
+- AAPS package reached `0.4.35`, matching the npm latest observed by the
+  session.
+- Added AAPS Studio lifecycle commands:
+  `aaps webapp start|stop|restart|reuse|enable|disable|status`.
+- Added best-effort webapp autostart after npm install and first-run reuse.
+- Added interactive `aaps chat` oriented around editing, parsing, compiling,
+  and running `.aaps` files.
+- Added backend selection and handoff behavior for `codex`, `aginti`, and
+  `print` backends.
+- Improved program-tab and blocks-tab chat planning so Studio creates structured
+  program/block updates instead of only appending generic blocks.
+
+Important architecture lesson:
+
+- AAPS remains the project/workflow/block/program language and durable state
+  owner.
+- Codex and AgInTiFlow are swappable backend adapters that receive bounded AAPS
+  context and return structured edits, scripts, reports, or blockers.
+- Backend switching must not mutate selected project, workflow, program, block,
+  working file, or AAPS semantics.
+
 ### AAPS Studio Recent Commits Session
 
 - Session: `019dd6ee-7f77-7361-ae9a-8f25a4036525`
@@ -62,7 +106,7 @@ The AgInTiFlow note tracks:
 - `019dc795-e538-75b2-8a03-bc103b32985d` - LALACHAN browser and AgInTi supervision source session.
 - `019e1f99-289e-7711-986a-d41047f5ed21` - ZhJpBook and AgInTiFlow implementation session.
 
-Together, these three sessions form the current cross-project context:
+Together, these sessions form the current cross-project context:
 
 - AAPS Studio should become the project/workflow/block/program front end.
 - AgInTiFlow should be a backend agent option with evidence-gated completion.
