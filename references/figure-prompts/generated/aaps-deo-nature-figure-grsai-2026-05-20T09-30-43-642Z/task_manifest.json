@@ -1,0 +1,21 @@
+{
+  "tool": "generate_image",
+  "provider": "grsai",
+  "host": "https://grsaiapi.com",
+  "model": "nano-banana-2",
+  "outputDir": "references/figure-prompts/generated/aaps-deo-nature-figure-grsai-2026-05-20T09-30-43-642Z",
+  "promptFile": "references/figure-prompts/generated/aaps-deo-nature-figure-grsai-2026-05-20T09-30-43-642Z/prompt.txt",
+  "requestPayloadRedacted": "references/figure-prompts/generated/aaps-deo-nature-figure-grsai-2026-05-20T09-30-43-642Z/request_payload.redacted.json",
+  "status": "succeeded",
+  "createdAt": "2026-05-20T09:30:43.647Z",
+  "taskId": "15-7c1c6231-c94e-4b3e-832d-a46028de4209",
+  "submittedAt": "2026-05-20T09:30:45.232Z",
+  "finishedAt": "2026-05-20T09:32:08.309Z",
+  "downloadedFiles": [
+    {
+      "path": "references/figure-prompts/generated/aaps-deo-nature-figure-grsai-2026-05-20T09-30-43-642Z/aaps-deo-nature-figure.png",
+      "bytes": 4644186,
+      "sha256": "4477c5e0025d7568d33382e98c579cf704ac1bfca0414c1e914a0e9af2462375"
+    }
+  ]
+}
