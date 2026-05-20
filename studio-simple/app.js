@@ -472,7 +472,20 @@
   }
 
   function renderChat() {
-    $("#chat-stream").innerHTML = "";
+    const stream = $("#chat-stream");
+    stream.innerHTML = state.messages.length
+      ? state.messages
+          .map(
+            (message) => `
+              <div class="message ${message.role}">
+                <strong>${escapeHtml(message.role === "user" ? "You" : "AAPS")}</strong>
+                <p>${escapeHtml(message.text)}</p>
+              </div>
+            `
+          )
+          .join("")
+      : '<div class="empty-state">No messages yet. Send a request or open Chat History after a run.</div>';
+    stream.scrollTop = stream.scrollHeight;
   }
 
   function renderAll() {
@@ -541,6 +554,26 @@
     state.settings = await jsonFetch("/api/aaps/settings", payload);
     syncSettingsControls();
     return state.settings;
+  }
+
+  function showToast(title, detail = "", kind = "info", timeoutMs = 4200) {
+    const stack = $("#toast-stack");
+    if (!stack) return;
+    const node = document.createElement("div");
+    node.className = `toast ${kind}`;
+    node.innerHTML = `<strong>${escapeHtml(title)}</strong>${detail ? `<span>${escapeHtml(detail)}</span>` : ""}`;
+    stack.appendChild(node);
+    window.setTimeout(() => {
+      node.style.opacity = "0";
+      node.style.transform = "translateY(6px)";
+      node.style.transition = "opacity 160ms ease, transform 160ms ease";
+      window.setTimeout(() => node.remove(), 180);
+    }, timeoutMs);
+  }
+
+  function setChatStatus(text, toastTitle = "", toastKind = "info") {
+    $("#chat-status").textContent = text;
+    if (toastTitle) showToast(toastTitle, text, toastKind);
   }
 
   function setChatPanelOpen(open) {
@@ -700,23 +733,42 @@
 
   async function applyBackendChat(message) {
     const settings = await saveSettingsFromControls();
-    $("#chat-status").textContent = `routing - ${backendLabel(settings)}`;
-    const payload = await jsonFetch("/api/aaps/chat", {
-      path: state.projectPath || ".",
-      file: state.activeFile || "",
-      source: state.source,
-      message,
-      forceRealBackend: true,
-      context: chatContext(),
-    });
-    const result = normalizeBackendResult(payload);
-    if (result.source && typeof result.source === "string" && result.source !== state.source) {
-      resetProgram(result.source);
-      await persistProgram();
+    const backend = backendLabel(settings);
+    setChatStatus(`routing - ${backend}`, "Backend request sent");
+    const input = $("#chat-input");
+    const sendButton = $("#chat-form button[type='submit']");
+    if (input) input.disabled = true;
+    if (sendButton) sendButton.disabled = true;
+    const waitingTimer = window.setTimeout(() => setChatStatus(`waiting for ${backend}`), 900);
+    const slowTimer = window.setTimeout(() => showToast("Backend still working", `${backend} is still preparing a response.`, "info", 6500), 6000);
+    try {
+      const payload = await jsonFetch("/api/aaps/chat", {
+        path: state.projectPath || ".",
+        file: state.activeFile || "",
+        source: state.source,
+        message,
+        forceRealBackend: true,
+        context: chatContext(),
+      });
+      window.clearTimeout(waitingTimer);
+      window.clearTimeout(slowTimer);
+      setChatStatus(`applying response - ${backend}`);
+      const result = normalizeBackendResult(payload);
+      if (result.source && typeof result.source === "string" && result.source !== state.source) {
+        resetProgram(result.source);
+        await persistProgram();
+        showToast("AAPS source updated", state.activeFile || "active workflow", "success");
+      }
+      addMessage("assistant", result.message || result.summary || JSON.stringify(result, null, 2), { backend });
+      setChatStatus(`ready - ${backend}`, "Backend response ready", "success");
+      renderAll();
+    } finally {
+      window.clearTimeout(waitingTimer);
+      window.clearTimeout(slowTimer);
+      if (input) input.disabled = false;
+      if (sendButton) sendButton.disabled = false;
+      if (input) input.focus();
     }
-    addMessage("assistant", result.message || result.summary || JSON.stringify(result, null, 2), { backend: backendLabel(settings) });
-    $("#chat-status").textContent = `ready - ${backendLabel(settings)}`;
-    renderAll();
   }
 
   async function handleChatSubmit(event) {
@@ -735,7 +787,7 @@
       await applyBackendChat(message);
     } catch (error) {
       addMessage("assistant", `Backend failed: ${error.message}`);
-      $("#chat-status").textContent = "backend unavailable";
+      setChatStatus("backend unavailable", "Backend failed", "error");
     }
   }
 
@@ -1098,7 +1150,9 @@
       $("#chat-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await waitFor(() => document.body.textContent.includes("app81_segment_images"), 7000);
       record("sample chat creates program", document.body.textContent.includes("app81_preview_segmentation"));
-      record("dock does not show chat transcript", $("#chat-stream").textContent.trim() === "");
+      record("dock hides transcript while collapsed", getComputedStyle($("#chat-stream")).display === "none");
+      $("#chat-panel-toggle").click();
+      record("expanded chat panel shows messages", getComputedStyle($("#chat-stream")).display !== "none" && $$(".message.user", $("#chat-stream")).length >= 1 && $$(".message.assistant", $("#chat-stream")).length >= 1);
       $("#history-button").click();
       record("history shows chat bubbles", $$(".history-row.user").length >= 1 && $$(".history-row.assistant").length >= 1);
       closeModal("history-modal");

@@ -468,12 +468,12 @@ p {
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
-  grid-template-rows: auto 0fr auto;
+  grid-template-rows: auto 0fr 0fr auto;
   overflow: hidden;
 }
 
 .chat-dock.is-expanded {
-  grid-template-rows: auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
 
 .chat-head {
@@ -494,14 +494,42 @@ p {
   display: none;
 }
 
+.chat-dock.is-expanded .chat-stream {
+  min-height: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.chat-settings {
+  display: none;
+  border-top: 1px solid var(--line);
+  padding: 6px 14px;
+}
+
+.chat-dock.is-expanded .chat-settings {
+  display: block;
+}
+
+.chat-settings summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  width: max-content;
+}
+
 .chat-options {
   display: none;
   grid-template-columns: minmax(150px, 0.8fr) minmax(140px, 1fr) minmax(116px, 0.65fr) minmax(140px, 1fr) minmax(116px, 0.65fr) minmax(130px, 0.8fr);
   gap: 8px;
-  padding: 10px 14px 0;
+  padding-top: 8px;
 }
 
-.chat-dock.is-expanded .chat-options {
+.chat-settings[open] .chat-options {
   display: grid;
 }
 
@@ -558,6 +586,65 @@ p {
 
 .chat-form textarea {
   min-height: 68px;
+}
+
+.toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: calc(var(--active-chat-h) + 28px);
+  z-index: 80;
+  display: grid;
+  gap: 8px;
+  width: min(380px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
+.toast {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow);
+  padding: 10px 12px;
+  color: var(--text);
+  animation: toast-in 160ms ease-out;
+}
+
+.toast strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.toast span {
+  color: var(--muted);
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.toast.success {
+  border-left-color: #22643a;
+}
+
+.toast.error {
+  border-left-color: var(--red);
+}
+
+.toast.info {
+  border-left-color: var(--blue);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .modal {

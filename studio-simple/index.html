@@ -89,46 +89,49 @@
         <span id="chat-status" class="status-badge">ready</span>
       </div>
       <div id="chat-stream" class="chat-stream" aria-live="polite"></div>
-      <div id="chat-options" class="chat-options">
-        <label>Backend
-          <select id="agent-provider">
-            <option value="aginti">AgInTiFlow</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="codex">Codex wrapper</option>
-          </select>
-        </label>
-        <label>Codex chat
-          <input id="codex-chat-model" type="text" placeholder="gpt-5.5" />
-        </label>
-        <label>Reasoning
-          <select id="codex-chat-reasoning">
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-            <option value="xhigh">xhigh</option>
-            <option value="low">low</option>
-          </select>
-        </label>
-        <label>Codex task
-          <input id="codex-task-model" type="text" placeholder="gpt-5.5" />
-        </label>
-        <label>Task reasoning
-          <select id="codex-task-reasoning">
-            <option value="high">high</option>
-            <option value="xhigh">xhigh</option>
-            <option value="medium">medium</option>
-            <option value="low">low</option>
-          </select>
-        </label>
-        <label>AgInTi provider
-          <select id="aginti-provider">
-            <option value="deepseek">deepseek</option>
-            <option value="openai">openai</option>
-            <option value="qwen">qwen</option>
-            <option value="venice">venice</option>
-            <option value="mock">mock</option>
-          </select>
-        </label>
-      </div>
+      <details class="chat-settings">
+        <summary>Backend settings</summary>
+        <div id="chat-options" class="chat-options">
+          <label>Backend
+            <select id="agent-provider">
+              <option value="aginti">AgInTiFlow</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="codex">Codex wrapper</option>
+            </select>
+          </label>
+          <label>Codex chat
+            <input id="codex-chat-model" type="text" placeholder="gpt-5.5" />
+          </label>
+          <label>Reasoning
+            <select id="codex-chat-reasoning">
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="low">low</option>
+            </select>
+          </label>
+          <label>Codex task
+            <input id="codex-task-model" type="text" placeholder="gpt-5.5" />
+          </label>
+          <label>Task reasoning
+            <select id="codex-task-reasoning">
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+          </label>
+          <label>AgInTi provider
+            <select id="aginti-provider">
+              <option value="deepseek">deepseek</option>
+              <option value="openai">openai</option>
+              <option value="qwen">qwen</option>
+              <option value="venice">venice</option>
+              <option value="mock">mock</option>
+            </select>
+          </label>
+        </div>
+      </details>
       <form id="chat-form" class="chat-form">
         <textarea id="chat-input" rows="2" placeholder="Describe the experiment, writing project, analysis, or refinement."></textarea>
         <button type="submit" class="primary-button">Send</button>
@@ -214,5 +217,6 @@
         </div>
       </form>
     </div>
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
   </body>
 </html>
