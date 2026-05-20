@@ -31,32 +31,28 @@
         <div class="panel-title">
           <div>
             <h1 id="projects-title">Projects</h1>
-            <p>Choose a durable AAPS project.</p>
+            <p>Open a topic workspace.</p>
           </div>
           <button id="refresh-projects" type="button" class="icon-button" title="Refresh projects" aria-label="Refresh projects">R</button>
         </div>
 
-        <label class="field-label" for="project-path-input">Open path</label>
-        <div class="inline-controls">
-          <input id="project-path-input" type="text" value="." autocomplete="off" />
-          <button id="open-project-button" type="button">Open</button>
-        </div>
-
-        <label class="field-label" for="new-project-name">Create project</label>
-        <input id="new-project-name" type="text" placeholder="Project name" autocomplete="off" />
-        <div class="inline-controls">
-          <input id="new-project-path" type="text" placeholder=".aaps-work/studio-simple-demo" autocomplete="off" />
-          <button id="create-project-button" type="button">Create</button>
-        </div>
-
-        <div class="project-card" id="current-project-card">
-          <span class="eyebrow">Current</span>
-          <strong id="current-project-name">Loading...</strong>
-          <code id="current-project-path">.</code>
-          <span id="manifest-status" class="status-badge">manifest unknown</span>
-        </div>
-
         <div id="project-list" class="project-list" aria-label="AAPS projects"></div>
+
+        <div class="project-controls">
+          <div class="inline-controls">
+            <input id="project-path-input" type="text" placeholder="Open project folder path" autocomplete="off" />
+            <button id="open-project-button" type="button">Open</button>
+          </div>
+
+          <details class="create-project-details">
+            <summary>New project</summary>
+            <input id="new-project-name" type="text" placeholder="Project name" autocomplete="off" />
+            <div class="inline-controls">
+              <input id="new-project-path" type="text" placeholder=".aaps-work/studio-simple-demo" autocomplete="off" />
+              <button id="create-project-button" type="button">Create</button>
+            </div>
+          </details>
+        </div>
       </section>
 
       <section class="panel program-panel" aria-labelledby="program-title" data-testid="program-region">

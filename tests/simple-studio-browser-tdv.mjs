@@ -122,6 +122,9 @@ try {
     [
       "--headless=new",
       "--no-sandbox",
+      "--no-proxy-server",
+      "--password-store=basic",
+      "--use-mock-keychain",
       "--disable-gpu",
       "--disable-dev-shm-usage",
       `--user-data-dir=${userDataDir}`,

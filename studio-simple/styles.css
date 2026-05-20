@@ -1,5 +1,7 @@
 :root {
   color-scheme: light;
+  --header-h: 64px;
+  --chat-h: clamp(220px, 34vh, 292px);
   --bg: #f6f5f0;
   --panel: #ffffff;
   --panel-soft: #f1f5f4;
@@ -24,7 +26,8 @@
 
 body {
   margin: 0;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family:
@@ -76,7 +79,7 @@ p {
 }
 
 .app-header {
-  height: 64px;
+  height: var(--header-h);
   display: grid;
   grid-template-columns: minmax(180px, 260px) 1fr auto;
   align-items: center;
@@ -175,8 +178,9 @@ p {
   grid-template-columns: minmax(250px, 0.86fr) minmax(360px, 1.3fr) minmax(300px, 1fr);
   gap: 14px;
   padding: 14px;
-  height: calc(100vh - 268px);
-  min-height: 430px;
+  height: calc(100vh - var(--header-h) - var(--chat-h) - 28px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .panel {
@@ -184,6 +188,7 @@ p {
   border: 1px solid var(--line);
   border-radius: 8px;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -196,6 +201,7 @@ p {
   gap: 12px;
   padding: 14px;
   border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
 }
 
 .panel-title h1 {
@@ -212,13 +218,10 @@ p {
 }
 
 .projects-panel {
-  padding-bottom: 12px;
+  padding-bottom: 0;
 }
 
-.projects-panel > .field-label,
-.projects-panel > input,
-.projects-panel > .inline-controls,
-.project-card,
+.projects-panel > .project-controls,
 .project-list {
   margin-left: 14px;
   margin-right: 14px;
@@ -240,28 +243,47 @@ p {
   gap: 8px;
 }
 
-.project-card {
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-  display: grid;
-  gap: 7px;
-}
-
-.project-card code {
-  color: var(--muted);
-  font-size: 12px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
 .project-list {
-  margin-top: 12px;
-  overflow: auto;
+  margin-top: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: grid;
+  align-content: start;
+  flex: 1 1 auto;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.project-controls {
+  flex: 0 0 auto;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), #fff);
   display: grid;
   gap: 8px;
+}
+
+.create-project-details {
+  display: grid;
+  gap: 8px;
+}
+
+.create-project-details summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.create-project-details[open] {
+  padding-top: 2px;
+}
+
+.create-project-details[open] input,
+.create-project-details[open] .inline-controls {
+  margin-top: 8px;
 }
 
 .project-item,
@@ -279,6 +301,18 @@ p {
   gap: 4px;
   padding: 10px;
   text-align: left;
+  width: 100%;
+  min-width: 0;
+  min-height: 58px;
+  align-content: start;
+  overflow: visible;
+}
+
+.project-item strong,
+.project-item small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .project-item.is-selected,
@@ -311,6 +345,8 @@ p {
 .program-elements,
 .blocks-list {
   padding: 0 14px 14px;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: auto;
   display: grid;
   align-content: start;
@@ -418,8 +454,14 @@ p {
 }
 
 .chat-dock {
-  min-height: 204px;
-  margin: 0 14px 14px;
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 30;
+  height: var(--chat-h);
+  min-height: 0;
+  margin: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -430,9 +472,10 @@ p {
 
 .chat-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -442,6 +485,7 @@ p {
 }
 
 .chat-stream {
+  min-height: 0;
   padding: 12px 14px;
   overflow: auto;
   display: grid;
@@ -451,7 +495,7 @@ p {
 .message {
   max-width: 880px;
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 8px 11px;
   border: 1px solid var(--line);
   background: var(--panel-soft);
   justify-self: start;
@@ -464,13 +508,14 @@ p {
 }
 
 .message strong {
-  display: block;
-  margin-bottom: 4px;
+  display: inline-block;
+  margin: 0 8px 0 0;
   font-size: 12px;
   color: var(--muted);
 }
 
 .message p {
+  display: inline;
   font-size: 14px;
   line-height: 1.4;
 }
@@ -484,7 +529,7 @@ p {
 }
 
 .chat-form textarea {
-  min-height: 48px;
+  min-height: 66px;
 }
 
 .modal {
@@ -609,11 +654,12 @@ p {
 @media (max-width: 1040px) {
   .workspace-grid {
     grid-template-columns: 1fr;
-    height: auto;
+    overflow: auto;
   }
 
   .panel {
-    min-height: 360px;
+    min-height: 300px;
+    max-height: none;
   }
 
   .app-header {
@@ -643,6 +689,8 @@ p {
   }
 
   .chat-dock {
-    margin: 0 10px 10px;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
   }
 }

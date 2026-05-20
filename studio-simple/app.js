@@ -310,28 +310,39 @@
 
   function renderProjects() {
     const list = $("#project-list");
-    if (!state.projects.length) {
+    const currentProject = {
+      name: (state.manifest && state.manifest.name) || "AAPS",
+      path: state.projectPath || "",
+      absolutePath: state.projectAbsolutePath || state.projectPath || "",
+      manifestExists: state.manifestExists,
+      current: true,
+    };
+    const seen = new Set();
+    const projects = [currentProject, ...state.projects].filter((project) => {
+      const key = project.absolutePath || project.path || project.name || "";
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (!projects.length) {
       list.innerHTML = '<div class="empty-state">No sibling AAPS projects found yet. Open a path or create a starter project.</div>';
     } else {
-      list.innerHTML = state.projects
+      list.innerHTML = projects
         .map((project) => {
           const selected = project.path === state.projectPath || project.absolutePath === state.projectAbsolutePath;
           const name = project.name || project.path || "AAPS project";
-          const path = project.path || project.absolutePath || ".";
+          const path = project.absolutePath || project.path || "";
           return `
             <button type="button" class="project-item${selected ? " is-selected" : ""}" data-project-path="${escapeHtml(path)}">
-              <strong>${escapeHtml(name)}</strong>
+              <strong>${escapeHtml(name)}${project.current ? " · selected" : ""}</strong>
               <small>${escapeHtml(project.absolutePath || path)}</small>
-              <span class="status-badge">${project.manifestExists ? "manifest found" : "no manifest"}</span>
             </button>
           `;
         })
         .join("");
     }
-    $("#current-project-name").textContent = (state.manifest && state.manifest.name) || "AAPS project";
-    $("#current-project-path").textContent = state.projectAbsolutePath || state.projectPath || ".";
-    $("#manifest-status").textContent = state.manifestExists ? "manifest loaded" : "manifest missing";
-    $("#project-path-input").value = state.projectPath || ".";
+    $("#project-path-input").value = "";
+    $("#project-path-input").placeholder = "Open project folder path";
   }
 
   function renderProgram() {
@@ -438,7 +449,7 @@
       .map(
         (message) => `
           <div class="message ${message.role}">
-            <strong>${escapeHtml(message.role)} - ${escapeHtml(message.focus || "project")} - ${escapeHtml(message.timestamp || "")}</strong>
+            <strong>${escapeHtml(message.role === "user" ? "You" : "AAPS")}</strong>
             <p>${escapeHtml(message.text)}</p>
           </div>
         `
@@ -472,7 +483,7 @@
   }
 
   async function loadProject(pathValue = ".") {
-    state.projectPath = pathValue || ".";
+    state.projectPath = pathValue || state.projectPath || ".";
     $("#chat-status").textContent = "loading";
     try {
       const payload = await jsonFetch(`/api/aaps/project?path=${encodeURIComponent(state.projectPath)}`);
@@ -825,12 +836,28 @@
     }
   }
 
+  function openProjectFromInput() {
+    const value = $("#project-path-input").value.trim();
+    if (!value) {
+      addMessage("assistant", "Enter a project folder path, or choose one from the project list.");
+      $("#chat-status").textContent = "ready";
+      return;
+    }
+    loadProject(value);
+  }
+
   function attachEvents() {
     $("#refresh-projects").addEventListener("click", async () => {
       await loadProjects();
       renderProjects();
     });
-    $("#open-project-button").addEventListener("click", () => loadProject($("#project-path-input").value.trim() || "."));
+    $("#open-project-button").addEventListener("click", openProjectFromInput);
+    $("#project-path-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        openProjectFromInput();
+      }
+    });
     $("#create-project-button").addEventListener("click", createProject);
     $("#chat-form").addEventListener("submit", handleChatSubmit);
     $("#history-button").addEventListener("click", () => {
@@ -859,11 +886,10 @@
   }
 
   function addInitialMessage() {
-    if (state.messages.length) return;
-    addMessage(
-      "assistant",
-      "AAPS Studio Simple is ready. Pick a project, inspect the program and reusable blocks, then chat about the selected scope."
-    );
+    if ($("#chat-status")) $("#chat-status").textContent = "ready";
+    if ($("#chat-scope") && state.focus.type === "project") {
+      $("#chat-scope").textContent = "Ready. Pick a project, inspect the program and reusable blocks, then chat about the selected scope.";
+    }
   }
 
   function waitFor(predicate, timeoutMs = 5000) {
@@ -892,6 +918,10 @@
       await waitFor(() => $("#program-elements") && $("#blocks-list") && $("#chat-stream"));
       record("simple UI loads", Boolean($('[data-testid="simple-layout"]')));
       record("regions exist", ["projects", "program", "blocks", "chat"].every((name) => Boolean($(`[data-testid="${name}-region"]`))));
+      record("chat dock is fixed to viewport bottom", getComputedStyle($(".chat-dock")).position === "fixed");
+      record("project list remains visible", $("#project-list").clientHeight > 24);
+      record("current project card removed", !$("#current-project-card"));
+      record("open path starts blank", $("#project-path-input").value === "");
       record("default system blocks render", SYSTEM_BLOCKS.every((block) => document.body.textContent.includes(block.title)));
       const firstElement = $(".program-item");
       if (firstElement) {
