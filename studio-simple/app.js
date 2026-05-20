@@ -159,6 +159,7 @@
     focus: { type: "project", id: "selected project/program", label: "selected project/program" },
     messages: [],
     sessionId: SESSION_ID,
+    sessions: [],
     lastHistorySignature: "",
     chatInFlight: false,
     historySyncTimer: null,
@@ -211,6 +212,8 @@
       activeFile: state.activeFile || "",
       workingFile: state.activeFile || "",
       sessionId: state.sessionId,
+      sessionName: currentSession()?.name || state.sessionId,
+      commandCwd: state.projectAbsolutePath || state.projectPath || ".",
       focus: state.focus,
       selectedElement,
       selectedBlock: selectedBlockValue,
@@ -227,8 +230,32 @@
     };
   }
 
+  function currentSession() {
+    return state.sessions.find((session) => session.sessionId === state.sessionId) || null;
+  }
+
   function syncSessionBadge() {
-    if ($("#session-status")) $("#session-status").textContent = `session: ${state.sessionId}`;
+    const select = $("#session-select");
+    if (select) {
+      if (!state.sessions.some((session) => session.sessionId === state.sessionId)) {
+        state.sessions = [
+          {
+            sessionId: state.sessionId,
+            name: state.sessionId,
+            historyCount: 0,
+          },
+          ...state.sessions,
+        ];
+      }
+      select.innerHTML = state.sessions
+        .map((session) => {
+          const label = `${session.name || session.sessionId}${session.historyCount ? ` (${session.historyCount})` : ""}`;
+          return `<option value="${escapeHtml(session.sessionId)}">${escapeHtml(label)}</option>`;
+        })
+        .join("");
+      select.value = state.sessionId;
+      select.title = `Session ${state.sessionId}`;
+    }
     if (window.localStorage) window.localStorage.setItem("aaps.simple.sessionId", state.sessionId);
   }
 
@@ -273,15 +300,57 @@
     return JSON.stringify(events.map((event) => [event.time, event.message, event.response?.message || event.response?.summary || ""]));
   }
 
+  async function touchSession(name = "") {
+    if (!state.projectPath || !state.sessionId) return null;
+    const payload = await jsonFetch("/api/aaps/sessions", {
+      path: state.projectPath || ".",
+      sessionId: state.sessionId,
+      name: name || currentSession()?.name || state.sessionId,
+      commandCwd: state.projectAbsolutePath || state.projectPath || ".",
+      activeFile: state.activeFile || "",
+      backend: state.settings.agentProvider || "",
+      provider: state.settings.agintiProvider || state.settings.deepseekModel || "",
+      source: "studio",
+    });
+    state.sessions = Array.isArray(payload.sessions) ? payload.sessions : state.sessions;
+    syncSessionBadge();
+    return payload.session || null;
+  }
+
+  async function loadSessions({ createCurrent = true } = {}) {
+    if (!state.projectPath) return;
+    try {
+      const query = new URLSearchParams({ path: state.projectPath || "." });
+      const payload = await jsonFetch(`/api/aaps/sessions?${query.toString()}`);
+      state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+      if (createCurrent && !state.sessions.some((session) => session.sessionId === state.sessionId)) {
+        await touchSession(state.sessionId);
+      } else {
+        syncSessionBadge();
+      }
+    } catch (error) {
+      showToast("Session list unavailable", error.message, "error", 5200);
+      syncSessionBadge();
+    }
+  }
+
   async function loadSessionHistory({ quiet = false } = {}) {
     if (!state.projectPath || !state.sessionId) return false;
     try {
-      const query = new URLSearchParams({
-        path: state.projectPath || ".",
-        scope: "session",
-        id: state.sessionId,
-      });
-      const payload = await jsonFetch(`/api/aaps/history?${query.toString()}`);
+      const queries = [
+        new URLSearchParams({ path: state.projectPath || ".", scope: "session", id: state.sessionId }),
+      ];
+      if (state.sessionId === "default" && state.activeFile) {
+        queries.push(
+          new URLSearchParams({ path: state.projectPath || ".", scope: "simple", id: state.activeFile }),
+          new URLSearchParams({ path: state.projectPath || ".", scope: "program", id: state.activeFile })
+        );
+      }
+      let payload = { events: [] };
+      for (const query of queries) {
+        payload = await jsonFetch(`/api/aaps/history?${query.toString()}`);
+        if (Array.isArray(payload.events) && payload.events.length) break;
+      }
       const events = Array.isArray(payload.events) ? payload.events : [];
       const signature = historySignature(events);
       if (signature !== state.lastHistorySignature) {
@@ -294,6 +363,19 @@
       if (!quiet) addMessage("assistant", `Session history could not be loaded: ${error.message}`);
       return false;
     }
+  }
+
+  async function switchSession(sessionId) {
+    const normalized = String(sessionId || "default").replace(/[^0-9A-Za-z_.:-]+/g, "_").slice(0, 80) || "default";
+    if (normalized === state.sessionId) return;
+    state.sessionId = normalized;
+    state.lastHistorySignature = "";
+    state.messages = [];
+    syncSessionBadge();
+    await touchSession(normalized);
+    await loadSessionHistory({ quiet: true });
+    renderAll();
+    showToast("Session switched", normalized, "success", 2600);
   }
 
   function safeParse(source) {
@@ -731,6 +813,7 @@
       }
       await loadProjects();
       $("#chat-status").textContent = "ready";
+      await loadSessions();
       await loadSessionHistory({ quiet: true });
     } catch (error) {
       state.manifest = { name: "Local draft" };
@@ -880,6 +963,7 @@
       }
       const synced = await loadSessionHistory({ quiet: true });
       if (!synced) addMessage("assistant", result.message || result.summary || JSON.stringify(result, null, 2), { backend });
+      await loadSessions({ createCurrent: false });
       setChatStatus(`ready - ${backend}`, "Backend response ready", "success");
       renderAll();
     } finally {
@@ -1163,6 +1247,9 @@
     $("#create-project-button").addEventListener("click", createProject);
     $("#chat-form").addEventListener("submit", handleChatSubmit);
     $("#chat-panel-toggle").addEventListener("click", () => setChatPanelOpen(!state.chatPanelOpen));
+    $("#session-select").addEventListener("change", (event) => {
+      switchSession(event.currentTarget.value);
+    });
     ["#agent-provider", "#codex-chat-model", "#codex-chat-reasoning", "#codex-task-model", "#codex-task-reasoning", "#aginti-provider"].forEach((selector) => {
       const field = $(selector);
       if (field) {
@@ -1238,7 +1325,7 @@
       record("regions exist", ["projects", "program", "blocks", "chat"].every((name) => Boolean($(`[data-testid="${name}-region"]`))));
       record("chat dock is fixed to viewport bottom", getComputedStyle($(".chat-dock")).position === "fixed");
       record("chat panel defaults collapsed", !$(".chat-dock").classList.contains("is-expanded"));
-      record("chat session badge visible", $("#session-status").textContent.includes("session:"));
+      record("chat session dropdown visible", $("#session-select").options.length >= 1 && $("#session-select").value);
       record("chat transcript hidden from dock", getComputedStyle($("#chat-stream")).display === "none");
       record("chat history button is explicit", $("#history-button").textContent.trim() === "Chat History");
       record("project list remains visible", $("#project-list").clientHeight > 24);

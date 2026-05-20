@@ -87,6 +87,7 @@ function usage() {
     "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --backend <name>  Prompt backend for direct goals. Defaults to codex.",
     "  --session <id>    Shared chat session for syncing CLI and Studio. Defaults to default.",
+    "  --session-name <name> Friendly name stored in the AAPS session database.",
     "  --no-auto-update Skip startup update checks for global npm installs.",
     "  --auto-update     Force a startup update check for global npm installs.",
     "  --provider <name> Provider passed to AgInTi backend.",
@@ -1221,6 +1222,7 @@ function chatHelp() {
     "AAPS chat commands:",
     "  /webapp [simple|port|start|stop|restart|reuse|enable|disable|status]  Control AAPS Studio and auto-start.",
     "  /session [id]           Show or switch the shared web/terminal chat session.",
+    "  /sessions               List sessions stored in .aaps-work/aaps-sessions.sqlite.",
     "  /history                Print the synced session history from Studio.",
     "  /status                 Show project manifest, active file, and backend.",
     "  /files                  List project .aaps files.",
@@ -1351,6 +1353,19 @@ function historyMessagesFromEvents(events = []) {
   return rows;
 }
 
+function formatSessionsTable(sessions = [], activeSessionId = "default") {
+  if (!sessions.length) return "No AAPS sessions have been registered yet.";
+  return sessions
+    .map((session) => {
+      const marker = session.sessionId === activeSessionId ? "*" : " ";
+      const name = session.name && session.name !== session.sessionId ? ` ${session.name}` : "";
+      const cwd = session.commandCwd || session.projectRoot || "";
+      const count = Number(session.historyCount || 0);
+      return `${marker} ${session.sessionId}${name} | messages=${count} | cwd=${cwd}`;
+    })
+    .join("\n");
+}
+
 class ComposerHistory {
   constructor(entries = []) {
     this.entries = [];
@@ -1404,6 +1419,7 @@ const SLASH_COMMANDS = [
   "/help",
   "/webapp",
   "/session",
+  "/sessions",
   "/history",
   "/status",
   "/files",
@@ -1708,6 +1724,46 @@ async function startChat(options) {
     }
   }
 
+  async function touchWebSession(name = "") {
+    if (!activeWebUrl) return null;
+    try {
+      const payload = await httpJsonRequest(
+        `${activeWebUrl}/api/aaps/sessions`,
+        {
+          path: ".",
+          sessionId,
+          name: name || options.sessionName || sessionId,
+          commandCwd: projectDir,
+          activeFile: activeProjectFile(),
+          backend,
+          source: "terminal",
+        },
+        5000
+      );
+      return payload.session || null;
+    } catch (error) {
+      printStateMessage(`session registry sync failed: ${compactLine(error.message, 100)}`);
+      return null;
+    }
+  }
+
+  async function printSessions() {
+    if (!activeWebUrl) {
+      printAapsMessage("No running Studio backend is available for session listing. Start it with /webapp simple.");
+      return false;
+    }
+    try {
+      const query = new URLSearchParams({ path: "." });
+      const payload = await httpJsonRequest(`${activeWebUrl}/api/aaps/sessions?${query.toString()}`, null, 5000);
+      printStateMessage(`sessionDb=${payload.dbPath || ".aaps-work/aaps-sessions.sqlite"}`);
+      printAapsMessage(formatSessionsTable(payload.sessions || [], sessionId));
+      return true;
+    } catch (error) {
+      printErrorMessage(`Session listing failed: ${error.message}`);
+      return false;
+    }
+  }
+
   async function setWebBackendIfAvailable() {
     if (!activeWebUrl || backend === "print") return;
     try {
@@ -1737,6 +1793,7 @@ async function startChat(options) {
 
   async function sendSyncedChat(message) {
     if (!activeWebUrl || backend === "print") return false;
+    await touchWebSession();
     await setWebBackendIfAvailable();
     const activeFile = activeProjectFile();
     const payload = await httpJsonRequest(
@@ -1754,6 +1811,9 @@ async function startChat(options) {
           activeFile,
           workingFile: activeFile,
           sessionId,
+          sessionName: options.sessionName || sessionId,
+          commandCwd: projectDir,
+          cwd: projectDir,
           focus: { type: "terminal", id: sessionId, label: `terminal session ${sessionId}` },
         },
       },
@@ -1762,6 +1822,8 @@ async function startChat(options) {
     printAapsMessage(responseTextFromWebChat(payload));
     return true;
   }
+
+  if (activeWebUrl) await touchWebSession();
 
   async function handleLine(rawLine) {
     const line = String(rawLine || "").trim();
@@ -1783,13 +1845,19 @@ async function startChat(options) {
       }
       const payload = await commandWebapp({ ...options, project: projectDir, port: parsedWebapp.port, ui: parsedWebapp.ui, json: false }, { manual: true, action: parsedWebapp.action });
       if (payload.port) activeWebPort = payload.port;
-      activeWebUrl = payload.ok && payload.url ? payload.url : "";
+      activeWebUrl = payload.ok && payload.url && !payload.stopped && !payload.alreadyStopped ? payload.url : "";
+      if (activeWebUrl) await touchWebSession();
+      return false;
+    }
+    if (line === "/sessions") {
+      await printSessions();
       return false;
     }
     if (line.startsWith("/session")) {
       const words = splitCliWords(line);
       if (words[1]) {
         sessionId = normalizeSessionId(words[1]);
+        if (activeWebUrl) await touchWebSession(words.slice(2).join(" ") || sessionId);
         printStateMessage(`session=${sessionId}${activeWebUrl ? ` synced=${activeWebUrl}?session=${encodeURIComponent(sessionId)}` : ""}`);
       } else {
         printStateMessage(`session=${sessionId}${activeWebUrl ? ` synced=${activeWebUrl}?session=${encodeURIComponent(sessionId)}` : ""}`);

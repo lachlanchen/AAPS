@@ -554,10 +554,17 @@ assert.strictEqual(syncedHistory.ok, true);
 assert.strictEqual(syncedHistory.events.length, 1, JSON.stringify(syncedHistory));
 assert.strictEqual(syncedHistory.events[0].message, "hello synced terminal session");
 assert.strictEqual(syncedHistory.events[0].metadata.source, "terminal");
+const syncedSessions = httpJson(`http://127.0.0.1:${activeWebappPort}/api/aaps/sessions?path=.`);
+const syncedSession = syncedSessions.sessions.find((session) => session.sessionId === "cli-sync");
+assert(syncedSession, JSON.stringify(syncedSessions));
+assert(syncedSessions.dbPath.endsWith(".aaps-work/aaps-sessions.sqlite"), syncedSessions.dbPath);
+assert.strictEqual(syncedSession.commandCwd, webappProject);
+assert.strictEqual(syncedSession.activeFile, "workflows/main.aaps");
+assert.strictEqual(syncedSession.historyCount, 1);
 const webappChat = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", activeWebappPort, "--no-webapp"],
-  { cwd: path.join(__dirname, ".."), env: webappEnv, input: `/webapp ${activeWebappPort}\n/webapp restart\n/webapp stop\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n`, encoding: "utf8" }
+  { cwd: path.join(__dirname, ".."), env: webappEnv, input: `/webapp ${activeWebappPort}\n/sessions\n/webapp restart\n/webapp stop\n/status\n/files\n/backend aginti\n/backend codex\n/backend print\n/help\n/exit\n`, encoding: "utf8" }
 );
 assert.strictEqual(webappChat.status, 0, webappChat.stderr || webappChat.stdout);
 assert(webappChat.stdout.includes("AAPS v"), webappChat.stdout);
@@ -568,6 +575,7 @@ assert(webappChat.stdout.includes("workflows/main.aaps"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=aginti"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=codex"), webappChat.stdout);
 assert(webappChat.stdout.includes("backend=print"), webappChat.stdout);
+assert(webappChat.stdout.includes("sessionDb="), webappChat.stdout);
 assert(webappChat.stdout.includes("Ctrl-J inserts a newline"), webappChat.stdout);
 const webappStop = childProcess.spawnSync(
   "node",

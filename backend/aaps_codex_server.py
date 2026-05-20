@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import threading
 import time
@@ -438,6 +439,203 @@ def studio_scope_path(root: Path, scope: str, scope_id: str, suffix: str = ".jso
     safe_scope = slug(scope, "scope")
     safe_id = slug(scope_id, "item")
     return root / safe_scope / f"{safe_id}{suffix}"
+
+
+def safe_session_id(value: str | None = "default") -> str:
+    text = re.sub(r"[^0-9A-Za-z_.:-]+", "_", str(value or "default").strip())[:80]
+    if not text or ".." in text:
+        return "default"
+    return text
+
+
+def project_relative_or_absolute(project_dir: Path, path_value: Path) -> str:
+    try:
+        return path_value.resolve().relative_to(project_dir.resolve()).as_posix()
+    except ValueError:
+        try:
+            return path_value.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+        except ValueError:
+            return str(path_value)
+
+
+def session_db_path(project_dir: Path) -> Path:
+    return project_dir / ".aaps-work" / "aaps-sessions.sqlite"
+
+
+def connect_session_db(project_dir: Path) -> sqlite3.Connection:
+    db_path = session_db_path(project_dir)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(str(db_path))
+    db.row_factory = sqlite3.Row
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+          session_id TEXT PRIMARY KEY,
+          name TEXT NOT NULL DEFAULT '',
+          project_path TEXT NOT NULL DEFAULT '',
+          project_root TEXT NOT NULL DEFAULT '',
+          command_cwd TEXT NOT NULL DEFAULT '',
+          active_file TEXT NOT NULL DEFAULT '',
+          backend TEXT NOT NULL DEFAULT '',
+          provider TEXT NOT NULL DEFAULT '',
+          agent_session_id TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'active',
+          source TEXT NOT NULL DEFAULT '',
+          history_path TEXT NOT NULL DEFAULT '',
+          last_message TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+        """
+    )
+    db.commit()
+    return db
+
+
+def session_history_path(session_id: str) -> Path:
+    return studio_scope_path(STUDIO_HISTORY_DIR, "session", safe_session_id(session_id))
+
+
+def session_history_count(session_id: str) -> int:
+    path_value = session_history_path(session_id)
+    if not path_value.exists():
+        return 0
+    return sum(1 for line in path_value.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def session_row_to_dict(project_dir: Path, row: sqlite3.Row | dict) -> dict:
+    item = dict(row)
+    item["historyCount"] = session_history_count(str(item.get("session_id") or item.get("sessionId") or ""))
+    return {
+        "sessionId": item.get("session_id") or item.get("sessionId") or "default",
+        "name": item.get("name") or item.get("session_id") or "default",
+        "projectPath": item.get("project_path") or project_label(project_dir),
+        "projectRoot": item.get("project_root") or str(project_dir.resolve()),
+        "commandCwd": item.get("command_cwd") or str(project_dir.resolve()),
+        "activeFile": item.get("active_file") or "",
+        "backend": item.get("backend") or "",
+        "provider": item.get("provider") or "",
+        "agentSessionId": item.get("agent_session_id") or "",
+        "status": item.get("status") or "active",
+        "source": item.get("source") or "",
+        "historyPath": item.get("history_path") or project_relative_or_absolute(project_dir, session_history_path(str(item.get("session_id") or "default"))),
+        "lastMessage": item.get("last_message") or "",
+        "createdAt": item.get("created_at") or "",
+        "updatedAt": item.get("updated_at") or "",
+        "historyCount": item.get("historyCount", 0),
+    }
+
+
+def upsert_aaps_session(project_dir: Path, payload: dict | None = None) -> dict:
+    body = payload or {}
+    settings = read_settings()
+    session_id = safe_session_id(str(body.get("sessionId") or body.get("session_id") or "default"))
+    now = now_iso()
+    history_path = session_history_path(session_id)
+    history_rel = project_relative_or_absolute(project_dir, history_path)
+    name = str(body.get("name") or body.get("title") or session_id).strip()[:160] or session_id
+    backend = str(body.get("backend") or settings.get("agentProvider") or "").strip()
+    provider = str(body.get("provider") or settings.get("agintiProvider") or settings.get("deepseekModel") or "").strip()
+    command_cwd = str(body.get("commandCwd") or body.get("cwd") or project_dir).strip()
+    active_file = str(body.get("activeFile") or body.get("file") or "").strip()
+    agent_session_id = str(body.get("agentSessionId") or body.get("agintiSessionId") or settings.get("agintiSessionId") or "").strip()
+    with connect_session_db(project_dir) as db:
+        existing = db.execute("SELECT created_at, name FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        created_at = existing["created_at"] if existing else now
+        if existing and not body.get("name") and not body.get("title"):
+            name = existing["name"] or name
+        db.execute(
+            """
+            INSERT INTO sessions (
+              session_id, name, project_path, project_root, command_cwd, active_file,
+              backend, provider, agent_session_id, status, source, history_path,
+              last_message, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+              name = excluded.name,
+              project_path = excluded.project_path,
+              project_root = excluded.project_root,
+              command_cwd = excluded.command_cwd,
+              active_file = excluded.active_file,
+              backend = excluded.backend,
+              provider = excluded.provider,
+              agent_session_id = CASE WHEN excluded.agent_session_id != '' THEN excluded.agent_session_id ELSE sessions.agent_session_id END,
+              status = excluded.status,
+              source = excluded.source,
+              history_path = excluded.history_path,
+              last_message = CASE WHEN excluded.last_message != '' THEN excluded.last_message ELSE sessions.last_message END,
+              updated_at = excluded.updated_at
+            """,
+            (
+                session_id,
+                name,
+                project_label(project_dir),
+                str(project_dir.resolve()),
+                command_cwd,
+                active_file,
+                backend,
+                provider,
+                agent_session_id,
+                str(body.get("status") or "active"),
+                str(body.get("source") or "studio"),
+                history_rel,
+                str(body.get("lastMessage") or body.get("message") or "")[:800],
+                created_at,
+                now,
+            ),
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+    return session_row_to_dict(project_dir, row)
+
+
+def history_session_rows(project_dir: Path) -> list[dict]:
+    folder = STUDIO_HISTORY_DIR / "session"
+    if not folder.exists():
+        return []
+    rows = []
+    for file_path in folder.glob("*.jsonl"):
+        session_id = file_path.stem
+        stat = file_path.stat()
+        rows.append(
+            {
+                "sessionId": session_id,
+                "name": session_id,
+                "projectPath": project_label(project_dir),
+                "projectRoot": str(project_dir.resolve()),
+                "commandCwd": str(project_dir.resolve()),
+                "activeFile": "",
+                "backend": "",
+                "provider": "",
+                "agentSessionId": "",
+                "status": "history",
+                "source": "history",
+                "historyPath": project_relative_or_absolute(project_dir, file_path),
+                "lastMessage": "",
+                "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_ctime)),
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime)),
+                "historyCount": session_history_count(session_id),
+            }
+        )
+    return rows
+
+
+def list_aaps_sessions(project_dir: Path, limit: int = 100) -> dict:
+    default = upsert_aaps_session(project_dir, {"sessionId": "default", "name": "Default", "source": "system"})
+    with connect_session_db(project_dir) as db:
+        rows = [session_row_to_dict(project_dir, row) for row in db.execute("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (max(1, min(limit, 500)),)).fetchall()]
+    by_id = {row["sessionId"]: row for row in history_session_rows(project_dir)}
+    by_id.update({row["sessionId"]: row for row in rows})
+    by_id.setdefault("default", default)
+    sessions = sorted(by_id.values(), key=lambda item: item.get("updatedAt") or "", reverse=True)[: max(1, min(limit, 500))]
+    return {
+        "ok": True,
+        "project_path": project_label(project_dir),
+        "projectRoot": str(project_dir.resolve()),
+        "dbPath": project_relative_or_absolute(project_dir, session_db_path(project_dir)),
+        "sessions": sessions,
+    }
 
 
 def append_jsonl(path: Path, payload: dict) -> Path:
@@ -1709,7 +1907,7 @@ def read_compile_record(compile_id: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def codex_command(schema: str, output_path: Path, settings: dict | None = None) -> list[str]:
+def codex_command(schema: str, output_path: Path, settings: dict | None = None, cwd: Path | None = None) -> list[str]:
     active = settings or read_settings()
     if schema == "aaps_chat":
         model = str(active.get("codexChatModel") or active.get("codexModel") or "gpt-5.5")
@@ -1727,7 +1925,7 @@ def codex_command(schema: str, output_path: Path, settings: dict | None = None) 
         "-c",
         f'model_reasoning_effort="{reasoning}"',
         "--cd",
-        str(PROJECT_ROOT),
+        str((cwd or PROJECT_ROOT).resolve()),
         "--output-last-message",
         str(output_path),
     ]
@@ -3208,8 +3406,9 @@ def parse_aginti_session_id(text: str) -> str:
     return match.group(1) if match else ""
 
 
-def run_aginti(job_id: str, prompt: str, schema: str = "response", settings: dict | None = None) -> dict:
+def run_aginti(job_id: str, prompt: str, schema: str = "response", settings: dict | None = None, cwd: Path | None = None) -> dict:
     active = settings or read_settings()
+    work_cwd = (cwd or PROJECT_ROOT).resolve()
     folder = job_dir(job_id)
     folder.mkdir(parents=True, exist_ok=True)
     output_path = folder / "output.json"
@@ -3217,8 +3416,8 @@ def run_aginti(job_id: str, prompt: str, schema: str = "response", settings: dic
     stderr_path = folder / "stderr.log"
     prompt_path = folder / "prompt.txt"
     handoff_path = folder / "aginti-handoff.md"
-    project_output_rel = output_path.relative_to(PROJECT_ROOT).as_posix() if is_relative_to(output_path, PROJECT_ROOT) else output_path.as_posix()
-    project_handoff_rel = handoff_path.relative_to(PROJECT_ROOT).as_posix() if is_relative_to(handoff_path, PROJECT_ROOT) else handoff_path.as_posix()
+    project_output_rel = output_path.as_posix()
+    project_handoff_rel = handoff_path.as_posix()
     prompt_path.write_text(prompt, encoding="utf-8")
 
     aginti_bin = find_command("aginti", "AAPS_AGINTI_BIN")
@@ -3301,7 +3500,7 @@ Backend task:
     try:
         process = subprocess.run(
             command,
-            cwd=PROJECT_ROOT,
+            cwd=work_cwd,
             text=True,
             capture_output=True,
             timeout=timeout,
@@ -3355,11 +3554,12 @@ Backend task:
         return {"status": "failed", "error": str(exc)}
 
 
-def run_codex(job_id: str, prompt: str, schema: str = "response", force_real: bool = False) -> dict:
+def run_codex(job_id: str, prompt: str, schema: str = "response", force_real: bool = False, cwd: Path | None = None) -> dict:
     settings = read_settings()
+    work_cwd = (cwd or PROJECT_ROOT).resolve()
     mock_enabled = os.environ.get("AAPS_MOCK_CODEX") == "1" and not force_real
     if settings.get("agentProvider") == "aginti" and not mock_enabled:
-        return run_aginti(job_id, prompt, schema, settings)
+        return run_aginti(job_id, prompt, schema, settings, work_cwd)
     if settings.get("agentProvider") == "deepseek" and not mock_enabled:
         return run_deepseek(job_id, prompt, schema, settings)
 
@@ -3387,10 +3587,10 @@ def run_codex(job_id: str, prompt: str, schema: str = "response", force_real: bo
 
     timeout = int(settings.get("codexTimeout") or os.environ.get("AAPS_CODEX_TIMEOUT", "240"))
     process = subprocess.run(
-        codex_command(schema, output_path, settings),
+        codex_command(schema, output_path, settings, work_cwd),
         input=prompt,
         text=True,
-        cwd=PROJECT_ROOT,
+        cwd=work_cwd,
         capture_output=True,
         timeout=timeout,
         check=False,
@@ -3719,6 +3919,15 @@ class AAPSHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/aaps/settings":
             write_json(self, public_settings())
             return
+        if parsed.path == "/api/aaps/sessions":
+            try:
+                query = parse_qs(parsed.query)
+                project_dir = safe_repo_path(query.get("path", ["."])[0])
+                limit = max(1, min(500, int(query.get("limit", ["100"])[0] or "100")))
+                write_json(self, list_aaps_sessions(project_dir, limit))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
         if parsed.path == "/api/aaps/history":
             try:
                 query = parse_qs(parsed.query)
@@ -3909,9 +4118,23 @@ class AAPSHandler(SimpleHTTPRequestHandler):
             if not message:
                 write_json(self, {"error": "message is required"}, 400)
                 return
+            project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
             if os.environ.get("AAPS_MOCK_CODEX") == "1":
-                project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
                 scope, scope_id = chat_session_scope(body, context)
+                if scope == "session":
+                    upsert_aaps_session(
+                        project_dir,
+                        {
+                            "sessionId": scope_id,
+                            "name": body.get("sessionName") or context.get("sessionName") or scope_id,
+                            "commandCwd": context.get("commandCwd") or context.get("cwd") or str(project_dir),
+                            "activeFile": context.get("activeFile") or body.get("file") or "",
+                            "backend": "mock",
+                            "provider": "mock",
+                            "source": context.get("tab") or "studio",
+                            "message": message,
+                        },
+                    )
                 result = {
                     "mode": "reply",
                     "route": "mock",
@@ -3949,9 +4172,9 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 build_chat_prompt(source, message, context),
                 "aaps_chat",
                 bool(body.get("forceRealBackend")),
+                project_dir,
             )
             try:
-                project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
                 scope, scope_id = chat_session_scope(body, context)
                 result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}
                 if isinstance(result, dict):
@@ -3963,6 +4186,21 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         source,
                         str(read_settings().get("agentProvider") or "codex"),
                         job_id,
+                    )
+                if scope == "session":
+                    upsert_aaps_session(
+                        project_dir,
+                        {
+                            "sessionId": scope_id,
+                            "name": body.get("sessionName") or context.get("sessionName") or scope_id,
+                            "commandCwd": context.get("commandCwd") or context.get("cwd") or str(project_dir),
+                            "activeFile": context.get("activeFile") or body.get("file") or "",
+                            "backend": str(read_settings().get("agentProvider") or "codex"),
+                            "provider": str(read_settings().get("agintiProvider") or read_settings().get("deepseekModel") or ""),
+                            "agentSessionId": outcome.get("agintiSessionId", ""),
+                            "source": context.get("tab") or "studio",
+                            "message": message,
+                        },
                     )
                 history_path, artifact_path = write_studio_chat_event(
                     project_dir,
@@ -4022,6 +4260,17 @@ class AAPSHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/aaps/settings":
             try:
                 write_json(self, write_settings(body))
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+            return
+
+        if parsed.path == "/api/aaps/sessions":
+            try:
+                project_dir = safe_repo_path(str(body.get("path") or "."))
+                session = upsert_aaps_session(project_dir, body)
+                payload = list_aaps_sessions(project_dir)
+                payload["session"] = session
+                write_json(self, payload)
             except Exception as exc:  # noqa: BLE001
                 write_json(self, {"error": str(exc)}, 400)
             return
