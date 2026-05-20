@@ -181,11 +181,11 @@ function canListen(host, port) {
   });
 }
 
-async function waitForHealth(host, port, timeoutMs = 7000) {
+async function waitForHealth(host, port, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await fetchHealth(host, port, 350)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (await fetchHealth(host, port, 700)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   return false;
 }
