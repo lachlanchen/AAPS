@@ -561,6 +561,17 @@ assert(syncedSessions.dbPath.endsWith(".aaps-work/aaps-sessions.sqlite"), synced
 assert.strictEqual(syncedSession.commandCwd, webappProject);
 assert.strictEqual(syncedSession.activeFile, "workflows/main.aaps");
 assert.strictEqual(syncedSession.historyCount, 1);
+const newSessionPayload = httpJson(`http://127.0.0.1:${activeWebappPort}/api/aaps/sessions`, {
+  path: ".",
+  sessionId: "ui-new-session",
+  name: "UI New Session",
+  commandCwd: webappProject,
+  activeFile: "workflows/main.aaps",
+  source: "studio",
+});
+assert.strictEqual(newSessionPayload.session.name, "UI New Session");
+assert.strictEqual(newSessionPayload.session.commandCwd, webappProject);
+assert(newSessionPayload.sessions.some((session) => session.sessionId === "ui-new-session"));
 const webappChat = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "chat", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", activeWebappPort, "--no-webapp"],

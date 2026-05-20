@@ -551,6 +551,30 @@ p {
   padding: 4px 28px 4px 10px;
 }
 
+.session-new-button {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.session-cwd {
+  max-width: min(34vw, 420px);
+  min-height: 30px;
+  padding: 6px 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .chat-head h2,
 .modal-head h2 {
   font-size: 17px;
@@ -831,6 +855,12 @@ p {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+.form-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .span-2 {

@@ -91,6 +91,8 @@
             <span>Session</span>
             <select id="session-select" aria-label="Chat session"></select>
           </label>
+          <button id="new-session-button" type="button" class="session-new-button" title="Create a new chat session">+ New</button>
+          <span id="session-cwd" class="session-cwd" title="Current session working directory">cwd: .</span>
           <span id="chat-status" class="status-badge">ready</span>
         </div>
       </div>
@@ -156,6 +158,29 @@
         <div id="history-list" class="history-list"></div>
       </div>
     </div>
+
+    <div id="new-session-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="new-session-title">
+      <form class="modal-card editor-card" id="new-session-form">
+        <div class="modal-head">
+          <div>
+            <h2 id="new-session-title">New Session</h2>
+            <p>Create a named AAPS chat session with its own working directory.</p>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="new-session-modal" aria-label="Close new session">x</button>
+        </div>
+        <div class="editor-grid">
+          <label>Name <input name="name" id="new-session-name" placeholder="Research analysis session" autocomplete="off" /></label>
+          <label>Working path
+            <input name="cwd" id="new-session-cwd" list="session-cwd-options" placeholder="/path/to/project/or/subfolder" autocomplete="off" />
+          </label>
+          <p class="span-2 form-hint">The working path is passed to AgInTi/Codex as the command cwd. It must be an existing folder inside the Studio project scope.</p>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="primary-button">Create Session</button>
+        </div>
+      </form>
+    </div>
+    <datalist id="session-cwd-options"></datalist>
 
     <div id="artifacts-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="artifacts-title">
       <div class="modal-card wide-card">

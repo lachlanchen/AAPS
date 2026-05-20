@@ -213,7 +213,7 @@
       workingFile: state.activeFile || "",
       sessionId: state.sessionId,
       sessionName: currentSession()?.name || state.sessionId,
-      commandCwd: state.projectAbsolutePath || state.projectPath || ".",
+      commandCwd: currentSessionCwd(),
       focus: state.focus,
       selectedElement,
       selectedBlock: selectedBlockValue,
@@ -232,6 +232,60 @@
 
   function currentSession() {
     return state.sessions.find((session) => session.sessionId === state.sessionId) || null;
+  }
+
+  function normalizeSessionId(value) {
+    return String(value || "session").replace(/[^0-9A-Za-z_.:-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "session";
+  }
+
+  function uniqueSessionId(name) {
+    const base = normalizeSessionId(name || "session");
+    const taken = new Set(state.sessions.map((session) => session.sessionId));
+    if (!taken.has(base)) return base;
+    const suffix = Date.now().toString(36);
+    return normalizeSessionId(`${base}_${suffix}`);
+  }
+
+  function currentSessionCwd() {
+    const session = currentSession();
+    return session?.commandCwd || state.projectAbsolutePath || state.projectPath || ".";
+  }
+
+  function updateSessionCwdDisplay() {
+    const node = $("#session-cwd");
+    if (!node) return;
+    const cwd = currentSessionCwd();
+    node.textContent = `cwd: ${compact(cwd, 78)}`;
+    node.title = cwd;
+  }
+
+  function sessionPathSuggestions() {
+    const values = new Set();
+    const root = state.projectAbsolutePath || state.projectPath || ".";
+    [".", root, currentSessionCwd()].forEach((value) => {
+      if (value) values.add(value);
+    });
+    ["blocks", "skills", "workflows", "scripts", "data", "artifacts", "runs", "reports", "notes"].forEach((folder) => {
+      values.add(folder);
+      if (root && root !== ".") values.add(`${root.replace(/\/$/, "")}/${folder}`);
+    });
+    state.projects.forEach((project) => {
+      if (project.absolutePath) values.add(project.absolutePath);
+      if (project.path) values.add(project.path);
+    });
+    state.sessions.forEach((session) => {
+      if (session.commandCwd) values.add(session.commandCwd);
+      if (session.projectRoot) values.add(session.projectRoot);
+    });
+    return Array.from(values).filter(Boolean).slice(0, 80);
+  }
+
+  function renderSessionPathOptions() {
+    const datalist = $("#session-cwd-options");
+    if (!datalist) return;
+    datalist.innerHTML = sessionPathSuggestions()
+      .map((value) => `<option value="${escapeHtml(value)}"></option>`)
+      .join("");
   }
 
   function syncSessionBadge() {
@@ -256,6 +310,8 @@
       select.value = state.sessionId;
       select.title = `Session ${state.sessionId}`;
     }
+    updateSessionCwdDisplay();
+    renderSessionPathOptions();
     if (window.localStorage) window.localStorage.setItem("aaps.simple.sessionId", state.sessionId);
   }
 
@@ -306,7 +362,7 @@
       path: state.projectPath || ".",
       sessionId: state.sessionId,
       name: name || currentSession()?.name || state.sessionId,
-      commandCwd: state.projectAbsolutePath || state.projectPath || ".",
+      commandCwd: currentSessionCwd(),
       activeFile: state.activeFile || "",
       backend: state.settings.agentProvider || "",
       provider: state.settings.agintiProvider || state.settings.deepseekModel || "",
@@ -366,7 +422,7 @@
   }
 
   async function switchSession(sessionId) {
-    const normalized = String(sessionId || "default").replace(/[^0-9A-Za-z_.:-]+/g, "_").slice(0, 80) || "default";
+    const normalized = normalizeSessionId(sessionId || "default");
     if (normalized === state.sessionId) return;
     state.sessionId = normalized;
     state.lastHistorySignature = "";
@@ -1021,6 +1077,47 @@
     if (modal) modal.hidden = true;
   }
 
+  function openNewSessionModal() {
+    renderSessionPathOptions();
+    const suggestedIndex = state.sessions.length + 1;
+    const nameField = $("#new-session-name");
+    const cwdField = $("#new-session-cwd");
+    if (nameField) nameField.value = `Session ${suggestedIndex}`;
+    if (cwdField) cwdField.value = currentSessionCwd();
+    openModal("new-session-modal");
+    if (nameField) nameField.focus();
+  }
+
+  async function createNewSession(event) {
+    event.preventDefault();
+    const name = $("#new-session-name").value.trim() || "AAPS session";
+    const commandCwd = $("#new-session-cwd").value.trim() || currentSessionCwd();
+    const sessionId = uniqueSessionId(name);
+    try {
+      const payload = await jsonFetch("/api/aaps/sessions", {
+        path: state.projectPath || ".",
+        sessionId,
+        name,
+        commandCwd,
+        activeFile: state.activeFile || "",
+        backend: state.settings.agentProvider || "",
+        provider: state.settings.agintiProvider || state.settings.deepseekModel || "",
+        source: "studio",
+      });
+      state.sessions = Array.isArray(payload.sessions) ? payload.sessions : state.sessions;
+      state.sessionId = sessionId;
+      state.lastHistorySignature = "";
+      state.messages = [];
+      closeModal("new-session-modal");
+      syncSessionBadge();
+      await loadSessionHistory({ quiet: true });
+      renderAll();
+      showToast("Session created", `${name} · ${commandCwd}`, "success", 3200);
+    } catch (error) {
+      showToast("Session creation failed", error.message, "error", 6200);
+    }
+  }
+
   function openElementEditor(id) {
     const row = flattenProgram().find((item) => item.node.id === id);
     if (!row) return;
@@ -1247,6 +1344,8 @@
     $("#create-project-button").addEventListener("click", createProject);
     $("#chat-form").addEventListener("submit", handleChatSubmit);
     $("#chat-panel-toggle").addEventListener("click", () => setChatPanelOpen(!state.chatPanelOpen));
+    $("#new-session-button").addEventListener("click", openNewSessionModal);
+    $("#new-session-form").addEventListener("submit", createNewSession);
     $("#session-select").addEventListener("change", (event) => {
       switchSession(event.currentTarget.value);
     });
@@ -1326,6 +1425,16 @@
       record("chat dock is fixed to viewport bottom", getComputedStyle($(".chat-dock")).position === "fixed");
       record("chat panel defaults collapsed", !$(".chat-dock").classList.contains("is-expanded"));
       record("chat session dropdown visible", $("#session-select").options.length >= 1 && $("#session-select").value);
+      record("new session button visible", $("#new-session-button").textContent.trim() === "+ New");
+      record("session cwd visible", $("#session-cwd").textContent.includes("cwd:"));
+      $("#new-session-button").click();
+      record("new session modal opens", !$("#new-session-modal").hidden);
+      record("new session working path autocomplete exists", $("#new-session-cwd").getAttribute("list") === "session-cwd-options" && $("#session-cwd-options").children.length >= 1);
+      $("#new-session-name").value = "TDV Session";
+      $("#new-session-cwd").value = state.projectAbsolutePath || ".";
+      $("#new-session-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await waitFor(() => $("#session-select").value === "TDV_Session", 4000);
+      record("new session can be created and selected", $("#session-select").value === "TDV_Session" && $("#session-cwd").title === (state.projectAbsolutePath || "."));
       record("chat transcript hidden from dock", getComputedStyle($("#chat-stream")).display === "none");
       record("chat history button is explicit", $("#history-button").textContent.trim() === "Chat History");
       record("project list remains visible", $("#project-list").clientHeight > 24);

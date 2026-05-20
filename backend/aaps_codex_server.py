@@ -372,6 +372,14 @@ def safe_repo_path(value: str | None = ".") -> Path:
     return resolved
 
 
+def safe_working_cwd(value: str | None, fallback: Path) -> Path:
+    text = str(value or "").strip()
+    resolved = safe_repo_path(text) if text else fallback.resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise ValueError(f"working path must be an existing directory inside the AAPS Studio project: {text or resolved}")
+    return resolved
+
+
 def relative_to_project(project_dir: Path, file_name: str) -> Path:
     text = str(file_name or "").strip()
     candidate = Path(text)
@@ -536,7 +544,7 @@ def upsert_aaps_session(project_dir: Path, payload: dict | None = None) -> dict:
     name = str(body.get("name") or body.get("title") or session_id).strip()[:160] or session_id
     backend = str(body.get("backend") or settings.get("agentProvider") or "").strip()
     provider = str(body.get("provider") or settings.get("agintiProvider") or settings.get("deepseekModel") or "").strip()
-    command_cwd = str(body.get("commandCwd") or body.get("cwd") or project_dir).strip()
+    command_cwd = str(safe_working_cwd(body.get("commandCwd") or body.get("cwd") or str(project_dir), project_dir))
     active_file = str(body.get("activeFile") or body.get("file") or "").strip()
     agent_session_id = str(body.get("agentSessionId") or body.get("agintiSessionId") or settings.get("agintiSessionId") or "").strip()
     with connect_session_db(project_dir) as db:
@@ -4119,6 +4127,11 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 write_json(self, {"error": "message is required"}, 400)
                 return
             project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
+            try:
+                command_cwd = safe_working_cwd(context.get("commandCwd") or context.get("cwd") or str(project_dir), project_dir)
+            except Exception as exc:  # noqa: BLE001
+                write_json(self, {"error": str(exc)}, 400)
+                return
             if os.environ.get("AAPS_MOCK_CODEX") == "1":
                 scope, scope_id = chat_session_scope(body, context)
                 if scope == "session":
@@ -4127,7 +4140,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         {
                             "sessionId": scope_id,
                             "name": body.get("sessionName") or context.get("sessionName") or scope_id,
-                            "commandCwd": context.get("commandCwd") or context.get("cwd") or str(project_dir),
+                            "commandCwd": str(command_cwd),
                             "activeFile": context.get("activeFile") or body.get("file") or "",
                             "backend": "mock",
                             "provider": "mock",
@@ -4172,7 +4185,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 build_chat_prompt(source, message, context),
                 "aaps_chat",
                 bool(body.get("forceRealBackend")),
-                project_dir,
+                command_cwd,
             )
             try:
                 scope, scope_id = chat_session_scope(body, context)
@@ -4193,7 +4206,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         {
                             "sessionId": scope_id,
                             "name": body.get("sessionName") or context.get("sessionName") or scope_id,
-                            "commandCwd": context.get("commandCwd") or context.get("cwd") or str(project_dir),
+                            "commandCwd": str(command_cwd),
                             "activeFile": context.get("activeFile") or body.get("file") or "",
                             "backend": str(read_settings().get("agentProvider") or "codex"),
                             "provider": str(read_settings().get("agintiProvider") or read_settings().get("deepseekModel") or ""),
