@@ -33,11 +33,11 @@
           <div>
             <h1 id="projects-title">Projects</h1>
             <p>Open a topic workspace.</p>
-            <p id="active-project-file" class="active-project-file">Active .aaps: loading</p>
+            <p id="active-project-file" class="active-project-file">AAPS: loading</p>
           </div>
           <div class="panel-actions">
-            <button id="new-project-button" type="button" class="small-action-button">+ New Project</button>
-            <button id="refresh-projects" type="button" class="icon-button" title="Refresh projects" aria-label="Refresh projects">R</button>
+            <button id="new-project-button" type="button" class="small-action-button" title="New Project">+ Project</button>
+            <button id="refresh-projects" type="button" class="icon-button" title="Refresh projects" aria-label="Refresh projects">↻</button>
           </div>
         </div>
 
@@ -152,6 +152,19 @@
           <button type="button" class="icon-button" data-close-modal="history-modal" aria-label="Close history">x</button>
         </div>
         <div id="history-list" class="history-list"></div>
+      </div>
+    </div>
+
+    <div id="project-files-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="project-files-title">
+      <div class="modal-card wide-card">
+        <div class="modal-head">
+          <div>
+            <h2 id="project-files-title">Project AAPS Files</h2>
+            <p id="project-files-summary">Choose the active `.aaps` program for this topic workspace.</p>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="project-files-modal" aria-label="Close project files">x</button>
+        </div>
+        <div id="project-files-list" class="project-files-list"></div>
       </div>
     </div>
 

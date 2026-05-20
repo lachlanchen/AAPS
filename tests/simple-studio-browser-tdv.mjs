@@ -109,6 +109,26 @@ function prepareProject() {
     ].join("\n"),
     "utf8"
   );
+  const secondProject = path.join(projectDir, "projects", "second-topic");
+  fs.mkdirSync(path.join(secondProject, "workflows"), { recursive: true });
+  fs.writeFileSync(
+    path.join(secondProject, "aaps.project.json"),
+    JSON.stringify({ name: "Second Topic", activeFile: "workflows/main.aaps" }, null, 2) + "\n",
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(secondProject, "workflows", "main.aaps"),
+    [
+      'pipeline "Second Topic" {',
+      '  domain "general"',
+      "  task inspect_second_topic {",
+      '    prompt "Verify project order remains stable after selection."',
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8"
+  );
 }
 
 function extractTdvResults(dom) {

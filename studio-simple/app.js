@@ -168,10 +168,10 @@
     settings: {},
     chatPanelOpen: false,
     drag: null,
-    projectGroupsOpen: {},
     blockGroupsOpen: { system: false, user: true },
     artifacts: [],
     artifactCategory: "image",
+    projectFilesModalPath: "",
     editingElementId: "",
     editingBlockId: "",
   };
@@ -777,41 +777,77 @@
     return project.absolutePath || project.path || project.name || "";
   }
 
-  function projectIsOpen(project) {
-    const key = projectKey(project);
-    return state.projectGroupsOpen[key] !== false;
+  function projectMatchesCurrent(project) {
+    if (!project) return false;
+    return (
+      (project.path && project.path === state.projectPath) ||
+      (project.absolutePath && project.absolutePath === state.projectAbsolutePath)
+    );
   }
 
-  function toggleProjectGroup(key) {
-    if (!key) return;
-    state.projectGroupsOpen[key] = state.projectGroupsOpen[key] === false;
-    renderProjects();
+  function shortAapsName(file) {
+    const text = String(file || "");
+    return text.split("/").filter(Boolean).pop() || text || "none";
+  }
+
+  function currentProjectSummary() {
+    return {
+      name: (state.manifest && state.manifest.name) || "AAPS",
+      path: state.projectPath || "",
+      absolutePath: state.projectAbsolutePath || state.projectPath || "",
+      manifestExists: state.manifestExists,
+      selected: true,
+      aapsFiles: state.projectAapsFiles || [],
+      artifactCount: state.projectArtifactCount || 0,
+      activeFile: state.activeFile || "",
+      defaultMain: (state.manifest && state.manifest.defaultMain) || "",
+    };
+  }
+
+  function projectListItems() {
+    const current = currentProjectSummary();
+    const sourceProjects = Array.isArray(state.projects) && state.projects.length ? state.projects : [current];
+    let foundCurrent = false;
+    const items = sourceProjects.map((project) => {
+      if (projectMatchesCurrent(project)) {
+        foundCurrent = true;
+        return {
+          ...project,
+          name: current.name || project.name,
+          manifestExists: current.manifestExists,
+          selected: true,
+          aapsFiles: current.aapsFiles,
+          artifactCount: current.artifactCount,
+          activeFile: current.activeFile,
+          defaultMain: current.defaultMain || project.defaultMain || "",
+        };
+      }
+      return { ...project, selected: false };
+    });
+    if (!foundCurrent && current.path) items.push(current);
+    return items;
+  }
+
+  function projectByPath(pathValue) {
+    const target = String(pathValue || "");
+    return (
+      projectListItems().find((project) => project.path === target || project.absolutePath === target || projectKey(project) === target) ||
+      null
+    );
   }
 
   function renderProjects() {
     const list = $("#project-list");
     const activeFileLabel = $("#active-project-file");
     if (activeFileLabel) {
-      activeFileLabel.textContent = state.activeFile ? `Active .aaps: ${state.activeFile}` : "Active .aaps: none selected";
+      activeFileLabel.textContent = state.activeFile ? `AAPS: ${shortAapsName(state.activeFile)}` : "AAPS: none";
       activeFileLabel.title = state.activeFile || "No active .aaps file selected";
     }
-    const currentProject = {
-      name: (state.manifest && state.manifest.name) || "AAPS",
-      path: state.projectPath || "",
-      absolutePath: state.projectAbsolutePath || state.projectPath || "",
-      manifestExists: state.manifestExists,
-      current: true,
-      selected: true,
-      aapsFiles: state.projectAapsFiles || [],
-      artifactCount: state.projectArtifactCount || 0,
-      activeFile: state.activeFile || "",
-    };
     const seen = new Set();
-    const projects = [currentProject, ...state.projects].filter((project) => {
+    const projects = projectListItems().filter((project) => {
       const key = projectKey(project);
       if (!key || seen.has(key)) return false;
       seen.add(key);
-      if (!(key in state.projectGroupsOpen)) state.projectGroupsOpen[key] = true;
       return true;
     });
     if (!projects.length) {
@@ -819,52 +855,28 @@
     } else {
       list.innerHTML = projects
         .map((project) => {
-          const selected = project.path === state.projectPath || project.absolutePath === state.projectAbsolutePath;
+          const selected = projectMatchesCurrent(project);
           const name = project.name || project.path || "AAPS project";
           const path = project.absolutePath || project.path || "";
           const key = projectKey(project);
-          const open = projectIsOpen(project);
           const aapsFiles = Array.isArray(project.aapsFiles) ? project.aapsFiles : [];
           const activeFile = project.activeFile || project.defaultMain || "";
-          const files = open
-            ? aapsFiles.length
-              ? `<div class="project-aaps-list" data-project-aaps-list="${escapeHtml(key)}">
-                  ${aapsFiles
-                    .map(
-                      (file) => `
-                        <button
-                          type="button"
-                          class="project-aaps-file${selected && file === state.activeFile ? " is-active" : ""}"
-                          data-project-path="${escapeHtml(path)}"
-                          data-project-file="${escapeHtml(file)}"
-                          title="${escapeHtml(file)}"
-                        >
-                          <span class="project-aaps-name">${escapeHtml(file)}</span>
-                          <span class="project-aaps-open">${selected && file === state.activeFile ? "Active" : "Open"}</span>
-                        </button>
-                      `
-                    )
-                    .join("")}
-                </div>`
-              : `<div class="project-empty">No .aaps files yet.</div>`
-            : "";
           return `
             <section class="project-entry${selected ? " is-selected" : ""}" data-project-entry="${escapeHtml(key)}">
               <div class="project-header-row">
-                <button type="button" class="project-toggle" data-toggle-project="${escapeHtml(key)}" aria-expanded="${open ? "true" : "false"}" title="${open ? "Fold project" : "Unfold project"}">
-                  <span class="project-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span>
-                  <span class="project-toggle-label">Files</span>
+                <button type="button" class="project-files-button" data-project-files="${escapeHtml(path)}" title="Open .aaps files for ${escapeHtml(name)}">
+                  <span class="project-file-count">${aapsFiles.length}</span>
+                  <span class="project-files-label">AAPS</span>
                 </button>
                 <button type="button" class="project-item" data-project-path="${escapeHtml(path)}">
                   <strong>${escapeHtml(name)}${selected ? " · selected" : ""}</strong>
                   <small>${escapeHtml(project.absolutePath || path)}</small>
                   <span class="project-meta-row">
-                    <small>${aapsFiles.length} .aaps${activeFile ? ` · main ${escapeHtml(activeFile)}` : ""}</small>
+                    <small>${aapsFiles.length} .aaps${activeFile ? ` · ${escapeHtml(shortAapsName(activeFile))}` : ""}</small>
                     <small>${Number(project.artifactCount || 0)} artifacts</small>
                   </span>
                 </button>
               </div>
-              ${files}
             </section>
           `;
         })
@@ -872,6 +884,44 @@
     }
     $("#project-path-input").value = "";
     $("#project-path-input").placeholder = "Open project folder path";
+  }
+
+  function renderProjectFilesModal(pathValue = state.projectFilesModalPath || state.projectPath || ".") {
+    const project = projectByPath(pathValue) || currentProjectSummary();
+    const path = project.absolutePath || project.path || pathValue || ".";
+    const selected = projectMatchesCurrent(project);
+    const files = Array.isArray(project.aapsFiles) ? project.aapsFiles : [];
+    state.projectFilesModalPath = path;
+    $("#project-files-title").textContent = `${project.name || "AAPS Project"} .aaps`;
+    $("#project-files-summary").textContent = selected
+      ? `Current project. Active: ${state.activeFile || "none"}.`
+      : `Open a workflow from ${project.absolutePath || project.path || path}.`;
+    $("#project-files-list").innerHTML = files.length
+      ? files
+          .map(
+            (file) => `
+              <button
+                type="button"
+                class="project-file-choice${selected && file === state.activeFile ? " is-active" : ""}"
+                data-project-path="${escapeHtml(path)}"
+                data-project-file="${escapeHtml(file)}"
+                title="${escapeHtml(file)}"
+              >
+                <span>
+                  <strong>${escapeHtml(shortAapsName(file))}</strong>
+                  <small>${escapeHtml(file)}</small>
+                </span>
+                <span>${selected && file === state.activeFile ? "Active" : "Open"}</span>
+              </button>
+            `
+          )
+          .join("")
+      : '<div class="empty-state">No .aaps files were found in this project yet.</div>';
+  }
+
+  function openProjectFilesModal(pathValue) {
+    renderProjectFilesModal(pathValue);
+    openModal("project-files-modal");
   }
 
   function renderProgram() {
@@ -1769,15 +1819,16 @@
         closeModal(target.dataset.closeModal);
         return;
       }
-      if (target.dataset.toggleProject) {
+      if (target.dataset.projectFiles) {
         event.preventDefault();
-        toggleProjectGroup(target.dataset.toggleProject);
+        openProjectFilesModal(target.dataset.projectFiles);
         return;
       }
       if (target.dataset.projectFile) {
         event.preventDefault();
         loadProject(target.dataset.projectPath, target.dataset.projectFile);
         showToast("Opening .aaps", target.dataset.projectFile, "success", 1800);
+        closeModal("project-files-modal");
         return;
       }
       if (target.dataset.projectPath) {
@@ -1866,31 +1917,50 @@
       record("chat transcript hidden from dock", getComputedStyle($("#chat-stream")).display === "none");
       record("chat history button is explicit", $("#history-button").textContent.trim() === "Chat History");
       record("project list remains visible", $("#project-list").clientHeight > 24);
-      record("project aaps files default unfolded", Boolean($(".project-aaps-list .project-aaps-file")));
+      const projectOrderBefore = $$(".project-entry").map((entry) => entry.dataset.projectEntry);
+      const initialProjectKey = $(".project-entry.is-selected")?.dataset.projectEntry || "";
+      const alternateProjectButton = Array.from($$(".project-entry:not(.is-selected) .project-item"))[0];
+      if (alternateProjectButton) {
+        const targetProject = alternateProjectButton.closest(".project-entry").dataset.projectEntry;
+        alternateProjectButton.click();
+        await waitFor(() => $(".project-entry.is-selected")?.dataset.projectEntry === targetProject, 5000);
+        const projectOrderAfter = $$(".project-entry").map((entry) => entry.dataset.projectEntry);
+        record("selecting project keeps list order", JSON.stringify(projectOrderAfter) === JSON.stringify(projectOrderBefore));
+        const initialProjectButton = initialProjectKey ? $(`.project-entry[data-project-entry="${CSS.escape(initialProjectKey)}"] .project-item`) : null;
+        if (initialProjectButton) {
+          initialProjectButton.click();
+          await waitFor(() => $(".project-entry.is-selected")?.dataset.projectEntry === initialProjectKey, 5000);
+        }
+      } else {
+        record("selecting project keeps list order", true, "Only one project available.");
+      }
       const selectedProjectEntry = $(".project-entry.is-selected");
       if (selectedProjectEntry) {
-        selectedProjectEntry.querySelector("[data-toggle-project]").click();
-        record("project aaps files can fold", !$(".project-entry.is-selected .project-aaps-list"));
-        $(".project-entry.is-selected [data-toggle-project]").click();
-        record("project aaps files can unfold", Boolean($(".project-entry.is-selected .project-aaps-list .project-aaps-file")));
+        const filesButton = selectedProjectEntry.querySelector("[data-project-files]");
+        record("project aaps chooser button visible", Boolean(filesButton) && filesButton.textContent.includes("AAPS"));
+        filesButton.click();
+        record("project aaps chooser modal opens", !$("#project-files-modal").hidden);
+        record("project aaps chooser lists files", Boolean($(".project-file-choice")));
       } else {
-        record("project aaps files can fold", false, "No selected project entry rendered.");
-        record("project aaps files can unfold", false, "No selected project entry rendered.");
+        record("project aaps chooser button visible", false, "No selected project entry rendered.");
+        record("project aaps chooser modal opens", false, "No selected project entry rendered.");
+        record("project aaps chooser lists files", false, "No selected project entry rendered.");
       }
-      record("active aaps label visible", $("#active-project-file").textContent.includes("Active .aaps:"));
-      const alternateAaps = Array.from($$(".project-entry.is-selected .project-aaps-file")).find((button) => !button.classList.contains("is-active"));
+      record("active aaps label is compact", $("#active-project-file").textContent.startsWith("AAPS:") && !$("#active-project-file").textContent.includes("/"));
+      const alternateAaps = Array.from($$(".project-file-choice")).find((button) => !button.classList.contains("is-active"));
       if (alternateAaps) {
         const fileName = alternateAaps.dataset.projectFile;
-        record("project aaps open badge visible", Boolean(alternateAaps.querySelector(".project-aaps-open")));
+        record("project aaps open badge visible", alternateAaps.textContent.includes("Open"));
         alternateAaps.click();
         await waitFor(() => state.activeFile === fileName && $("#program-subtitle").textContent.includes(fileName), 5000);
-        record("opening project aaps updates program", state.activeFile === fileName && $(".project-aaps-file.is-active")?.dataset.projectFile === fileName);
-        record("active aaps label updates after open", $("#active-project-file").textContent.includes(fileName));
+        record("opening project aaps updates program", state.activeFile === fileName && $("#project-files-modal").hidden);
+        record("active aaps label updates after open", $("#active-project-file").textContent.includes(shortAapsName(fileName)));
       } else {
         record("project aaps open badge visible", false, "No alternate .aaps file rendered.");
         record("opening project aaps updates program", false, "No alternate .aaps file rendered.");
         record("active aaps label updates after open", false, "No alternate .aaps file rendered.");
       }
+      closeModal("project-files-modal");
       $("#new-project-button").click();
       record("new project modal opens", !$("#new-project-modal").hidden);
       closeModal("new-project-modal");
