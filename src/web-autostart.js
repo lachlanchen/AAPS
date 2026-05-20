@@ -9,6 +9,7 @@ const path = require("path");
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8797;
+const DEFAULT_SIMPLE_PORT = 8798;
 const MAX_PORT_ATTEMPTS = 50;
 
 function normalizeHost(host) {
@@ -18,6 +19,10 @@ function normalizeHost(host) {
 function normalizePort(port) {
   const parsed = Number(port || process.env.AAPS_WEB_PORT || process.env.AAPS_PORT || process.env.PORT || DEFAULT_PORT);
   return Number.isInteger(parsed) && parsed > 0 && parsed < 65536 ? parsed : DEFAULT_PORT;
+}
+
+function normalizeUi(ui) {
+  return String(ui || process.env.AAPS_STUDIO_UI || "classic").trim().toLowerCase() === "simple" ? "simple" : "classic";
 }
 
 function webUrl(host, port) {
@@ -249,14 +254,16 @@ async function stopAapsWebApp({ host = DEFAULT_HOST, preferredPort = DEFAULT_POR
     : { ok: false, stopped: false, host: normalizedHost, port, url, pids: [...pids], error: `AAPS Studio on ${url} did not stop.` };
 }
 
-async function findReusableOrFreeWebPort({ host = DEFAULT_HOST, preferredPort = DEFAULT_PORT, attempts = MAX_PORT_ATTEMPTS, restart = false } = {}) {
+async function findReusableOrFreeWebPort({ host = DEFAULT_HOST, preferredPort = 0, attempts = MAX_PORT_ATTEMPTS, restart = false, ui = "classic" } = {}) {
   const normalizedHost = normalizeHost(host);
-  const startPort = normalizePort(preferredPort);
+  const desiredUi = normalizeUi(ui);
+  const startPort = normalizePort(preferredPort || (desiredUi === "simple" ? DEFAULT_SIMPLE_PORT : DEFAULT_PORT));
   for (let offset = 0; offset < attempts; offset += 1) {
     const port = startPort + offset;
     if (port >= 65536) break;
     const health = await fetchHealthDetails(normalizedHost, port);
     if (health.ok) {
+      if (normalizeUi(health.ui || "classic") !== desiredUi && !restart) continue;
       if (restart) {
         const stopped = await stopAapsWebApp({ host: normalizedHost, preferredPort: port });
         if (!stopped.ok) return { port, host: normalizedHost, url: "", reused: false, available: false, stopped, error: stopped.error };
@@ -275,7 +282,8 @@ async function ensureAapsWebApp({
   packageDir = path.resolve(__dirname, ".."),
   cwd = process.cwd(),
   host = DEFAULT_HOST,
-  preferredPort = DEFAULT_PORT,
+  preferredPort = 0,
+  ui = "classic",
   mockCodex = false,
   restart = false,
   respectAutoStartDisable = true,
@@ -284,9 +292,11 @@ async function ensureAapsWebApp({
     return { ok: false, disabled: true, url: "" };
   }
 
-  const candidate = await findReusableOrFreeWebPort({ host, preferredPort, restart });
+  const selectedUi = normalizeUi(ui);
+  const selectedPort = preferredPort || (selectedUi === "simple" ? DEFAULT_SIMPLE_PORT : DEFAULT_PORT);
+  const candidate = await findReusableOrFreeWebPort({ host, preferredPort: selectedPort, restart, ui: selectedUi });
   if (!candidate.port) {
-    return { ok: false, error: candidate.error || `No available AAPS Studio port from ${normalizePort(preferredPort)}.`, url: "" };
+    return { ok: false, error: candidate.error || `No available AAPS Studio port from ${normalizePort(selectedPort)}.`, url: "" };
   }
   if (candidate.error) return { ok: false, error: candidate.error, url: "" };
   if (candidate.reused) {
@@ -298,6 +308,7 @@ async function ensureAapsWebApp({
     AAPS_HOST: candidate.host,
     AAPS_PORT: String(candidate.port),
     AAPS_STUDIO_PROJECT: cwd,
+    AAPS_STUDIO_UI: selectedUi,
   };
   if (mockCodex || process.env.AAPS_MOCK_CODEX === "1") env.AAPS_MOCK_CODEX = "1";
   const python = resolvePythonLauncher({ env, cwd });
@@ -316,7 +327,7 @@ async function ensureAapsWebApp({
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const logFd = fs.openSync(logPath, "a");
   let spawnError = null;
-  const child = childProcess.spawn(python.command, [...python.prefixArgs, path.join(packageDir, "backend", "aaps_codex_server.py"), "--host", candidate.host, "--port", String(candidate.port)], {
+  const child = childProcess.spawn(python.command, [...python.prefixArgs, path.join(packageDir, "backend", "aaps_codex_server.py"), "--host", candidate.host, "--port", String(candidate.port), "--ui", selectedUi], {
     cwd,
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -340,6 +351,7 @@ async function ensureAapsWebApp({
 module.exports = {
   DEFAULT_HOST,
   DEFAULT_PORT,
+  DEFAULT_SIMPLE_PORT,
   ensureAapsWebApp,
   fetchHealth,
   fetchHealthDetails,

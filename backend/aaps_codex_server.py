@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(os.environ.get("AAPS_STUDIO_PROJECT") or ROOT).expanduser().resolve()
 STUDIO_DIR = ROOT / "studio"
+STUDIO_SIMPLE_DIR = ROOT / "studio-simple"
 if PROJECT_ROOT == ROOT:
     RUNTIME_DIR = ROOT / "runtime" / "codex-jobs"
     RUN_DIR = ROOT / "runtime" / "aaps-runs"
@@ -1581,6 +1582,49 @@ def write_json(handler: SimpleHTTPRequestHandler, payload: dict, status: int = 2
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def active_studio_ui() -> str:
+    ui = os.environ.get("AAPS_STUDIO_UI", "classic").strip().lower()
+    return "simple" if ui == "simple" else "classic"
+
+
+def redirect(handler: SimpleHTTPRequestHandler, location: str) -> None:
+    handler.send_response(HTTPStatus.FOUND)
+    handler.send_header("Location", location)
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+
+
+def write_static_file(handler: SimpleHTTPRequestHandler, file_path: Path) -> bool:
+    if not file_path.exists() or not file_path.is_file():
+        return False
+    body = file_path.read_bytes()
+    content_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    if file_path.suffix == ".js":
+        content_type = "text/javascript"
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    handler.wfile.write(body)
+    return True
+
+
+def simple_static_path(request_path: str) -> Path | None:
+    simple_root = STUDIO_SIMPLE_DIR.resolve()
+    relative = request_path[len("/simple/") :] if request_path.startswith("/simple/") else "index.html"
+    relative = relative or "index.html"
+    candidate = (simple_root / relative).resolve()
+    try:
+        candidate.relative_to(simple_root)
+    except ValueError:
+        return None
+    if candidate.is_dir():
+        candidate = candidate / "index.html"
+    return candidate
 
 
 def job_dir(job_id: str) -> Path:
@@ -3563,16 +3607,33 @@ class AAPSHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/simple":
+            redirect(self, "/simple/")
+            return
+        if parsed.path.startswith("/simple/"):
+            file_path = simple_static_path(parsed.path)
+            if file_path and write_static_file(self, file_path):
+                return
+            self.send_error(HTTPStatus.NOT_FOUND, "simple Studio asset not found")
+            return
+        if active_studio_ui() == "simple" and parsed.path in {"/", "/index.html"}:
+            file_path = STUDIO_SIMPLE_DIR / "index.html"
+            if write_static_file(self, file_path):
+                return
+            self.send_error(HTTPStatus.NOT_FOUND, "simple Studio entrypoint not found")
+            return
         if parsed.path == "/api/health":
             write_json(
                 self,
                 {
                     "ok": True,
                     "app": "aaps",
+                    "ui": active_studio_ui(),
                     "pid": os.getpid(),
                     "host": getattr(self.server, "server_name", ""),
                     "port": getattr(self.server, "server_port", None),
                     "package_root": str(ROOT),
+                    "simple_url": "/simple/",
                     "codex": bool(find_command("codex", "AAPS_CODEX_BIN")),
                     "agintiflow_submodule": (ROOT / "vendor" / "AgInTiFlow").exists(),
                     "runtime": str(RUNTIME_DIR),
@@ -4071,11 +4132,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serve AAPS Studio with Codex wrapper APIs.")
     parser.add_argument("--host", default=os.environ.get("AAPS_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("AAPS_PORT", "8797")))
+    parser.add_argument("--ui", choices=["classic", "simple"], default=os.environ.get("AAPS_STUDIO_UI", "classic"))
     args = parser.parse_args()
+    os.environ["AAPS_STUDIO_UI"] = "simple" if args.ui == "simple" else "classic"
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     COMPILE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"AAPS Studio: http://{args.host}:{args.port}")
+    suffix = "/" if active_studio_ui() == "simple" else ""
+    print(f"AAPS Studio ({active_studio_ui()}): http://{args.host}:{args.port}{suffix}")
     print("API: /api/health, /api/aaps/settings, /api/aaps/projects, /api/aaps/project, /api/aaps/project/create, /api/aaps/project/file, /api/aaps/project/text-file, /api/aaps/qc-review, /api/aaps/block/chat, /api/aaps/compile, /api/aaps/run, /api/aaps/chat, /api/aaps/edit, /api/codex/respond, /api/codex/jobs")
     ThreadingHTTPServer((args.host, args.port), AAPSHandler).serve_forever()
 

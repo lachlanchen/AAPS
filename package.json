@@ -32,6 +32,7 @@
     "scripts/",
     "src/",
     "studio/",
+    "studio-simple/",
     "README.md",
     "AGENTS.md",
     "aaps.project.json",

@@ -1749,6 +1749,10 @@
   }
 
   function ensureRootNode(collection, node) {
+    const statusNote = "Status: needs implementation before production execution.";
+    if (node.kind === "block" && node.compile && node.compile.prompt) {
+      node.notes = uniqueList([...(node.notes || []), statusNote]);
+    }
     const existing = collection.find((item) => item.id === node.id && item.kind === node.kind);
     if (existing) {
       existing.title = existing.title || node.title;
@@ -1763,6 +1767,9 @@
       existing.verify = existing.verify && existing.verify.length ? existing.verify : node.verify;
       existing.recovery = existing.recovery && existing.recovery.length ? existing.recovery : node.recovery;
       existing.reviews = existing.reviews && existing.reviews.length ? existing.reviews : node.reviews;
+      if (existing.kind === "block" && existing.compile && existing.compile.prompt) {
+        existing.notes = uniqueList([...(existing.notes || []), statusNote]);
+      }
       return existing;
     }
     collection.push(node);

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AAPS Studio Simple</title>
+    <meta name="theme-color" content="#f6f5f0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/simple/styles.css" />
+    <script src="/aaps.js" defer></script>
+    <script src="/simple/app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="AAPS Studio">
+        <span class="brand-mark">A</span>
+        <span>
+          <strong>AAPS Studio</strong>
+          <small>Simple workspace</small>
+        </span>
+      </a>
+      <div class="focus-pill" id="focus-label" data-testid="focus-label">Focus: selected project/program</div>
+      <div class="header-actions">
+        <button id="history-button" type="button" class="ghost-button">History</button>
+        <button id="artifacts-button" type="button" class="primary-button">Canvas / Artifacts</button>
+      </div>
+    </header>
+
+    <main class="workspace-grid" data-testid="simple-layout">
+      <section class="panel projects-panel" aria-labelledby="projects-title" data-testid="projects-region">
+        <div class="panel-title">
+          <div>
+            <h1 id="projects-title">Projects</h1>
+            <p>Choose a durable AAPS project.</p>
+          </div>
+          <button id="refresh-projects" type="button" class="icon-button" title="Refresh projects" aria-label="Refresh projects">R</button>
+        </div>
+
+        <label class="field-label" for="project-path-input">Open path</label>
+        <div class="inline-controls">
+          <input id="project-path-input" type="text" value="." autocomplete="off" />
+          <button id="open-project-button" type="button">Open</button>
+        </div>
+
+        <label class="field-label" for="new-project-name">Create project</label>
+        <input id="new-project-name" type="text" placeholder="Project name" autocomplete="off" />
+        <div class="inline-controls">
+          <input id="new-project-path" type="text" placeholder=".aaps-work/studio-simple-demo" autocomplete="off" />
+          <button id="create-project-button" type="button">Create</button>
+        </div>
+
+        <div class="project-card" id="current-project-card">
+          <span class="eyebrow">Current</span>
+          <strong id="current-project-name">Loading...</strong>
+          <code id="current-project-path">.</code>
+          <span id="manifest-status" class="status-badge">manifest unknown</span>
+        </div>
+
+        <div id="project-list" class="project-list" aria-label="AAPS projects"></div>
+      </section>
+
+      <section class="panel program-panel" aria-labelledby="program-title" data-testid="program-region">
+        <div class="panel-title">
+          <div>
+            <h1 id="program-title">Program</h1>
+            <p id="program-subtitle">Structured workflow elements.</p>
+          </div>
+          <span class="disabled-chip" title="Reorder metadata can be edited; drag and drop is disabled in this vertical slice.">Drag disabled</span>
+        </div>
+        <div id="program-status" class="notice">Loading selected program.</div>
+        <div id="program-elements" class="program-elements" aria-label="Program elements"></div>
+      </section>
+
+      <section class="panel blocks-panel" aria-labelledby="blocks-title" data-testid="blocks-region">
+        <div class="panel-title">
+          <div>
+            <h1 id="blocks-title">Blocks & Skills</h1>
+            <p>System blocks plus reusable domain blocks.</p>
+          </div>
+          <span id="block-count" class="count-pill">0</span>
+        </div>
+        <div id="blocks-list" class="blocks-list" aria-label="Blocks and skills"></div>
+      </section>
+    </main>
+
+    <section class="chat-dock" aria-labelledby="chat-title" data-testid="chat-region">
+      <div class="chat-head">
+        <div>
+          <h2 id="chat-title">Chat</h2>
+          <p id="chat-scope">Applies to the whole selected project/program.</p>
+        </div>
+        <span id="chat-status" class="status-badge">ready</span>
+      </div>
+      <div id="chat-stream" class="chat-stream" aria-live="polite"></div>
+      <form id="chat-form" class="chat-form">
+        <textarea id="chat-input" rows="2" placeholder="Describe the experiment, writing project, analysis, or refinement."></textarea>
+        <button type="submit" class="primary-button">Send</button>
+      </form>
+    </section>
+
+    <div id="history-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="history-title">
+      <div class="modal-card wide-card">
+        <div class="modal-head">
+          <div>
+            <h2 id="history-title">History</h2>
+            <p>User and assistant messages with recorded scope.</p>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="history-modal" aria-label="Close history">x</button>
+        </div>
+        <div id="history-list" class="history-list"></div>
+      </div>
+    </div>
+
+    <div id="artifacts-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="artifacts-title">
+      <div class="modal-card wide-card">
+        <div class="modal-head">
+          <div>
+            <h2 id="artifacts-title">Canvas / Artifacts</h2>
+            <p>Real project artifact files when available; unsupported previews show metadata only.</p>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="artifacts-modal" aria-label="Close artifacts">x</button>
+        </div>
+        <div class="artifact-categories" id="artifact-categories"></div>
+        <div id="artifact-preview" class="artifact-preview"></div>
+      </div>
+    </div>
+
+    <div id="element-editor-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="element-editor-title">
+      <form class="modal-card editor-card" id="element-editor-form">
+        <div class="modal-head">
+          <div>
+            <h2 id="element-editor-title">Program Element</h2>
+            <p>Edit structure metadata and block links.</p>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="element-editor-modal" aria-label="Close element editor">x</button>
+        </div>
+        <div class="editor-grid">
+          <label>Name <input name="title" /></label>
+          <label>Type <input name="kind" disabled /></label>
+          <label>Position / order <input name="order" /></label>
+          <label>Linked block / skill <select name="linkedBlock"></select></label>
+          <label class="span-2">Purpose <textarea name="purpose" rows="4"></textarea></label>
+          <label class="span-2">Parameters JSON <textarea name="parameters" rows="3"></textarea></label>
+          <label class="span-2">Input / output mapping <textarea name="mapping" rows="3"></textarea></label>
+          <label class="span-2">Validation expectations <textarea name="validations" rows="3"></textarea></label>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="primary-button">Save Element</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="block-editor-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="block-editor-title">
+      <form class="modal-card editor-card" id="block-editor-form">
+        <div class="modal-head">
+          <div>
+            <h2 id="block-editor-title">Block / Skill</h2>
+            <p id="block-editor-status">Edit a reusable contract.</p>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="block-editor-modal" aria-label="Close block editor">x</button>
+        </div>
+        <div class="editor-grid">
+          <label>Name <input name="title" /></label>
+          <label>Category <input name="category" /></label>
+          <label>Version / history <input name="version" /></label>
+          <label>Script / tool reference <input name="scriptRef" /></label>
+          <label class="span-2">Purpose <textarea name="purpose" rows="3"></textarea></label>
+          <label class="span-2">Typed inputs <textarea name="inputs" rows="3"></textarea></label>
+          <label class="span-2">Typed outputs <textarea name="outputs" rows="3"></textarea></label>
+          <label class="span-2">Prompt <textarea name="prompt" rows="4"></textarea></label>
+          <label class="span-2">Implementation notes <textarea name="implementation" rows="3"></textarea></label>
+          <label class="span-2">Validation rules <textarea name="validations" rows="3"></textarea></label>
+          <label class="span-2">Artifact contract <textarea name="artifacts" rows="3"></textarea></label>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="primary-button">Save Block</button>
+        </div>
+      </form>
+    </div>
+  </body>
+</html>

@@ -10,6 +10,7 @@ const AAPS = require("../src/aaps");
 const { maybeAutoUpdate } = require("../src/auto-update");
 const {
   DEFAULT_PORT,
+  DEFAULT_SIMPLE_PORT,
   ensureAapsWebApp,
   fetchHealthDetails,
   readWebAppPreference,
@@ -66,9 +67,9 @@ function usage() {
     "  aaps \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
     "  aaps chat [--project .] [--backend codex|aginti|print]",
-    "  aaps webapp [start|stop|restart|reuse|enable|disable|status] [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
+    "  aaps webapp [simple|start|stop|restart|reuse|enable|disable|status] [--project .] [--host 127.0.0.1] [--port 8797] [--ui classic|simple] [--json]",
     "  aaps doctor [--project .] [--host 127.0.0.1] [--port 8797] [--json]",
-    "  aaps studio [--project .] [--host 127.0.0.1] [--port 8797] [--mock-codex]",
+    "  aaps studio [--project .] [--host 127.0.0.1] [--port 8797] [--ui classic|simple] [--mock-codex]",
     "  aaps update",
     "  aaps --version",
     "",
@@ -78,6 +79,7 @@ function usage() {
     "  --mode <mode>     Compile mode: check, suggest, apply, interactive, or force.",
     "  --host <host>     Studio host for `aaps studio`.",
     "  --port <port>     Studio port for `aaps studio`.",
+    "  --ui <mode>       Studio UI mode: classic on 8797 or simple on 8798 by default.",
     "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
     "  --run-id <id>     Stable run identifier for reproducible test runs.",
     "  --set <name=value> Override an AAPS input or parameter at runtime; repeatable.",
@@ -492,6 +494,10 @@ function normalizePromptBackend(value) {
   if (["aginti", "agintiflow", "aginti-flow"].includes(backend)) return "aginti";
   if (["print", "dry-run", "dryrun", "prompt"].includes(backend)) return "print";
   return backend || "codex";
+}
+
+function normalizeStudioUi(value) {
+  return String(value || process.env.AAPS_STUDIO_UI || "classic").trim().toLowerCase() === "simple" ? "simple" : "classic";
 }
 
 function collectWorkflowCandidates(projectDir, fileArg = "", options = {}) {
@@ -990,16 +996,20 @@ function commandStudio(options) {
   const root = path.resolve(__dirname, "..");
   const projectDir = path.resolve(options.project || ".");
   const host = String(options.host || "127.0.0.1");
-  const port = String(options.port || DEFAULT_PORT);
+  const ui = normalizeStudioUi(options.ui);
+  const port = String(options.port || (ui === "simple" ? DEFAULT_SIMPLE_PORT : DEFAULT_PORT));
   const env = { ...process.env };
   if (options.mockCodex) env.AAPS_MOCK_CODEX = "1";
   env.AAPS_STUDIO_PROJECT = projectDir;
+  env.AAPS_STUDIO_UI = ui;
   const args = [
     path.join(root, "backend", "aaps_codex_server.py"),
     "--host",
     host,
     "--port",
     port,
+    "--ui",
+    ui,
   ];
   const python = resolvePythonLauncher({ env, cwd: projectDir });
   if (!python.ok) {
@@ -1015,23 +1025,33 @@ function commandStudio(options) {
 }
 
 const WEBAPP_ACTIONS = new Set(["start", "stop", "restart", "reuse", "enable", "disable", "status"]);
+const WEBAPP_UIS = new Set(["classic", "simple"]);
 
-function parseWebappAction(values = [], defaultPort = DEFAULT_PORT) {
+function parseWebappAction(values = [], defaultPort = "", defaultUi = "classic") {
   let action = "start";
-  let port = defaultPort;
+  let ui = normalizeStudioUi(defaultUi);
+  let port = defaultPort || (ui === "simple" ? DEFAULT_SIMPLE_PORT : DEFAULT_PORT);
+  let explicitPort = Boolean(defaultPort);
   const tokens = values.map((value) => String(value || "").trim()).filter(Boolean);
   for (const token of tokens) {
     const lower = token.toLowerCase();
     if (WEBAPP_ACTIONS.has(lower)) action = lower;
-    else if (/^\d+$/.test(token)) port = token;
+    else if (WEBAPP_UIS.has(lower)) ui = lower;
+    else if (/^\d+$/.test(token)) {
+      port = token;
+      explicitPort = true;
+    }
     else return { action: lower, port, valid: false };
   }
-  return { action, port, valid: true };
+  if (!explicitPort) port = ui === "simple" ? DEFAULT_SIMPLE_PORT : DEFAULT_PORT;
+  return { action, port, ui, valid: true };
 }
 
 async function commandWebapp(options, { manual = true, action = "start" } = {}) {
   const projectDir = path.resolve(options.project || ".");
   const host = String(options.host || "127.0.0.1");
+  const ui = normalizeStudioUi(options.ui);
+  const preferredPort = options.port || (ui === "simple" ? DEFAULT_SIMPLE_PORT : DEFAULT_PORT);
   const packageDir = path.resolve(__dirname, "..");
   const normalizedAction = WEBAPP_ACTIONS.has(String(action).toLowerCase()) ? String(action).toLowerCase() : "start";
   if (normalizedAction === "enable" || normalizedAction === "disable" || normalizedAction === "status") {
@@ -1046,7 +1066,8 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
       preferencePath: preference.path || "",
       url: "",
       host,
-      port: Number(options.port || DEFAULT_PORT),
+      port: Number(preferredPort),
+      ui,
       started: false,
       reused: false,
       restarted: false,
@@ -1068,7 +1089,8 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
     packageDir,
     cwd: projectDir,
     host,
-    preferredPort: options.port || DEFAULT_PORT,
+    preferredPort,
+    ui,
   };
   const result =
     normalizedAction === "stop"
@@ -1084,6 +1106,7 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
     url: result.url || "",
     host: result.host || host,
     port: result.port || 0,
+    ui,
     started: Boolean(result.started),
     reused: Boolean(result.reused),
     restarted: Boolean(result.restarted),
@@ -1106,7 +1129,7 @@ async function commandWebapp(options, { manual = true, action = "start" } = {}) 
           : payload.reused
             ? "reused"
             : "started";
-    console.log(`AAPS Studio ${state}: ${payload.url}`);
+    console.log(`AAPS Studio ${ui === "simple" ? "simple " : ""}${state}: ${payload.url}`);
   } else if (payload.disabled) {
     console.log("AAPS Studio auto-start disabled. Run `aaps webapp` or `/webapp` from `aaps chat`.");
   } else {
@@ -1194,7 +1217,7 @@ async function commandDoctor(options) {
 function chatHelp() {
   return [
     "AAPS chat commands:",
-    "  /webapp [port|start|stop|restart|reuse|enable|disable|status]  Control AAPS Studio and auto-start.",
+    "  /webapp [simple|port|start|stop|restart|reuse|enable|disable|status]  Control AAPS Studio and auto-start.",
     "  /status                 Show project manifest, active file, and backend.",
     "  /files                  List project .aaps files.",
     "  /validate [file]        Validate the project or selected file.",
@@ -1606,10 +1629,10 @@ async function startChat(options) {
       const words = splitCliWords(line);
       const parsedWebapp = parseWebappAction(words.slice(1), activeWebPort);
       if (!parsedWebapp.valid) {
-        printAapsMessage("Usage: /webapp [port|start|stop|restart|reuse|enable|disable|status]");
+        printAapsMessage("Usage: /webapp [simple|port|start|stop|restart|reuse|enable|disable|status]");
         return false;
       }
-      const payload = await commandWebapp({ ...options, project: projectDir, port: parsedWebapp.port, json: false }, { manual: true, action: parsedWebapp.action });
+      const payload = await commandWebapp({ ...options, project: projectDir, port: parsedWebapp.port, ui: parsedWebapp.ui, json: false }, { manual: true, action: parsedWebapp.action });
       if (payload.port) activeWebPort = payload.port;
       return false;
     }
@@ -1770,12 +1793,12 @@ async function main() {
     return;
   }
   if (command === "webapp" || command === "web") {
-    const parsedWebapp = parseWebappAction(positional, options.port || DEFAULT_PORT);
+    const parsedWebapp = parseWebappAction(positional, options.port || "", options.ui);
     if (!parsedWebapp.valid) {
-      console.error("Usage: aaps webapp [start|stop|restart|reuse|enable|disable|status] [--port 8797] [--host 127.0.0.1]");
+      console.error("Usage: aaps webapp [simple|start|stop|restart|reuse|enable|disable|status] [--port 8797] [--ui classic|simple] [--host 127.0.0.1]");
       process.exit(1);
     }
-    const payload = await commandWebapp({ ...options, port: parsedWebapp.port }, { manual: true, action: parsedWebapp.action });
+    const payload = await commandWebapp({ ...options, port: parsedWebapp.port, ui: parsedWebapp.ui }, { manual: true, action: parsedWebapp.action });
     process.exit(payload.ok ? 0 : 1);
   }
   if (command === "doctor") {

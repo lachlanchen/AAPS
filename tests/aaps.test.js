@@ -84,6 +84,10 @@ assert(programPlan.blockIds.includes("app81_segment_images"), JSON.stringify(pro
 assert(programPlan.taskIds.includes("app81_preview_segmentation"), JSON.stringify(programPlan));
 assert(programPlan.ir.pipeline.tasks.some((task) => task.calls.some((call) => call.skill === "app81_segment_images")));
 assert(programPlan.ir.pipeline.tasks.some((task) => task.id === "app81_human_qc_gate"));
+const plannedSegmentBlock = programPlan.ir.pipeline.blocks.find((block) => block.id === "app81_segment_images");
+assert(plannedSegmentBlock.notes.some((note) => note.includes("needs implementation")), JSON.stringify(plannedSegmentBlock.notes));
+assert(plannedSegmentBlock.inputs.length > 0 && plannedSegmentBlock.outputs.length > 0);
+assert(plannedSegmentBlock.artifacts.length > 0 && plannedSegmentBlock.validations.length > 0);
 const plannedRoundTrip = AAPS.parseAAPS(AAPS.serializeAAPS(programPlan.ir));
 assert.strictEqual(plannedRoundTrip.diagnostics.length, 0, JSON.stringify(plannedRoundTrip.diagnostics));
 assert(plannedRoundTrip.pipeline.tasks.length >= 5, "program chat planning should update the program, not only append a block");
@@ -119,6 +123,7 @@ const blockPlan = AAPS.planBlockFromPrompt(
 assert.strictEqual(blockPlan.changed, true);
 assert.strictEqual(blockPlan.blockId, "app81_segment_images");
 assert(blockPlan.ir.pipeline.blocks[0].outputs.some((output) => output.name === "masks"));
+assert(blockPlan.ir.pipeline.blocks[0].notes.some((note) => note.includes("needs implementation")));
 const blockRoundTrip = AAPS.parseAAPS(AAPS.serializeAAPS(blockPlan.ir));
 assert.strictEqual(blockRoundTrip.diagnostics.length, 0, JSON.stringify(blockRoundTrip.diagnostics));
 
@@ -548,6 +553,27 @@ try {
   stoppedHealthResponded = false;
 }
 assert.strictEqual(stoppedHealthResponded, false, "AAPS Studio should not respond after webapp stop");
+const simpleWebappPort = "8899";
+const simpleWebappStart = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "simple", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", simpleWebappPort, "--mock-codex", "--json"],
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
+);
+assert.strictEqual(simpleWebappStart.status, 0, simpleWebappStart.stderr || simpleWebappStart.stdout);
+const simpleWebappPayload = JSON.parse(simpleWebappStart.stdout);
+assert.strictEqual(simpleWebappPayload.ok, true, JSON.stringify(simpleWebappPayload));
+assert.strictEqual(simpleWebappPayload.ui, "simple");
+const simpleHealth = httpJson(`${simpleWebappPayload.url}/api/health`);
+assert.strictEqual(simpleHealth.ui, "simple");
+assert(httpText(`${simpleWebappPayload.url}/`).includes("AAPS Studio Simple"));
+assert(httpText(`${simpleWebappPayload.url}/simple/`).includes("AAPS Studio Simple"));
+assert.strictEqual(httpStatus(`${simpleWebappPayload.url}/simple/app.js`), "200");
+const simpleWebappStop = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "webapp", "stop", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", simpleWebappPort, "--json"],
+  { cwd: path.join(__dirname, ".."), env: webappEnv, encoding: "utf8" }
+);
+assert.strictEqual(simpleWebappStop.status, 0, simpleWebappStop.stderr || simpleWebappStop.stdout);
 const webappDisable = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "webapp", "disable", "--project", ".aaps-work/tests/webapp-project", "--host", "127.0.0.1", "--port", webappPort, "--json"],
@@ -1656,6 +1682,12 @@ function httpJson(url, payload) {
   return JSON.parse(result.stdout);
 }
 
+function httpText(url) {
+  const result = childProcess.spawnSync("curl", ["-sS", "-L", url], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+  return result.stdout;
+}
+
 function httpStatus(url) {
   const result = childProcess.spawnSync("curl", ["-sS", "-o", "/tmp/aaps-http-status.out", "-w", "%{http_code}", url], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout);
@@ -1715,6 +1747,9 @@ try {
     }
   }
   assert.strictEqual(healthy, true, "studio server should start for requested project");
+  assert.strictEqual(httpJson(`${base}/api/health`).ui, "classic");
+  assert(httpText(`${base}/simple/`).includes("AAPS Studio Simple"));
+  assert.strictEqual(httpStatus(`${base}/simple/styles.css`), "200");
   const studioProjectPayload = httpJson(`${base}/api/aaps/project`);
   assert.strictEqual(studioProjectPayload.project_path, ".");
   assert.strictEqual(studioProjectPayload.absolute_path, studioProject);
