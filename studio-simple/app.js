@@ -167,6 +167,7 @@
     historySyncTimer: null,
     settings: {},
     chatPanelOpen: false,
+    drag: null,
     projectGroupsOpen: {},
     blockGroupsOpen: { system: false, user: true },
     artifacts: [],
@@ -456,7 +457,8 @@
 
   function allProgramRoots() {
     const pipeline = state.ir && state.ir.pipeline ? state.ir.pipeline : {};
-    return [...(pipeline.tasks || [])];
+    pipeline.tasks = pipeline.tasks || [];
+    return pipeline.tasks;
   }
 
   function allUserBlocks() {
@@ -491,6 +493,213 @@
 
   function systemBlock(id) {
     return SYSTEM_BLOCKS.find((block) => block.id === id) || null;
+  }
+
+  function slugId(value, fallback = "program_step") {
+    const text = String(value || fallback)
+      .toLowerCase()
+      .replace(/[^a-z0-9_]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 48);
+    return text || fallback;
+  }
+
+  function uniqueProgramId(base) {
+    const used = new Set(flattenProgram().map((row) => row.node.id));
+    const root = slugId(base, "program_step");
+    if (!used.has(root)) return root;
+    let index = 2;
+    while (used.has(`${root}_${index}`)) index += 1;
+    return `${root}_${index}`;
+  }
+
+  function descendantsOf(node, ids = new Set()) {
+    (node.children || []).forEach((child) => {
+      ids.add(child.id);
+      descendantsOf(child, ids);
+    });
+    return ids;
+  }
+
+  function findNodeContainer(id, roots = allProgramRoots()) {
+    for (let index = 0; index < roots.length; index += 1) {
+      const node = roots[index];
+      if (node.id === id) return { container: roots, index, node, parent: null };
+      const found = findNodeContainerInChildren(id, node);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function findNodeContainerInChildren(id, parent) {
+    const children = parent.children || [];
+    for (let index = 0; index < children.length; index += 1) {
+      const node = children[index];
+      if (node.id === id) return { container: children, index, node, parent };
+      const found = findNodeContainerInChildren(id, node);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function detachProgramNode(id) {
+    const found = findNodeContainer(id);
+    if (!found) return null;
+    return found.container.splice(found.index, 1)[0] || null;
+  }
+
+  function insertProgramNode(node, targetId = "", mode = "append") {
+    const roots = allProgramRoots();
+    if (!targetId || mode === "append-root") {
+      roots.push(node);
+      return true;
+    }
+    const target = findNodeContainer(targetId);
+    if (!target) {
+      roots.push(node);
+      return true;
+    }
+    if (node.id === targetId || descendantsOf(node).has(targetId)) return false;
+    if (mode === "inside") {
+      target.node.children = target.node.children || [];
+      target.node.children.push(node);
+      return true;
+    }
+    const insertAt = mode === "before" ? target.index : target.index + 1;
+    target.container.splice(insertAt, 0, node);
+    return true;
+  }
+
+  function programDropMode(event, item) {
+    if (!item) return "append-root";
+    const rect = item.getBoundingClientRect();
+    const y = rect.height ? (event.clientY - rect.top) / rect.height : 0.5;
+    if (y < 0.28) return "before";
+    if (y > 0.72) return "after";
+    return "inside";
+  }
+
+  function systemBlockProgramNode(block) {
+    const id = uniqueProgramId(block.id);
+    if (["for-loop", "map-apply", "file-folder-iterator"].includes(block.id)) {
+      return {
+        kind: "for_each",
+        id,
+        title: block.title,
+        prompt: block.purpose || "",
+        iterator: { item: block.id === "file-folder-iterator" ? "file_path" : "item", source: block.id === "file-folder-iterator" ? "input_files" : "items" },
+        calls: [],
+        verify: [...(block.validations || [])],
+        children: [],
+      };
+    }
+    if (block.id === "if-else" || block.id === "condition") {
+      return {
+        kind: "if",
+        id,
+        title: block.title,
+        prompt: block.purpose || "",
+        condition: "condition",
+        calls: [],
+        verify: [...(block.validations || [])],
+        children: [],
+      };
+    }
+    return {
+      kind: "task",
+      id,
+      title: block.title,
+      prompt: block.purpose || "Run a reusable system block.",
+      calls: [],
+      verify: [...(block.validations || [])],
+      children: [],
+    };
+  }
+
+  function blockProgramNode(block) {
+    if (systemBlock(block.id) && !findUserBlock(block.id)) return systemBlockProgramNode(block);
+    return {
+      kind: "task",
+      id: uniqueProgramId(block.id),
+      title: block.title || block.id,
+      prompt: block.purpose || block.prompt || "Run a reusable AAPS block.",
+      calls: [{ skill: block.id, as: "" }],
+      inputs: [...(block.inputs || [])],
+      outputs: [...(block.outputs || [])],
+      validations: [...(block.validations || [])],
+      verify: [...(block.verify || [])],
+      artifacts: [...(block.artifacts || [])],
+      children: [],
+    };
+  }
+
+  async function commitProgramStructureChange(summary, selectedId = "", previousSource = state.source, previousIr = JSON.parse(JSON.stringify(state.ir))) {
+    try {
+      serializeCurrentProgram();
+      const reparsed = window.AAPS.parseAAPS(state.source);
+      if (reparsed.diagnostics && reparsed.diagnostics.length) {
+        state.source = previousSource;
+        state.ir = previousIr;
+        showToast("Drag rejected", `Grammar diagnostics: ${reparsed.diagnostics[0].message || "invalid structure"}`, "error", 5200);
+        return false;
+      }
+      state.ir = reparsed;
+      if (selectedId) {
+        state.selectedElementId = selectedId;
+        const selected = findProgramNode(selectedId);
+        if (selected) setFocus("program element", selectedId, titleForNode(selected));
+      }
+      await persistProgram();
+      renderAll();
+      showToast("Program updated", summary, "success", 2600);
+      return true;
+    } catch (error) {
+      state.source = previousSource;
+      state.ir = previousIr;
+      showToast("Drag rejected", error.message, "error", 5200);
+      renderAll();
+      return false;
+    }
+  }
+
+  async function moveProgramNode(sourceId, targetId = "", mode = "append-root") {
+    const source = findProgramNode(sourceId);
+    if (!source) return false;
+    if (targetId && (sourceId === targetId || descendantsOf(source).has(targetId))) {
+      showToast("Move blocked", "A program element cannot be dropped into itself or its children.", "error", 4200);
+      return false;
+    }
+    const previousSource = state.source;
+    const previousIr = JSON.parse(JSON.stringify(state.ir));
+    const node = detachProgramNode(sourceId);
+    if (!node) return false;
+    const inserted = insertProgramNode(node, targetId, mode);
+    if (!inserted) {
+      state.ir = previousIr;
+      state.source = previousSource;
+      showToast("Move blocked", "That nesting would break the program tree.", "error", 4200);
+      renderAll();
+      return false;
+    }
+    return commitProgramStructureChange(`Moved ${sourceId} ${mode.replace("-", " ")}${targetId ? ` ${targetId}` : " program"}.`, sourceId, previousSource, previousIr);
+  }
+
+  async function addBlockToProgram(blockId, targetId = "", mode = "append-root") {
+    const block = findUserBlock(blockId) || systemBlock(blockId);
+    if (!block) return false;
+    const previousSource = state.source;
+    const previousIr = JSON.parse(JSON.stringify(state.ir));
+    const node = blockProgramNode(block);
+    insertProgramNode(node, targetId, mode);
+    return commitProgramStructureChange(`Added ${blockId} to the program.`, node.id, previousSource, previousIr);
+  }
+
+  async function deleteProgramNode(id) {
+    const previousSource = state.source;
+    const previousIr = JSON.parse(JSON.stringify(state.ir));
+    const node = detachProgramNode(id);
+    if (!node) return false;
+    return commitProgramStructureChange(`Deleted ${id} from the program.`, "", previousSource, previousIr);
   }
 
   function selectedBlock() {
@@ -660,11 +869,11 @@
     const pipeline = state.ir && state.ir.pipeline ? state.ir.pipeline : {};
     $("#program-subtitle").textContent = `${pipeline.name || "Untitled"}${state.activeFile ? ` - ${state.activeFile}` : ""}`;
     $("#program-status").textContent = rows.length
-      ? "Select an element to focus chat. Reorder metadata is editable from the element editor; drag/drop is disabled in this vertical slice."
-      : "No structured elements yet. Use chat to create a rough AAPS program.";
+      ? "Drag elements to reorder or nest. Drag blocks from Blocks & Skills into the program. Drop a program element on Blocks & Skills to delete it."
+      : "No structured elements yet. Drag a block here or ask chat to create a rough pipeline.";
     const container = $("#program-elements");
     if (!rows.length) {
-      container.innerHTML = '<div class="empty-state">No program elements. Ask chat to create a rough pipeline.</div>';
+      container.innerHTML = '<div class="empty-state program-drop-empty" data-program-drop-root="true">No program elements. Drag a block here or ask chat to create a rough pipeline.</div>';
       return;
     }
     container.innerHTML = rows
@@ -673,7 +882,7 @@
         const linked = (node.calls || []).map((call) => call.skill).filter(Boolean);
         const purpose = node.prompt || (node.verify || []).join(" ") || "No purpose recorded yet.";
         return `
-          <article class="program-item${selected ? " is-selected" : ""}" data-program-id="${escapeHtml(node.id)}" style="margin-left: ${Math.min(depth * 18, 72)}px">
+          <article class="program-item${selected ? " is-selected" : ""}" data-program-id="${escapeHtml(node.id)}" draggable="true" style="margin-left: ${depth * 30}px">
             <button type="button" class="program-button" data-select-program="${escapeHtml(node.id)}">
               <div class="item-topline">
                 <span>
@@ -697,6 +906,7 @@
               }
             </div>
             <div class="card-actions">
+              <span class="drag-hint">drag to reorder or nest</span>
               <button type="button" data-edit-program="${escapeHtml(node.id)}">Edit</button>
             </div>
           </article>
@@ -729,7 +939,7 @@
                 const inputs = block.inputs || [];
                 const outputs = block.outputs || [];
                 return `
-                  <article class="block-item${selected ? " is-selected" : ""}" data-block-id="${escapeHtml(block.id)}">
+                  <article class="block-item${selected ? " is-selected" : ""}" data-block-id="${escapeHtml(block.id)}" draggable="true">
                     <button type="button" class="block-button" data-select-block="${escapeHtml(block.id)}">
                       <div class="item-topline">
                         <span>
@@ -748,6 +958,7 @@
                     </div>
                     <div class="card-actions">
                       <span class="status-chip ${status.className}">${escapeHtml(status.label)}</span>
+                      <span class="drag-hint">drag into program</span>
                       <button type="button" data-edit-block="${escapeHtml(block.id)}">Edit</button>
                     </div>
                   </article>
@@ -1285,6 +1496,99 @@
     renderAll();
   }
 
+  function clearDragState() {
+    $$(".program-item.is-drop-target, .program-elements.is-drop-root, .blocks-panel.is-delete-target").forEach((node) => {
+      node.classList.remove("is-drop-target", "is-drop-before", "is-drop-after", "is-drop-inside", "is-drop-root", "is-delete-target");
+    });
+    state.drag = null;
+  }
+
+  function markProgramDropTarget(item, mode) {
+    $$(".program-item.is-drop-target").forEach((node) => node.classList.remove("is-drop-target", "is-drop-before", "is-drop-after", "is-drop-inside"));
+    if (!item) return;
+    item.classList.add("is-drop-target", `is-drop-${mode}`);
+  }
+
+  function dragPayloadFromEvent(event) {
+    if (state.drag) return state.drag;
+    const programId = event.dataTransfer && event.dataTransfer.getData("application/x-aaps-program");
+    if (programId) return { type: "program", id: programId };
+    const blockId = event.dataTransfer && event.dataTransfer.getData("application/x-aaps-block");
+    if (blockId) return { type: "block", id: blockId };
+    return null;
+  }
+
+  function attachDragHandlers() {
+    document.addEventListener("dragstart", (event) => {
+      const programItem = event.target.closest(".program-item");
+      const blockItem = event.target.closest(".block-item");
+      if (programItem && programItem.dataset.programId) {
+        state.drag = { type: "program", id: programItem.dataset.programId };
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("application/x-aaps-program", state.drag.id);
+        event.dataTransfer.setData("text/plain", state.drag.id);
+        programItem.classList.add("is-dragging");
+        return;
+      }
+      if (blockItem && blockItem.dataset.blockId) {
+        state.drag = { type: "block", id: blockItem.dataset.blockId };
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("application/x-aaps-block", state.drag.id);
+        event.dataTransfer.setData("text/plain", state.drag.id);
+        blockItem.classList.add("is-dragging");
+      }
+    });
+
+    document.addEventListener("dragover", (event) => {
+      const payload = dragPayloadFromEvent(event);
+      if (!payload) return;
+      const programItem = event.target.closest(".program-item");
+      const programRoot = event.target.closest("#program-elements");
+      const blocksPanel = event.target.closest(".blocks-panel");
+      $(".blocks-panel")?.classList.toggle("is-delete-target", Boolean(blocksPanel && payload.type === "program"));
+      if (programItem || programRoot) {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = payload.type === "block" ? "copy" : "move";
+        if (programItem) markProgramDropTarget(programItem, programDropMode(event, programItem));
+        else {
+          $$(".program-item.is-drop-target").forEach((node) => node.classList.remove("is-drop-target", "is-drop-before", "is-drop-after", "is-drop-inside"));
+          $("#program-elements").classList.add("is-drop-root");
+        }
+      } else if (blocksPanel && payload.type === "program") {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      }
+    });
+
+    document.addEventListener("drop", async (event) => {
+      const payload = dragPayloadFromEvent(event);
+      if (!payload) return;
+      const programItem = event.target.closest(".program-item");
+      const programRoot = event.target.closest("#program-elements");
+      const blocksPanel = event.target.closest(".blocks-panel");
+      if (blocksPanel && payload.type === "program") {
+        event.preventDefault();
+        const ok = window.confirm(`Delete program element "${payload.id}" from this workflow? The reusable blocks stay in Blocks & Skills.`);
+        if (ok) await deleteProgramNode(payload.id);
+        clearDragState();
+        return;
+      }
+      if (programItem || programRoot) {
+        event.preventDefault();
+        const targetId = programItem ? programItem.dataset.programId : "";
+        const mode = programItem ? programDropMode(event, programItem) : "append-root";
+        if (payload.type === "program") await moveProgramNode(payload.id, targetId, mode);
+        if (payload.type === "block") await addBlockToProgram(payload.id, targetId, mode);
+        clearDragState();
+      }
+    });
+
+    document.addEventListener("dragend", () => {
+      $$(".is-dragging").forEach((node) => node.classList.remove("is-dragging"));
+      clearDragState();
+    });
+  }
+
   function renderHistoryModal() {
     $("#history-list").innerHTML = state.messages.length
       ? state.messages
@@ -1310,7 +1614,7 @@
     if (category.id === "explorer") return true;
     const file = item.path || item.file || item.name || "";
     if (category.match && category.match.test(file)) return true;
-    return category.extensions.includes(extensionOf(file));
+    return Array.isArray(category.extensions) && category.extensions.includes(extensionOf(file));
   }
 
   async function loadArtifacts() {
@@ -1446,6 +1750,7 @@
     $("#artifacts-button").addEventListener("click", openArtifacts);
     $("#element-editor-form").addEventListener("submit", saveElementEditor);
     $("#block-editor-form").addEventListener("submit", saveBlockEditor);
+    attachDragHandlers();
 
     document.addEventListener("click", (event) => {
       const target = event.target.closest("button");
@@ -1550,6 +1855,47 @@
       } else {
         record("selecting program element changes focus", false, "No program item rendered.");
         record("program element editor popup opens", false, "No program item rendered.");
+      }
+      const dragSourceSnapshot = state.source;
+      const dragIrSnapshot = JSON.parse(JSON.stringify(state.ir));
+      const dragSelectedElementId = state.selectedElementId;
+      const dragSelectedBlockId = state.selectedBlockId;
+      try {
+        const programScroller = $("#program-elements");
+        const scrollerStyle = getComputedStyle(programScroller);
+        record("program drag is enabled", $("#program-drag-chip") ? $("#program-drag-chip").textContent.trim() === "Drag enabled" : document.body.textContent.includes("Drag enabled"));
+        record("program panel scrolls horizontally", ["auto", "scroll"].includes(scrollerStyle.overflowX));
+        const beforeRows = flattenProgram();
+        const beforeIds = new Set(beforeRows.map((row) => row.node.id));
+        const sourceBlock = allUserBlocks()[0] || systemBlock("parameter");
+        await addBlockToProgram(sourceBlock.id, "", "append-root");
+        const afterAddRows = flattenProgram();
+        const added = afterAddRows.find((row) => !beforeIds.has(row.node.id));
+        const reusableStillExists = findUserBlock(sourceBlock.id) || systemBlock(sourceBlock.id);
+        record("dragging block into program copies reusable block", Boolean(added && reusableStillExists && afterAddRows.length === beforeRows.length + 1));
+        const nestTarget = afterAddRows.find((row) => row.node.id !== (added && added.node.id));
+        if (added && nestTarget) {
+          await moveProgramNode(added.node.id, nestTarget.node.id, "inside");
+          const nested = flattenProgram().find((row) => row.node.id === added.node.id);
+          record("program drag can nest while preserving grammar", Boolean(nested && nested.depth > nestTarget.depth));
+          state.drag = { type: "program", id: added.node.id };
+          $(".blocks-panel").classList.add("is-delete-target");
+          record("dragging program toward blocks shows red delete warning", getComputedStyle($(".blocks-panel")).borderColor.includes("154") || $(".blocks-panel").classList.contains("is-delete-target"));
+          clearDragState();
+          await deleteProgramNode(added.node.id);
+          record("program node can be deleted by drop-to-blocks behavior", !findProgramNode(added.node.id));
+        } else {
+          record("program drag can nest while preserving grammar", false, "No target element for nesting.");
+          record("dragging program toward blocks shows red delete warning", false, "No added element.");
+          record("program node can be deleted by drop-to-blocks behavior", false, "No added element.");
+        }
+      } finally {
+        state.source = dragSourceSnapshot;
+        state.ir = dragIrSnapshot;
+        state.selectedElementId = dragSelectedElementId;
+        state.selectedBlockId = dragSelectedBlockId;
+        await persistProgram();
+        renderAll();
       }
       const firstBlock = $('[data-select-block="for-loop"]');
       if (firstBlock) {

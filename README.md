@@ -161,6 +161,8 @@ aaps parse examples/hello.aaps --project .
 
 The npm package starts AAPS Studio on a best-effort basis after install. First interactive run also starts or reuses Studio and prints the URL below the CLI header. Use `aaps webapp disable` or `/webapp disable` to persistently disable automatic startup; use `aaps webapp enable` or `/webapp enable` to restore it. `AAPS_SKIP_POSTINSTALL_WEBAPP=1` during install or `AAPS_NO_WEB_AUTO_START=1` during CLI runs still disable automatic startup for that environment.
 
+In the simple Studio, the Program panel supports grammar-preserving drag/drop. Drag program elements to reorder or nest them, drag reusable Blocks & Skills into the program to create calls without removing the source block, and drag a program element onto Blocks & Skills to delete it from the workflow with a red warning. The Program panel scrolls horizontally so deeply nested pipelines remain editable.
+
 CLI and Studio entry points:
 
 ```bash
