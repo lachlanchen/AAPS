@@ -96,6 +96,10 @@ DEFAULT_SETTINGS = {
     "agentProvider": "codex",
     "codexModel": "gpt-5.3-codex",
     "codexReasoning": "medium",
+    "codexChatModel": "gpt-5.5",
+    "codexChatReasoning": "medium",
+    "codexTaskModel": "gpt-5.5",
+    "codexTaskReasoning": "high",
     "codexTimeout": 240,
     "deepseekBaseUrl": "https://api.deepseek.com",
     "deepseekModel": "deepseek-v4-pro",
@@ -241,6 +245,10 @@ def read_settings() -> dict:
         "agentProvider": os.environ.get("AAPS_AGENT_PROVIDER"),
         "codexModel": os.environ.get("AAPS_CODEX_MODEL"),
         "codexReasoning": os.environ.get("AAPS_CODEX_REASONING"),
+        "codexChatModel": os.environ.get("AAPS_CODEX_CHAT_MODEL"),
+        "codexChatReasoning": os.environ.get("AAPS_CODEX_CHAT_REASONING"),
+        "codexTaskModel": os.environ.get("AAPS_CODEX_TASK_MODEL"),
+        "codexTaskReasoning": os.environ.get("AAPS_CODEX_TASK_REASONING"),
         "deepseekBaseUrl": os.environ.get("AAPS_DEEPSEEK_BASE_URL"),
         "deepseekModel": os.environ.get("AAPS_DEEPSEEK_MODEL"),
         "agintiProvider": os.environ.get("AAPS_AGINTI_PROVIDER"),
@@ -257,8 +265,13 @@ def read_settings() -> dict:
             pass
     if settings.get("agentProvider") not in {"codex", "deepseek", "aginti"}:
         settings["agentProvider"] = "codex"
-    if settings.get("codexReasoning") not in {"low", "medium", "high", "xhigh"}:
-        settings["codexReasoning"] = "medium"
+    for key, fallback in {
+        "codexReasoning": "medium",
+        "codexChatReasoning": "medium",
+        "codexTaskReasoning": "high",
+    }.items():
+        if settings.get(key) not in {"low", "medium", "high", "xhigh"}:
+            settings[key] = fallback
     if settings.get("agintiSafety") not in {"safe", "normal", "danger"}:
         settings["agintiSafety"] = "normal"
     return settings
@@ -279,6 +292,10 @@ def write_settings(payload: dict) -> dict:
     text_fields = [
         "codexModel",
         "codexReasoning",
+        "codexChatModel",
+        "codexChatReasoning",
+        "codexTaskModel",
+        "codexTaskReasoning",
         "deepseekBaseUrl",
         "deepseekModel",
         "agintiProvider",
@@ -1683,8 +1700,12 @@ def read_compile_record(compile_id: str) -> dict | None:
 
 def codex_command(schema: str, output_path: Path, settings: dict | None = None) -> list[str]:
     active = settings or read_settings()
-    model = str(active.get("codexModel") or "gpt-5.3-codex")
-    reasoning = str(active.get("codexReasoning") or "medium")
+    if schema == "aaps_chat":
+        model = str(active.get("codexChatModel") or active.get("codexModel") or "gpt-5.5")
+        reasoning = str(active.get("codexChatReasoning") or active.get("codexReasoning") or "medium")
+    else:
+        model = str(active.get("codexTaskModel") or active.get("codexModel") or "gpt-5.5")
+        reasoning = str(active.get("codexTaskReasoning") or active.get("codexReasoning") or "high")
     codex_bin = find_command("codex", "AAPS_CODEX_BIN") or "codex"
     command = [
         codex_bin,
@@ -1818,6 +1839,10 @@ def build_agent_context_pack(source: str, message: str, context: dict | None = N
                     "agentProvider",
                     "codexModel",
                     "codexReasoning",
+                    "codexChatModel",
+                    "codexChatReasoning",
+                    "codexTaskModel",
+                    "codexTaskReasoning",
                     "deepseekModel",
                     "agintiProvider",
                     "agintiSafety",
@@ -3216,6 +3241,35 @@ Backend task:
     timeout = int(active.get("agintiTimeout") or 900)
     if session_id:
         command = [aginti_bin, "--no-auto-update", "resume", session_id, short_prompt]
+    elif schema == "aaps_chat":
+        aginti_provider = str(active.get("agintiProvider") or "deepseek")
+        command = [
+            aginti_bin,
+            "--no-auto-update",
+            "-s",
+            str(active.get("agintiSafety") or "normal"),
+            "--provider",
+            aginti_provider,
+            "--routing",
+            "fast",
+            "--max-steps",
+            "6",
+            "--dynamic-steps",
+            "off",
+            "--no-scs",
+            "--no-parallel-scouts",
+            "--sandbox-mode",
+            "host",
+            "--package-install-policy",
+            "block",
+            "--no-shell",
+            "--allow-file-tools",
+            "--no-web-search",
+            "--no-mcp",
+            short_prompt,
+        ]
+        if aginti_provider == "deepseek":
+            command[command.index("--routing"):command.index("--routing")] = ["--model", "deepseek-v4-flash"]
     else:
         command = [
             aginti_bin,
@@ -3265,6 +3319,14 @@ Backend task:
                 "source": "",
                 "diagnostics": ["AgInTiFlow backend did not produce a parseable JSON output file."],
             }
+        elif schema == "aaps_chat" and not all(key in result for key in ["mode", "route", "message", "source", "diagnostics"]):
+            result = {
+                "mode": "reply",
+                "route": "aginti_backend",
+                "message": str(result.get("message") or result.get("summary") or (process.stdout or process.stderr or "").strip()[-4000:]),
+                "source": "",
+                "diagnostics": ["AgInTiFlow backend returned JSON that did not match the AAPS chat schema."],
+            }
         if process.returncode != 0:
             return {
                 "status": "failed",
@@ -3282,11 +3344,12 @@ Backend task:
         return {"status": "failed", "error": str(exc)}
 
 
-def run_codex(job_id: str, prompt: str, schema: str = "response") -> dict:
+def run_codex(job_id: str, prompt: str, schema: str = "response", force_real: bool = False) -> dict:
     settings = read_settings()
-    if settings.get("agentProvider") == "aginti" and os.environ.get("AAPS_MOCK_CODEX") != "1":
+    mock_enabled = os.environ.get("AAPS_MOCK_CODEX") == "1" and not force_real
+    if settings.get("agentProvider") == "aginti" and not mock_enabled:
         return run_aginti(job_id, prompt, schema, settings)
-    if settings.get("agentProvider") == "deepseek" and os.environ.get("AAPS_MOCK_CODEX") != "1":
+    if settings.get("agentProvider") == "deepseek" and not mock_enabled:
         return run_deepseek(job_id, prompt, schema, settings)
 
     folder = job_dir(job_id)
@@ -3296,7 +3359,7 @@ def run_codex(job_id: str, prompt: str, schema: str = "response") -> dict:
     stderr_path = folder / "stderr.log"
     (folder / "prompt.txt").write_text(prompt, encoding="utf-8")
 
-    if os.environ.get("AAPS_MOCK_CODEX") == "1":
+    if mock_enabled:
         output = {
             "ok": True,
             "summary": "Mock Codex response generated.",
@@ -3864,7 +3927,12 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 )
                 return
             job_id = uuid.uuid4().hex[:16]
-            outcome = run_codex(job_id, build_chat_prompt(source, message, context), "aaps_chat")
+            outcome = run_codex(
+                job_id,
+                build_chat_prompt(source, message, context),
+                "aaps_chat",
+                bool(body.get("forceRealBackend")),
+            )
             try:
                 project_dir = safe_repo_path(str(context.get("projectPath") or body.get("path") or "."))
                 result = outcome.get("result") if isinstance(outcome.get("result"), dict) else {}

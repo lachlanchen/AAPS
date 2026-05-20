@@ -21,7 +21,8 @@
       </a>
       <div class="focus-pill" id="focus-label" data-testid="focus-label">Focus: selected project/program</div>
       <div class="header-actions">
-        <button id="history-button" type="button" class="ghost-button">History</button>
+        <button id="chat-panel-toggle" type="button" class="ghost-button" aria-expanded="false">Chat Panel</button>
+        <button id="history-button" type="button" class="ghost-button">Chat History</button>
         <button id="artifacts-button" type="button" class="primary-button">Canvas / Artifacts</button>
       </div>
     </header>
@@ -88,6 +89,46 @@
         <span id="chat-status" class="status-badge">ready</span>
       </div>
       <div id="chat-stream" class="chat-stream" aria-live="polite"></div>
+      <div id="chat-options" class="chat-options">
+        <label>Backend
+          <select id="agent-provider">
+            <option value="aginti">AgInTiFlow</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="codex">Codex wrapper</option>
+          </select>
+        </label>
+        <label>Codex chat
+          <input id="codex-chat-model" type="text" placeholder="gpt-5.5" />
+        </label>
+        <label>Reasoning
+          <select id="codex-chat-reasoning">
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="low">low</option>
+          </select>
+        </label>
+        <label>Codex task
+          <input id="codex-task-model" type="text" placeholder="gpt-5.5" />
+        </label>
+        <label>Task reasoning
+          <select id="codex-task-reasoning">
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+          </select>
+        </label>
+        <label>AgInTi provider
+          <select id="aginti-provider">
+            <option value="deepseek">deepseek</option>
+            <option value="openai">openai</option>
+            <option value="qwen">qwen</option>
+            <option value="venice">venice</option>
+            <option value="mock">mock</option>
+          </select>
+        </label>
+      </div>
       <form id="chat-form" class="chat-form">
         <textarea id="chat-input" rows="2" placeholder="Describe the experiment, writing project, analysis, or refinement."></textarea>
         <button type="submit" class="primary-button">Send</button>
@@ -98,8 +139,8 @@
       <div class="modal-card wide-card">
         <div class="modal-head">
           <div>
-            <h2 id="history-title">History</h2>
-            <p>User and assistant messages with recorded scope.</p>
+            <h2 id="history-title">Chat History</h2>
+            <p>Messages are kept here so the working panels stay compact.</p>
           </div>
           <button type="button" class="icon-button" data-close-modal="history-modal" aria-label="Close history">x</button>
         </div>

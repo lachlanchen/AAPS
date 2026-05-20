@@ -124,6 +124,7 @@
     { id: "manifest", label: "Run Manifest", match: /manifest.*\.json$|run.*\.json$/i },
     { id: "explorer", label: "File Explorer", extensions: [] },
   ];
+  const TDV_MODE = new URLSearchParams(window.location.search).has("tdv");
 
   const DEFAULT_SOURCE = [
     'pipeline "Simple AAPS Program" {',
@@ -150,6 +151,8 @@
     selectedBlockId: "",
     focus: { type: "project", id: "selected project/program", label: "selected project/program" },
     messages: [],
+    settings: {},
+    chatPanelOpen: false,
     artifacts: [],
     artifactCategory: "image",
     editingElementId: "",
@@ -185,6 +188,30 @@
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `${url} returned ${response.status}`);
     return data;
+  }
+
+  function chatContext() {
+    const selectedElement = state.selectedElementId ? findProgramNode(state.selectedElementId) : null;
+    const selectedBlockValue = state.selectedBlockId ? selectedBlock() : null;
+    return {
+      tab: "simple",
+      projectPath: state.projectPath || ".",
+      activeFile: state.activeFile || "",
+      workingFile: state.activeFile || "",
+      focus: state.focus,
+      selectedElement,
+      selectedBlock: selectedBlockValue,
+      diagnostics: (state.ir && state.ir.diagnostics) || [],
+      manifest: state.manifest || {},
+      settings: {
+        agentProvider: state.settings.agentProvider || "",
+        codexChatModel: state.settings.codexChatModel || "",
+        codexChatReasoning: state.settings.codexChatReasoning || "",
+        codexTaskModel: state.settings.codexTaskModel || "",
+        codexTaskReasoning: state.settings.codexTaskReasoning || "",
+        agintiProvider: state.settings.agintiProvider || "",
+      },
+    };
   }
 
   function safeParse(source) {
@@ -445,17 +472,7 @@
   }
 
   function renderChat() {
-    $("#chat-stream").innerHTML = state.messages
-      .map(
-        (message) => `
-          <div class="message ${message.role}">
-            <strong>${escapeHtml(message.role === "user" ? "You" : "AAPS")}</strong>
-            <p>${escapeHtml(message.text)}</p>
-          </div>
-        `
-      )
-      .join("");
-    $("#chat-stream").scrollTop = $("#chat-stream").scrollHeight;
+    $("#chat-stream").innerHTML = "";
   }
 
   function renderAll() {
@@ -471,6 +488,70 @@
       state.projects = payload.items || [];
     } catch (error) {
       state.projects = [];
+    }
+  }
+
+  function syncSettingsControls() {
+    const settings = state.settings || {};
+    const pairs = [
+      ["#agent-provider", settings.agentProvider || "codex"],
+      ["#codex-chat-model", settings.codexChatModel || settings.codexModel || "gpt-5.5"],
+      ["#codex-chat-reasoning", settings.codexChatReasoning || settings.codexReasoning || "medium"],
+      ["#codex-task-model", settings.codexTaskModel || settings.codexModel || "gpt-5.5"],
+      ["#codex-task-reasoning", settings.codexTaskReasoning || "high"],
+      ["#aginti-provider", settings.agintiProvider || "deepseek"],
+    ];
+    pairs.forEach(([selector, value]) => {
+      const field = $(selector);
+      if (field) field.value = value;
+    });
+  }
+
+  function readSettingsControls() {
+    return {
+      agentProvider: $("#agent-provider")?.value || "codex",
+      codexChatModel: $("#codex-chat-model")?.value.trim() || "gpt-5.5",
+      codexChatReasoning: $("#codex-chat-reasoning")?.value || "medium",
+      codexTaskModel: $("#codex-task-model")?.value.trim() || "gpt-5.5",
+      codexTaskReasoning: $("#codex-task-reasoning")?.value || "high",
+      agintiProvider: $("#aginti-provider")?.value || "deepseek",
+    };
+  }
+
+  function backendLabel(settings = state.settings) {
+    const provider = settings.agentProvider || "codex";
+    if (provider === "aginti") return `AgInTiFlow/${settings.agintiProvider || "deepseek"}`;
+    if (provider === "deepseek") return `DeepSeek/${settings.deepseekModel || "deepseek-v4-pro"}`;
+    return `Codex chat ${settings.codexChatModel || settings.codexModel || "gpt-5.5"} ${settings.codexChatReasoning || "medium"}`;
+  }
+
+  async function loadSettings() {
+    try {
+      state.settings = await jsonFetch("/api/aaps/settings");
+      syncSettingsControls();
+      $("#chat-status").textContent = `ready - ${backendLabel()}`;
+    } catch (error) {
+      state.settings = {};
+      $("#chat-status").textContent = `settings unavailable: ${error.message}`;
+    }
+  }
+
+  async function saveSettingsFromControls() {
+    const payload = readSettingsControls();
+    state.settings = await jsonFetch("/api/aaps/settings", payload);
+    syncSettingsControls();
+    return state.settings;
+  }
+
+  function setChatPanelOpen(open) {
+    state.chatPanelOpen = Boolean(open);
+    const dock = $(".chat-dock");
+    const button = $("#chat-panel-toggle");
+    if (dock) dock.classList.toggle("is-expanded", state.chatPanelOpen);
+    document.documentElement.style.setProperty("--active-chat-h", state.chatPanelOpen ? "var(--chat-h)" : "var(--chat-compact-h)");
+    if (button) {
+      button.setAttribute("aria-expanded", state.chatPanelOpen ? "true" : "false");
+      button.textContent = state.chatPanelOpen ? "Hide Chat Panel" : "Chat Panel";
     }
   }
 
@@ -545,6 +626,7 @@
       text,
       timestamp: nowStamp(),
       focus: `${state.focus.type}:${state.focus.label}`,
+      backend: role === "assistant" ? backendLabel() : "",
       ...extra,
     });
     renderChat();
@@ -570,15 +652,7 @@
     state.source = window.AAPS.serializeAAPS(state.ir);
   }
 
-  async function handleChatSubmit(event) {
-    event.preventDefault();
-    const input = $("#chat-input");
-    const message = input.value.trim();
-    if (!message) return;
-    input.value = "";
-    addMessage("user", message);
-    $("#chat-status").textContent = "planning";
-
+  function applyLocalStructuredPlan(message) {
     let result = null;
     if (state.focus.type === "block/skill") {
       result = window.AAPS.planBlockFromPrompt(state.ir, message, { focus: state.focus });
@@ -591,13 +665,13 @@
     if (result.needsConfirmation) {
       addMessage("assistant", result.summary);
       $("#chat-status").textContent = "needs confirmation";
-      return;
+      return true;
     }
 
     if (!result.changed) {
       addMessage("assistant", result.summary || "No structured program edit was inferred. Select a narrower focus or ask to create a workflow/block.");
       $("#chat-status").textContent = "ready";
-      return;
+      return true;
     }
 
     state.ir = result.ir;
@@ -614,8 +688,55 @@
       if (block) setFocus("block/skill", firstBlock, titleForNode(block));
     }
     addMessage("assistant", `${result.summary} Placeholder/domain blocks are marked needs implementation until compiled or connected to project-local scripts.`);
-    await persistProgram();
+    persistProgram();
     renderAll();
+    return true;
+  }
+
+  function normalizeBackendResult(payload) {
+    const result = payload && payload.result && typeof payload.result === "object" ? payload.result : payload;
+    return result && typeof result === "object" ? result : { message: String(payload || "") };
+  }
+
+  async function applyBackendChat(message) {
+    const settings = await saveSettingsFromControls();
+    $("#chat-status").textContent = `routing - ${backendLabel(settings)}`;
+    const payload = await jsonFetch("/api/aaps/chat", {
+      path: state.projectPath || ".",
+      file: state.activeFile || "",
+      source: state.source,
+      message,
+      forceRealBackend: true,
+      context: chatContext(),
+    });
+    const result = normalizeBackendResult(payload);
+    if (result.source && typeof result.source === "string" && result.source !== state.source) {
+      resetProgram(result.source);
+      await persistProgram();
+    }
+    addMessage("assistant", result.message || result.summary || JSON.stringify(result, null, 2), { backend: backendLabel(settings) });
+    $("#chat-status").textContent = `ready - ${backendLabel(settings)}`;
+    renderAll();
+  }
+
+  async function handleChatSubmit(event) {
+    event.preventDefault();
+    const input = $("#chat-input");
+    const message = input.value.trim();
+    if (!message) return;
+    input.value = "";
+    addMessage("user", message);
+    if (TDV_MODE) {
+      $("#chat-status").textContent = "planning";
+      applyLocalStructuredPlan(message);
+      return;
+    }
+    try {
+      await applyBackendChat(message);
+    } catch (error) {
+      addMessage("assistant", `Backend failed: ${error.message}`);
+      $("#chat-status").textContent = "backend unavailable";
+    }
   }
 
   function fillLinkedBlockOptions(select, selectedValue = "") {
@@ -746,9 +867,9 @@
       ? state.messages
           .map(
             (message) => `
-              <div class="history-row">
-                <strong>${escapeHtml(message.role)}</strong>
-                <span class="history-meta">${escapeHtml(message.timestamp || "no timestamp")} - ${escapeHtml(message.focus || "project")}</span>
+              <div class="history-row ${escapeHtml(message.role)}">
+                <span class="history-role">${escapeHtml(message.role === "user" ? "You" : "AAPS")}</span>
+                <span class="history-meta">${escapeHtml(message.timestamp || "no timestamp")} - ${escapeHtml(message.focus || "project")}${message.backend ? ` - ${escapeHtml(message.backend)}` : ""}</span>
                 <p>${escapeHtml(message.text)}</p>
               </div>
             `
@@ -860,6 +981,21 @@
     });
     $("#create-project-button").addEventListener("click", createProject);
     $("#chat-form").addEventListener("submit", handleChatSubmit);
+    $("#chat-panel-toggle").addEventListener("click", () => setChatPanelOpen(!state.chatPanelOpen));
+    ["#agent-provider", "#codex-chat-model", "#codex-chat-reasoning", "#codex-task-model", "#codex-task-reasoning", "#aginti-provider"].forEach((selector) => {
+      const field = $(selector);
+      if (field) {
+        field.addEventListener("change", () => {
+          saveSettingsFromControls()
+            .then((settings) => {
+              $("#chat-status").textContent = `ready - ${backendLabel(settings)}`;
+            })
+            .catch((error) => {
+              $("#chat-status").textContent = `settings save failed: ${error.message}`;
+            });
+        });
+      }
+    });
     $("#history-button").addEventListener("click", () => {
       renderHistoryModal();
       openModal("history-modal");
@@ -919,6 +1055,9 @@
       record("simple UI loads", Boolean($('[data-testid="simple-layout"]')));
       record("regions exist", ["projects", "program", "blocks", "chat"].every((name) => Boolean($(`[data-testid="${name}-region"]`))));
       record("chat dock is fixed to viewport bottom", getComputedStyle($(".chat-dock")).position === "fixed");
+      record("chat panel defaults collapsed", !$(".chat-dock").classList.contains("is-expanded"));
+      record("chat transcript hidden from dock", getComputedStyle($("#chat-stream")).display === "none");
+      record("chat history button is explicit", $("#history-button").textContent.trim() === "Chat History");
       record("project list remains visible", $("#project-list").clientHeight > 24);
       record("current project card removed", !$("#current-project-card"));
       record("open path starts blank", $("#project-path-input").value === "");
@@ -959,6 +1098,10 @@
       $("#chat-form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await waitFor(() => document.body.textContent.includes("app81_segment_images"), 7000);
       record("sample chat creates program", document.body.textContent.includes("app81_preview_segmentation"));
+      record("dock does not show chat transcript", $("#chat-stream").textContent.trim() === "");
+      $("#history-button").click();
+      record("history shows chat bubbles", $$(".history-row.user").length >= 1 && $$(".history-row.assistant").length >= 1);
+      closeModal("history-modal");
       record("placeholder block visible in blocks panel", Boolean($('[data-block-id="app81_segment_images"]')));
       record("placeholder block visible in program panel", document.body.textContent.includes("uses app81_segment_images"));
     } catch (error) {
@@ -979,6 +1122,8 @@
       return;
     }
     attachEvents();
+    setChatPanelOpen(false);
+    await loadSettings();
     resetProgram(DEFAULT_SOURCE);
     await loadProject(".");
     addInitialMessage();
