@@ -224,16 +224,25 @@ async function stopAapsWebApp({ host = DEFAULT_HOST, preferredPort = DEFAULT_POR
   const normalizedHost = normalizeHost(host);
   const port = normalizePort(preferredPort);
   const url = webUrl(normalizedHost, port);
-  const health = await fetchHealthDetails(normalizedHost, port);
-
+  let health = await fetchHealthDetails(normalizedHost, port, 1000);
   if (!health.ok) {
-    if (await canListen(normalizedHost, port)) return { ok: true, stopped: false, alreadyStopped: true, host: normalizedHost, port, url };
-    return { ok: false, stopped: false, host: normalizedHost, port, url, error: `No AAPS Studio health endpoint responded on ${url}.` };
+    await sleep(350);
+    health = await fetchHealthDetails(normalizedHost, port, 1200);
   }
 
   const pids = new Set();
   if (Number.isInteger(Number(health.pid)) && Number(health.pid) > 0) pids.add(Number(health.pid));
   for (const pid of await listenerPids(port)) pids.add(pid);
+
+  if (!health.ok) {
+    if (await canListen(normalizedHost, port)) return { ok: true, stopped: false, alreadyStopped: true, host: normalizedHost, port, url };
+    if (pids.size === 0) {
+      return { ok: false, stopped: false, host: normalizedHost, port, url, error: `No AAPS Studio health endpoint responded on ${url}.` };
+    }
+    // The server is bound to the port but temporarily not answering health.
+    // Treat this like a restartable AAPS process and stop the listener.
+  }
+
   if (pids.size === 0) return { ok: false, stopped: false, host: normalizedHost, port, url, error: `Could not identify AAPS Studio process on ${url}.` };
 
   for (const pid of pids) {
