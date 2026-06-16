@@ -22,10 +22,13 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
 6. Represent routing in AAPS structure, not prose: use `choose`, `if/else`,
    `for_each`, `fallback`, `recover`, and `review` nodes where decisions
    matter.
-7. Compile missing implementation beneath the block contract. Do not weaken
+7. When agents hand work to other agents or image generators, pass a structured
+   handoff packet with source artifacts, QC findings, failure reason,
+   high-quality prompt, expected output schema, and verification criteria.
+8. Compile missing implementation beneath the block contract. Do not weaken
    required inputs, outputs, GPU/tool/agent requirements, or validations just to
    pass readiness.
-8. Every block that writes artifacts should also declare how those artifacts are
+9. Every block that writes artifacts should also declare how those artifacts are
    validated and where a human or agent can inspect them.
 
 ## Default Archetypes
@@ -44,6 +47,9 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
   with explicit arguments and declared outputs.
 - **Agent action**: calls or prepares Codex, AgInTiFlow, DeepSeek, vision
   agents, writing agents, or repair agents for tasks that need judgment.
+- **Agent handoff chain**: carries evidence, QC decisions, high-quality prompts,
+  expected schemas, generated/refined outputs, and verifier reports across
+  Codex, AgInTiFlow, image-generation agents, or other backend agents.
 - **Validation and recovery**: proves outputs exist and are meaningful, then
   retries, falls back, repairs, skips, or asks for review.
 - **Report and artifact**: collects figures, tables, logs, decisions,

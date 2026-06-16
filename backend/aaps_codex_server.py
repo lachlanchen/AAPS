@@ -2056,7 +2056,8 @@ def build_agent_context_pack(source: str, message: str, context: dict | None = N
                 "The selected workflow, block, and program are stable AAPS objects. Switching backend provider must not switch the object being edited.",
                 "Edit only the selected/working AAPS source unless the user explicitly asks to create or switch to another file.",
                 "Do not claim a block or program works unless the .aaps source declares outputs and validations that can prove it.",
-                "Default block archetypes are intent/context, input discovery, QC guard, method router, loop/batch, code/script action, agent action, validation/recovery, and report/artifact.",
+                "Default block archetypes are intent/context, input discovery, QC guard, method router, loop/batch, code/script action, agent action, agent handoff chain, validation/recovery, and report/artifact.",
+                "Agent handoff chains must preserve source artifacts, QC findings, failure reasons, high-quality prompts, expected output schema, generated/refined outputs, and verifier reports across Codex, AgInTiFlow, image-generation agents, or other backend agents.",
                 "Every block should include redundant context: biological purpose, data roots, typed inputs, declared outputs, executable action contract, validations, recovery/review notes, and expected artifacts.",
                 "Generated scripts must be self-debuggable: include clear CLI args, dependency errors, output manifest, logs, deterministic small-preview mode, and validation-friendly outputs.",
                 "For segmentation blocks, declare masks, overlays, per-image metrics, summary metrics, figures, reports, and QC review expectations.",
@@ -3342,6 +3343,7 @@ Default AAPS agent policy:
 - For compile/repair work, use parser/readiness/runtime evidence rather than guessing.
 - Prefer Codex GPT-5.5 xhigh for difficult code generation or implementation repair.
 - Do not weaken requirements to hide missing tools, dependencies, hardware, artifacts, or validations.
+- When an agent must hand a task to another agent or image generator, write a durable handoff packet containing source artifacts, QC findings, failure reason, high-quality prompt, expected output schema, and verification criteria.
 - Return concrete files, commands, artifacts, or blockers.
 
 Prompt:

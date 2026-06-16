@@ -129,7 +129,7 @@ For biology, this means segmentation is modeled as inspect image -> build priors
 
 AAPS includes default guidance for building reusable blocks without making block design completely free-form. Run `aaps guide blocks` for the full guide and examples.
 
-Default archetypes include intent/context, input discovery, QC guard, method/tool/agent router, loop/batch, code or script action, agent action, validation/recovery, and report/artifact blocks. Custom blocks are encouraged, but they should still declare typed inputs, outputs, executable actions or agent prompts, environment/tool requirements, validations, recovery, artifacts, and review checkpoints. See [docs/block-design.md](docs/block-design.md).
+Default archetypes include intent/context, input discovery, QC guard, method/tool/agent router, loop/batch, code or script action, agent action, agent handoff chain, validation/recovery, and report/artifact blocks. Custom blocks are encouraged, but they should still declare typed inputs, outputs, executable actions or agent prompts, environment/tool requirements, validations, recovery, artifacts, and review checkpoints. Agent handoff chains should carry source artifacts, QC findings, failure reasons, high-quality prompts, expected schemas, and verification criteria across Codex, AgInTiFlow, image-generation agents, and verifier agents. See [docs/block-design.md](docs/block-design.md).
 
 ## Examples
 
