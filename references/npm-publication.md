@@ -30,6 +30,10 @@ The npm package is configured with Trusted Publishing through GitHub Actions OID
 
 The workflow runs tests, validates the project, checks the package tarball, and publishes with provenance. It does not require a committed `.npmrc` or a registry token when Trusted Publishing is active.
 
+## Public Release Log
+
+- `0.5.12` on 2026-06-16: published by GitHub Actions Trusted Publishing from `main`. This release adds deterministic `aaps create`, stronger block-design guidance for chat-driven refinements, and stricter image-mask handoff/report prompts.
+
 ## Security Notes
 
 - Never commit `.env`, `.npmrc`, `.aaps-work/`, registry tokens, OTPs, or npm debug logs.
