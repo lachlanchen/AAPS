@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const AAPS = require("../src/aaps");
 const AutoUpdate = require("../src/auto-update");
+const Compiler = require("../scripts/aaps-compiler");
 const Runner = require("../scripts/aaps-runner");
 const WebAutostart = require("../src/web-autostart");
 
@@ -321,12 +322,30 @@ assert(gpuReadiness.blocks[0].checks.some((check) => check.kind === "gpu"));
 const gpuContractProject = path.join(__dirname, "..", ".aaps-work", "tests", "gpu-contract-project");
 fs.rmSync(gpuContractProject, { recursive: true, force: true });
 fs.mkdirSync(path.join(gpuContractProject, "scripts"), { recursive: true });
+fs.mkdirSync(path.join(gpuContractProject, "workflows"), { recursive: true });
 fs.writeFileSync(
   path.join(gpuContractProject, "scripts", "cellpose_false.py"),
-  "from cellpose import models\nmodel = models.CellposeModel(gpu=False, pretrained_model='cpsam')\n",
+  `from cellpose import models
+import time
+
+def main():
+    load_start = time.time()
+    model = models.CellposeModel(gpu=False, pretrained_model="cpsam")
+    model_load_sec = round(time.time() - load_start, 3)
+    smoke = {
+        "status": "not_run",
+        "model_load_sec": model_load_sec,
+    }
+    summary = {
+        "cellpose_model": "CellposeModel(pretrained_model='cpsam', gpu=False)",
+    }
+
+if __name__ == "__main__":
+    main()
+`,
   "utf8"
 );
-const gpuContractWorkflow = AAPS.parseAAPS(`pipeline "GPU Script Contract" {
+const gpuContractSource = `pipeline "GPU Script Contract" {
   requires_gpu "required"
   task cellpose {
     requires_gpu "required"
@@ -334,13 +353,20 @@ const gpuContractWorkflow = AAPS.parseAAPS(`pipeline "GPU Script Contract" {
     exec python_script "scripts/cellpose_false.py"
   }
 }
-`);
+`;
+fs.writeFileSync(path.join(gpuContractProject, "workflows", "main.aaps"), gpuContractSource, "utf8");
+const gpuContractWorkflow = AAPS.parseAAPS(gpuContractSource);
 const gpuContractPlan = AAPS.buildExecutionPlan(gpuContractWorkflow);
 const gpuContractReadiness = Runner.buildReadiness(gpuContractPlan, gpuContractProject, null, { tools: {}, agents: {}, environment: {}, files: {} }, {});
 assert(
   gpuContractReadiness.blocks[0].checks.some((check) => check.kind === "gpu_contract" && check.ok === false),
   "GPU-required Cellpose scripts must not silently hard-code gpu=False"
 );
+const gpuContractCompile = Compiler.compile({ project: gpuContractProject, file: "workflows/main.aaps", mode: "apply" });
+assert(gpuContractCompile.modifiedFiles.some((record) => record.kind === "script_repair" && record.written));
+const repairedGpuScript = fs.readFileSync(path.join(gpuContractProject, "scripts", "cellpose_false.py"), "utf8");
+assert(!repairedGpuScript.includes("gpu=False"));
+assert(repairedGpuScript.includes("gpu_used"));
 
 const folderWorkflow = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "executable_folder_segmentation.aaps"));
 assert.strictEqual(folderWorkflow.diagnostics.length, 0, JSON.stringify(folderWorkflow.diagnostics));

@@ -1002,6 +1002,7 @@ function collectMissing({ ir, plan, readiness, requirements, registries, project
         agent: "missing_agent",
         python_package: "missing_python_package",
         node_package: "missing_node_package",
+        gpu_contract: "gpu_contract_mismatch",
         input: "missing_input",
         output: "invalid_output_path",
       };
@@ -1014,9 +1015,9 @@ function collectMissing({ ir, plan, readiness, requirements, registries, project
         path: record.path,
         reason: check.message || "Readiness check failed.",
         possibleFallbacks: [],
-        possibleGeneratedReplacement: check.kind === "script" ? check.path || check.name : "",
+        possibleGeneratedReplacement: ["script", "gpu_contract"].includes(check.kind) ? check.path || check.name : "",
         suggestedSetupCommand: setupSuggestionFor(check, projectDir, registries),
-        safeAutoAction: check.kind === "script" ? "generate_script" : ["python_package", "command", "tool"].includes(check.kind) ? "setup_prompt" : "prompt",
+        safeAutoAction: check.kind === "script" ? "generate_script" : check.kind === "gpu_contract" ? "repair_script" : ["python_package", "command", "tool"].includes(check.kind) ? "setup_prompt" : "prompt",
         requiresApproval: ["python_package", "node_package", "command", "tool"].includes(check.kind),
         raw: check,
       });
@@ -1058,6 +1059,7 @@ function setupSuggestionFor(check, projectDir, registries) {
   }
   if (check.kind === "agent") return `Register ${check.name} in agents/agent_registry.json or use prompt-only handoff.`;
   if (check.kind === "script") return `Generate ${check.path || check.name} with AAPS compile --mode apply.`;
+  if (check.kind === "gpu_contract") return `Repair ${check.path || check.name} with AAPS compile --mode apply so the implementation matches the GPU block contract.`;
   return check.message || "";
 }
 
@@ -1161,6 +1163,80 @@ function writeGenerated(projectDir, compileDir, mode, file, content, reason, met
   record.written = true;
   record.hashAfter = hashFile(target);
   return record;
+}
+
+function repairGpuContractScriptSource(source) {
+  let content = String(source || "");
+  if (!/CellposeModel\s*\([^)]*gpu\s*=\s*False/i.test(content)) return null;
+  let insertedGpuDetection = false;
+  const exactLoadBlock = `    load_start = time.time()
+    model = models.CellposeModel(gpu=False, pretrained_model="cpsam")
+    model_load_sec = round(time.time() - load_start, 3)
+`;
+  if (content.includes(exactLoadBlock)) {
+    content = content.replace(
+      exactLoadBlock,
+      `    gpu_requested = True
+    gpu_available = False
+    cuda_device = ""
+    cuda_error = ""
+    try:
+        import torch
+
+        gpu_available = bool(torch.cuda.is_available())
+        cuda_device = torch.cuda.get_device_name(0) if gpu_available else ""
+    except Exception as exc:
+        cuda_error = f"{type(exc).__name__}: {exc}"
+    gpu_used = bool(gpu_requested and gpu_available)
+
+    load_start = time.time()
+    model = models.CellposeModel(gpu=gpu_used, pretrained_model="cpsam")
+    model_load_sec = round(time.time() - load_start, 3)
+`
+    );
+    insertedGpuDetection = true;
+  } else {
+    content = content.replace(/CellposeModel\s*\(\s*gpu\s*=\s*False/i, "CellposeModel(gpu=True");
+  }
+  if (insertedGpuDetection && content.includes(`        "status": "not_run",`)) {
+    content = content.replace(
+      `        "status": "not_run",`,
+      `        "status": "not_run",
+        "gpu_requested": gpu_requested,
+        "gpu_available": gpu_available,
+        "gpu_used": gpu_used,
+        "cuda_device": cuda_device,
+        "cuda_error": cuda_error,`
+    );
+  }
+  if (insertedGpuDetection && content.includes(`        "cellpose_model": "CellposeModel(pretrained_model='cpsam', gpu=False)",`)) {
+    content = content.replace(
+      `        "cellpose_model": "CellposeModel(pretrained_model='cpsam', gpu=False)",`,
+      `        "cellpose_model": f"CellposeModel(pretrained_model='cpsam', gpu={gpu_used})",
+        "gpu_requested": gpu_requested,
+        "gpu_available": gpu_available,
+        "gpu_used": gpu_used,
+        "cuda_device": cuda_device,
+        "cuda_error": cuda_error,`
+    );
+  } else {
+    content = content.replace(/gpu=False/g, "gpu=True");
+  }
+  return content;
+}
+
+function repairGpuContractScript(projectDir, compileDir, mode, missing) {
+  const file = missing.expected || missing.name;
+  if (!file || /\$\{/.test(file)) return null;
+  const target = safeRelative(projectDir, file, "gpu contract script");
+  const repaired = repairGpuContractScriptSource(readTextIfExists(target));
+  if (!repaired) return null;
+  return writeGenerated(projectDir, compileDir, mode, file, repaired, `repair GPU contract mismatch in ${file}`, {
+    kind: "script_repair",
+    block: missing.block || "",
+    agent: "aaps_internal_compiler",
+    allowOverwrite: true,
+  });
 }
 
 function ensureWorkflowImport(projectDir, compileDir, mode, loadedFile, blockFile, blockName) {
@@ -1296,6 +1372,10 @@ function generateAssets({ projectDir, compileDir, mode, missingComponents, loade
         agent: "aaps_internal_compiler",
       });
       generatedFiles.push(scriptRecord);
+    }
+    if (missing.type === "gpu_contract_mismatch" || missing.safeAutoAction === "repair_script") {
+      const repairRecord = repairGpuContractScript(projectDir, compileDir, mode, missing);
+      if (repairRecord) modifiedFiles.push(repairRecord);
     }
   });
   const requirementsRecord = updateRequirements(projectDir, compileDir, mode, missingComponents);
