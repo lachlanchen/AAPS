@@ -84,7 +84,7 @@
             <h2>Install AAPS from npm</h2>
             <p>
               AAPS is published as a scoped npm package so one install can provide the parser,
-              image-aware agent handoff prompts, manifest compiler/planner, CLI runner, and local Studio server. Release publishing is
+              image-aware agent handoff prompts, manifest engine (compiler)/planner, CLI runner, and local Studio server. Release publishing is
               configured for GitHub Actions Trusted Publishing, so npm accepts the release
               workflow through OIDC.
             </p>
@@ -156,10 +156,10 @@ aaps run workflows/main.aaps --project . --json</code></pre>
                 </div>
                 <img
                   src="assets/aaps-studio-project-tab.png"
-                  alt="AAPS Studio Project tab with project creation, workspace files, compile runtime panel, and bottom chat dock"
+                  alt="AAPS Studio Project tab with project creation, workspace files, manifest runtime panel, and bottom chat dock"
                   loading="lazy"
                 />
-                <figcaption>Project workspace: create a topic project, browse files, compile, dry-run, and manage backend settings.</figcaption>
+                <figcaption>Project workspace: create a topic project, browse files, manifest (compile), dry-run, and manage backend settings.</figcaption>
               </figure>
               <figure class="studio-shot-frame" data-carousel-slide>
                 <div class="studio-shot-chrome">
@@ -311,7 +311,7 @@ aaps run workflows/main.aaps --project . --json</code></pre>
             <p class="eyebrow">Runtime</p>
             <h2>Readable workflows that can actually run</h2>
             <p>
-              AAPS now separates parse, manifest, plan, and execute. The manifest compiler resolves missing
+              AAPS now separates parse, manifest (compile), plan, and execute. The manifest engine resolves missing
               blocks, scripts, tools, agents, dependencies, setup prompts, and provenance before
               the runtime builds an execution plan. The first runtime executes shell,
               Python, inline Python, Node, npm, agent-prompt, noop, and manual steps, writes stdout/stderr logs,
@@ -321,7 +321,7 @@ aaps run workflows/main.aaps --project . --json</code></pre>
             <ul class="check-list">
               <li>Generate `aaps_plan/0.1` from the same parser used by Studio.</li>
               <li>Run `aaps manifest` in check, suggest, apply, interactive, or force mode.</li>
-              <li>Write `block_readiness.json`, `tool_resolution.json`, and `agent_compile_plan.json`.</li>
+              <li>Write `block_readiness.json`, `tool_resolution.json`, and agent manifest plans (`agent_compile_plan.json`).</li>
               <li>Resolve project imports and expose missing or circular dependency diagnostics.</li>
               <li>Execute `for_each list_files(...)` loops for folder-level image pipelines.</li>
               <li>Record `resolved_workflow.json`, `execution_plan.json`, `run.json`, events, logs, artifacts, repair notes, and reports.</li>
