@@ -119,6 +119,7 @@
       requiredFiles: [],
       requiredPythonPackages: [],
       requiredNodePackages: [],
+      requiredGpu: [],
       environment: {
         python: "",
         requirements: [],
@@ -168,6 +169,7 @@
         files: [],
         pythonPackages: [],
         nodePackages: [],
+        gpu: [],
       },
       environment: {
         python: "",
@@ -264,6 +266,7 @@
       files: "requiredFiles",
       pythonPackages: "requiredPythonPackages",
       nodePackages: "requiredNodePackages",
+      gpu: "requiredGpu",
     };
     if (target.inputPorts || target.outputPorts) {
       const field = pipelineMap[key];
@@ -494,7 +497,7 @@
         return;
       }
 
-      match = line.match(/^(requires_tools|requires_models|requires_agents|requires_commands|requires_files|requires_python_packages|requires_node_packages)\s+(.+)$/i);
+      match = line.match(/^(requires_tools|requires_models|requires_agents|requires_commands|requires_files|requires_python_packages|requires_node_packages|requires_gpu)\s+(.+)$/i);
       if (match) {
         const map = {
           requires_tools: "tools",
@@ -504,6 +507,7 @@
           requires_files: "files",
           requires_python_packages: "pythonPackages",
           requires_node_packages: "nodePackages",
+          requires_gpu: "gpu",
         };
         addRequirement(target, map[match[1].toLowerCase()], unquote(match[2]));
         return;
@@ -803,6 +807,7 @@
     if (requirements.files && requirements.files.length) lines.push(`${childIndent}requires_files ${quote(requirements.files.join(", "))}`);
     if (requirements.pythonPackages && requirements.pythonPackages.length) lines.push(`${childIndent}requires_python_packages ${quote(requirements.pythonPackages.join(", "))}`);
     if (requirements.nodePackages && requirements.nodePackages.length) lines.push(`${childIndent}requires_node_packages ${quote(requirements.nodePackages.join(", "))}`);
+    if (requirements.gpu && requirements.gpu.length) lines.push(`${childIndent}requires_gpu ${quote(requirements.gpu.join(", "))}`);
     const environment = node.environment || {};
     if (environment.python) lines.push(`${childIndent}environment python = ${quote(environment.python)}`);
     if (environment.requirements && environment.requirements.length) lines.push(`${childIndent}environment requirements = ${quote(environment.requirements.join(", "))}`);
@@ -876,6 +881,7 @@
     if (pipeline.requiredFiles && pipeline.requiredFiles.length) lines.push(`  requires_files ${quote(pipeline.requiredFiles.join(", "))}`);
     if (pipeline.requiredPythonPackages && pipeline.requiredPythonPackages.length) lines.push(`  requires_python_packages ${quote(pipeline.requiredPythonPackages.join(", "))}`);
     if (pipeline.requiredNodePackages && pipeline.requiredNodePackages.length) lines.push(`  requires_node_packages ${quote(pipeline.requiredNodePackages.join(", "))}`);
+    if (pipeline.requiredGpu && pipeline.requiredGpu.length) lines.push(`  requires_gpu ${quote(pipeline.requiredGpu.join(", "))}`);
     const pipelineEnvironment = pipeline.environment || {};
     if (pipelineEnvironment.python) lines.push(`  environment python = ${quote(pipelineEnvironment.python)}`);
     if (pipelineEnvironment.requirements && pipelineEnvironment.requirements.length) lines.push(`  environment requirements = ${quote(pipelineEnvironment.requirements.join(", "))}`);
@@ -1034,9 +1040,11 @@
       files: uniqueList([...(local.files || []), ...(environment.files || [])]),
       pythonPackages: uniqueList([...(local.pythonPackages || []), ...(environment.requirements || [])]),
       nodePackages: uniqueList([...(local.nodePackages || []), ...(environment.nodePackages || [])]),
+      gpu: uniqueList([...(local.gpu || [])]),
       pipelineTools: uniqueList(pipeline.requiredTools || []),
       pipelineModels: uniqueList(pipeline.requiredModels || []),
       pipelineAgents: uniqueList(pipeline.requiredAgents || []),
+      pipelineGpu: uniqueList(pipeline.requiredGpu || []),
     };
   }
 
@@ -1172,6 +1180,7 @@
         files: pipeline.requiredFiles || [],
         pythonPackages: pipeline.requiredPythonPackages || [],
         nodePackages: pipeline.requiredNodePackages || [],
+        gpu: pipeline.requiredGpu || [],
       },
       environment: pipeline.environment || {},
       includes: pipeline.includes || [],
@@ -1434,6 +1443,7 @@
         requirements: [],
         commands: [],
         nodePackages: [],
+        gpu: [],
         env: {},
         setup: [],
       },
@@ -1785,6 +1795,7 @@
       files: [],
       pythonPackages: [],
       nodePackages: [],
+      gpu: [],
     };
     const commonEnvironment = {
       python: "python3",
@@ -1933,6 +1944,7 @@
       files: [],
       pythonPackages: [],
       nodePackages: [],
+      gpu: [],
     };
     const environment = { python: "", requirements: [], commands: [], nodePackages: [], files: [], env: {}, setup: [] };
     const common = {

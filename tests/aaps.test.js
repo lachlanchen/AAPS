@@ -5,6 +5,7 @@ const os = require("os");
 const path = require("path");
 const AAPS = require("../src/aaps");
 const AutoUpdate = require("../src/auto-update");
+const Runner = require("../scripts/aaps-runner");
 const WebAutostart = require("../src/web-autostart");
 
 function parseFile(file) {
@@ -299,6 +300,23 @@ const nodeExecutionMode = AAPS.parseAAPS(`pipeline "Node Execution Mode" {
 assert.deepStrictEqual(nodeExecutionMode.diagnostics, []);
 assert.strictEqual(nodeExecutionMode.pipeline.blocks[0].executionMode, "local_deterministic");
 assert(AAPS.serializeAAPS(nodeExecutionMode).includes('execution_mode "local_deterministic"'));
+
+const gpuWorkflow = AAPS.parseAAPS(`pipeline "GPU Requirement" {
+  requires_gpu "preferred"
+  task cellpose_gpu {
+    requires_gpu "required"
+    exec noop
+  }
+}
+`);
+assert.deepStrictEqual(gpuWorkflow.diagnostics, []);
+assert.deepStrictEqual(gpuWorkflow.pipeline.requiredGpu, ["preferred"]);
+assert.deepStrictEqual(gpuWorkflow.pipeline.tasks[0].requirements.gpu, ["required"]);
+assert(AAPS.serializeAAPS(gpuWorkflow).includes('requires_gpu "required"'));
+const gpuPlan = AAPS.buildExecutionPlan(gpuWorkflow);
+assert(gpuPlan.steps.some((step) => step.requirements.gpu.includes("required")));
+const gpuReadiness = Runner.buildReadiness(gpuPlan, path.join(__dirname, ".."), null, { tools: {}, agents: {}, environment: {}, files: {} }, {});
+assert(gpuReadiness.blocks[0].checks.some((check) => check.kind === "gpu"));
 
 const folderWorkflow = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "executable_folder_segmentation.aaps"));
 assert.strictEqual(folderWorkflow.diagnostics.length, 0, JSON.stringify(folderWorkflow.diagnostics));
@@ -1348,9 +1366,12 @@ const promptPayload = JSON.parse(promptDryRun.stdout);
 assert.strictEqual(promptPayload.ok, true);
 assert.strictEqual(promptPayload.backend, "print");
 assert.strictEqual(promptPayload.executed, false);
+assert.strictEqual(promptPayload.prePromptSnapshot.ok, true);
+assert(fs.existsSync(path.join(promptProject, promptPayload.prePromptSnapshot.projectManifestPath)));
 assert(fs.existsSync(path.join(promptProject, promptPayload.promptFile)));
 const promptText = fs.readFileSync(path.join(promptProject, promptPayload.promptFile), "utf8");
 assert(promptText.includes("AAPS Backend Agent Task"));
+assert(promptText.includes("Pre-agent project snapshot"));
 assert(promptText.includes("Docker-safe AAPS CLI fallback"));
 assert(promptText.includes("npx -y @lazyingart/aaps@"));
 assert(promptText.includes("host path exists inside the active sandbox"));
@@ -1358,6 +1379,74 @@ assert(promptText.includes("If broad host commands are blocked"));
 assert(promptText.includes("`.aaps` files are not YAML"));
 assert(promptText.includes("project-local `.venv`"));
 assert(promptText.includes("set -o pipefail"));
+fs.mkdirSync(path.join(promptProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(promptProject, "workflows", "snapshot_fixture.aaps"),
+  `pipeline "Snapshot Fixture" {
+  task noop {
+    exec noop
+  }
+}
+`,
+  "utf8"
+);
+const explicitSnapshot = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "snapshot",
+    "--project",
+    ".aaps-work/tests/prompt-project",
+    "--label",
+    "test-version",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(explicitSnapshot.status, 0, explicitSnapshot.stderr || explicitSnapshot.stdout);
+const explicitSnapshotJson = JSON.parse(explicitSnapshot.stdout);
+assert.strictEqual(explicitSnapshotJson.ok, true);
+assert(explicitSnapshotJson.fileCount >= 1);
+assert(fs.existsSync(path.join(promptProject, explicitSnapshotJson.projectManifestPath)));
+const explicitVersions = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "versions", "--project", ".aaps-work/tests/prompt-project", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(explicitVersions.status, 0, explicitVersions.stderr || explicitVersions.stdout);
+const explicitVersionsJson = JSON.parse(explicitVersions.stdout);
+assert(explicitVersionsJson.items.some((item) => item.id === explicitSnapshotJson.id));
+const gitCheckpointProject = path.join(__dirname, "..", ".aaps-work", "tests", "git-checkpoint-project");
+fs.rmSync(gitCheckpointProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(gitCheckpointProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(gitCheckpointProject, "workflows", "main.aaps"),
+  `pipeline "Git Checkpoint Fixture" {
+  task noop {
+    exec noop
+  }
+}
+`,
+  "utf8"
+);
+const checkpoint = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "checkpoint", "--project", ".aaps-work/tests/git-checkpoint-project", "--label", "test-commit", "--init-git", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(checkpoint.status, 0, checkpoint.stderr || checkpoint.stdout);
+const checkpointJson = JSON.parse(checkpoint.stdout);
+assert.strictEqual(checkpointJson.ok, true);
+assert.strictEqual(checkpointJson.committed, true);
+assert(checkpointJson.commit);
+assert(fs.existsSync(path.join(gitCheckpointProject, ".git")));
+const checkpointClean = childProcess.spawnSync(
+  "node",
+  ["scripts/aaps.js", "checkpoint", "--project", ".aaps-work/tests/git-checkpoint-project", "--label", "clean", "--json"],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(checkpointClean.status, 0, checkpointClean.stderr || checkpointClean.stdout);
+assert.strictEqual(JSON.parse(checkpointClean.stdout).status, "clean");
 
 const fakeBin = path.join(promptProject, "fake-bin");
 const fakeArgsFile = path.join(promptProject, "fake-aginti-args.txt");

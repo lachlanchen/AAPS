@@ -8,6 +8,7 @@ const os = require("os");
 const path = require("path");
 const readline = require("readline");
 const AAPS = require("../src/aaps");
+const Versioning = require("../src/project-versioning");
 const { maybeAutoUpdate } = require("../src/auto-update");
 const {
   DEFAULT_PORT,
@@ -61,6 +62,9 @@ function usage() {
     "  aaps plan <file> [--project .] [--json]",
     "  aaps check <file> [--project .] [--json]",
     "  aaps audit [file] [--project .] [--json]",
+    "  aaps snapshot [--project .] [--label name] [--json]",
+    "  aaps checkpoint [--project .] [--label name] [--init-git] [--json]",
+    "  aaps versions [--project .] [--limit 120] [--json]",
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
@@ -88,6 +92,8 @@ function usage() {
     "  --backend <name>  Prompt backend for direct goals. Defaults to codex.",
     "  --session <id>    Shared chat session for syncing CLI and Studio. Defaults to default.",
     "  --session-name <name> Friendly name stored in the AAPS session database.",
+    "  --label <name>    Version snapshot label for `aaps snapshot`.",
+    "  --init-git        Initialize project-local git before `aaps checkpoint`.",
     "  --no-auto-update Skip startup update checks for global npm installs.",
     "  --auto-update     Force a startup update check for global npm installs.",
     "  --provider <name> Provider passed to AgInTi backend.",
@@ -214,6 +220,10 @@ function packageVersion() {
 function compactLine(value, limit = 110) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   return text.length > limit ? `${text.slice(0, limit - 3).trim()}...` : text;
+}
+
+function backendSlug(value) {
+  return String(value || "backend").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "backend";
 }
 
 function splitCliWords(value) {
@@ -661,6 +671,9 @@ function buildPromptHandoff(projectDir, goal, options) {
     "## Project",
     "",
     `- Project root: ${projectDir}`,
+    options.prePromptSnapshot
+      ? `- Pre-agent project snapshot: \`${options.prePromptSnapshot.projectManifestPath || options.prePromptSnapshot.projectSnapshotDir}\``
+      : "- Pre-agent project snapshot: not created.",
     "- Preferred AAPS CLI: `aaps` when it is installed in the active shell or sandbox.",
     `- Docker-safe AAPS CLI fallback: \`${dockerSafeAapsCli}\` when package installs/network are approved.`,
     `- Host/source AAPS CLI fallback: \`node ${aapsCli}\` only if that host path exists inside the active sandbox.`,
@@ -674,11 +687,12 @@ function buildPromptHandoff(projectDir, goal, options) {
     "4. Run `aaps validate`, `aaps compile ... --mode check`, and `aaps run ...` when the workflow is executable.",
     "5. If a step is prompt-only, record it as a handoff unless you actually execute it and verify declared outputs.",
     "6. Save durable reports under `reports/` and durable generated artifacts under project-local folders.",
-    "7. Do not use sudo or destructive host commands. Ask for a stronger mode when the task requires broader permission.",
-    "8. Finish with exact paths to the workflow, compile/run logs, and outputs.",
+    "7. Preserve AAPS provenance: before major rewrites, run `aaps snapshot --project . --label before-<change>` and record generated/modified files in logs.",
+    "8. Do not use sudo or destructive host commands. Ask for a stronger mode when the task requires broader permission.",
+    "9. Finish with exact paths to the workflow, compile/run logs, and outputs.",
     options.allowDestructive
-      ? "9. This run was launched with explicit trusted-host/destructive approval. Use it only for the requested project work, avoid unrelated host changes, and keep secrets out of reports."
-      : "9. If broad host commands are blocked, report the blocker and rerun command instead of looping on variants.",
+      ? "10. This run was launched with explicit trusted-host/destructive approval. Use it only for the requested project work, avoid unrelated host changes, and keep secrets out of reports."
+      : "10. If broad host commands are blocked, report the blocker and rerun command instead of looping on variants.",
     "",
     "## AAPS Syntax Contract",
     "",
@@ -769,6 +783,12 @@ function commandPromptWithCodex(projectDir, handoff, payload, options) {
     scope: String(options.auditScope || "entry").toLowerCase() === "project" ? "project" : "entry",
     sinceMs: auditStartedAtMs,
   });
+  payload.postPromptGitCheckpoint = Versioning.createGitCheckpoint(projectDir, {
+    label: `after-${backendSlug(payload.backend || "codex")}-prompt`,
+    reason: "post_codex_prompt",
+    entryFile: options.auditFile || "",
+    initGit: true,
+  });
   if (payload.exitCode === 0 && payload.postRunAudit.ok) payload.status = "succeeded_verified";
   else if (payload.exitCode === 0) payload.status = "backend_returned_unverified";
   else payload.status = "failed";
@@ -786,11 +806,22 @@ function commandPrompt(goal, options) {
   const text = String(goal || "").trim();
   if (!text) throw new Error("aaps prompt requires a goal string.");
   const backend = normalizePromptBackend(options.backend);
-  const handoff = buildPromptHandoff(projectDir, text, options);
+  let prePromptSnapshot = null;
+  try {
+    prePromptSnapshot = Versioning.createProjectSnapshot(projectDir, {
+      label: `before-${backend}-prompt`,
+      reason: "pre_agent_prompt",
+      entryFile: options.auditFile || "",
+    });
+  } catch (error) {
+    prePromptSnapshot = { ok: false, error: error.message };
+  }
+  const handoff = buildPromptHandoff(projectDir, text, { ...options, prePromptSnapshot });
   const payload = {
     ok: true,
     backend,
     project: projectDir,
+    prePromptSnapshot,
     promptFile: handoff.projectRelativePromptPath,
     promptPath: handoff.promptPath,
     executed: false,
@@ -870,6 +901,12 @@ function commandPrompt(goal, options) {
   payload.postRunAudit = auditAapsBackendResult(projectDir, options.auditFile || "", {
     scope: String(options.auditScope || "entry").toLowerCase() === "project" ? "project" : "entry",
     sinceMs: auditStartedAtMs,
+  });
+  payload.postPromptGitCheckpoint = Versioning.createGitCheckpoint(projectDir, {
+    label: "after-aginti-prompt",
+    reason: "post_aginti_prompt",
+    entryFile: options.auditFile || "",
+    initGit: true,
   });
   if (payload.exitCode === 0 && payload.postRunAudit.ok) payload.status = "succeeded_verified";
   else if (payload.exitCode === 0) payload.status = "backend_returned_unverified";
@@ -992,6 +1029,60 @@ function commandAudit(fileArg, options) {
   if (options.json) print(payload, true);
   else if (payload.ok) print(`AAPS audit verified ${payload.workflowCount} workflow${payload.workflowCount === 1 ? "" : "s"}.`, false);
   else print(JSON.stringify(payload, null, 2), false);
+  process.exit(payload.ok ? 0 : 1);
+}
+
+function snapshotSummary(snapshot) {
+  return [
+    `snapshot: ${snapshot.id}`,
+    `files: ${snapshot.fileCount}`,
+    `path: ${snapshot.projectSnapshotDir}`,
+    snapshot.skippedCount ? `skipped: ${snapshot.skippedCount}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function commandSnapshot(fileArg, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const snapshot = Versioning.createProjectSnapshot(projectDir, {
+    label: options.label || fileArg || "manual",
+    reason: options.reason || "cli_snapshot",
+    entryFile: fileArg || "",
+  });
+  if (options.json) print(snapshot, true);
+  else print(snapshotSummary(snapshot), false);
+  process.exit(0);
+}
+
+function commandVersions(options) {
+  const projectDir = path.resolve(options.project || ".");
+  const payload = Versioning.listProjectSnapshots(projectDir, { limit: Number(options.limit || 120) });
+  if (options.json) print(payload, true);
+  else if (!payload.items.length) print("No AAPS project snapshots found.", false);
+  else {
+    print(
+      payload.items
+        .map((item) => `${item.time || ""} ${item.id || ""} ${item.label || item.reason || ""} ${item.snapshotDir || ""}`.trim())
+        .join("\n"),
+      false
+    );
+  }
+  process.exit(0);
+}
+
+function commandCheckpoint(fileArg, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const payload = Versioning.createGitCheckpoint(projectDir, {
+    label: options.label || fileArg || "manual",
+    reason: options.reason || "cli_checkpoint",
+    entryFile: fileArg || "",
+    initGit: Boolean(options.initGit),
+  });
+  if (options.json) print(payload, true);
+  else if (payload.committed) print(`AAPS git checkpoint ${payload.commit}: ${payload.message}`, false);
+  else if (payload.ok) print(`AAPS git checkpoint skipped: ${payload.status}`, false);
+  else print(`AAPS git checkpoint failed: ${payload.error || payload.status}`, false);
   process.exit(payload.ok ? 0 : 1);
 }
 
@@ -1979,6 +2070,9 @@ async function main() {
     "plan",
     "check",
     "audit",
+    "snapshot",
+    "checkpoint",
+    "versions",
     "run",
     "check-block",
     "run-block",
@@ -2024,6 +2118,18 @@ async function main() {
   }
   if (command === "audit") {
     commandAudit(file, options);
+    return;
+  }
+  if (command === "snapshot") {
+    commandSnapshot(file, options);
+    return;
+  }
+  if (command === "checkpoint") {
+    commandCheckpoint(file, options);
+    return;
+  }
+  if (command === "versions") {
+    commandVersions(options);
     return;
   }
   if (command === "studio") {

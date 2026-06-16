@@ -207,6 +207,14 @@ function commandExists(command, cwd) {
   return result.status === 0;
 }
 
+function gpuAvailable(cwd) {
+  if (commandExists("nvidia-smi", cwd)) {
+    const result = spawnSync("nvidia-smi", ["-L"], { cwd, encoding: "utf8" });
+    return result.status === 0 && Boolean(String(result.stdout || "").trim());
+  }
+  return false;
+}
+
 function pythonPackageExists(pkg, python, cwd) {
   const packageName = String(pkg || "").split(/[<>=!~]/)[0].trim();
   const aliases = {
@@ -1007,16 +1015,32 @@ function checkBlockReadiness(step, projectDir, manifest, registries, baseContext
   (requirements.nodePackages || []).forEach((pkg) => {
     checks.push({ kind: "node_package", name: pkg, ok: fs.existsSync(path.join(projectDir, "node_modules", pkg)), message: "checked node_modules" });
   });
+  [...(requirements.pipelineGpu || []), ...(requirements.gpu || [])].forEach((gpuRequirement) => {
+    const value = String(gpuRequirement || "preferred").toLowerCase();
+    const required = ["required", "require", "true", "cuda", "nvidia"].includes(value);
+    const ok = gpuAvailable(projectDir);
+    checks.push({
+      kind: "gpu",
+      name: value,
+      ok: ok || !required,
+      required,
+      available: ok,
+      message: ok ? "GPU detected with nvidia-smi" : required ? "required GPU not detected" : "preferred GPU not detected; CPU fallback allowed",
+    });
+  });
   (requirements.tools || []).forEach((tool) => checks.push(checkTool(tool, registries, projectDir)));
   (requirements.agents || []).forEach((agent) => checks.push(checkAgent(agent, registries)));
   if (step.agent) checks.push(checkAgent(step.agent, registries));
 
   const failed = checks.filter((check) => !check.ok);
   const warnings = checks.filter((check) => !check.ok && ["tool", "agent", "node_package"].includes(check.kind));
+  const softWarnings = checks.filter((check) => check.kind === "gpu" && !check.available && !check.required);
   const status = failed.length
     ? warnings.length === failed.length
       ? "ready_with_warning"
       : `missing_${failed[0].kind}`
+    : softWarnings.length
+      ? "ready_with_warning"
     : step.reviews && step.reviews.length && !step.executable
       ? "waiting_for_human_review"
       : "ready";
@@ -1027,7 +1051,7 @@ function checkBlockReadiness(step, projectDir, manifest, registries, baseContext
     status,
     ready: failed.length === 0 || warnings.length === failed.length,
     checks,
-    suggestions: failed.map((check) => suggestionForCheck(check, projectDir, manifest, registries)),
+    suggestions: [...failed, ...softWarnings].map((check) => suggestionForCheck(check, projectDir, manifest, registries)),
   };
 }
 
@@ -1048,6 +1072,11 @@ function suggestionForCheck(check, projectDir, manifest, registries) {
   }
   if (check.kind === "command") {
     return `Install command ${check.name} in the project environment.`;
+  }
+  if (check.kind === "gpu") {
+    return check.required
+      ? "Install/configure NVIDIA GPU support for this project, or change the block to `requires_gpu \"preferred\"` with a CPU fallback."
+      : "GPU was preferred but not detected; AAPS can continue on CPU or route to a GPU worker later.";
   }
   return check.message || `Resolve ${check.kind} ${check.name || ""}`.trim();
 }
