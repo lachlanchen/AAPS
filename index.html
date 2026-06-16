@@ -328,6 +328,8 @@ aaps run workflows/main.aaps --project . --json</code></pre>
               <li>Pause before/after named steps, continue paused runs, and queue human-review checkpoints for approval.</li>
               <li>Record `resolved_workflow.json`, `execution_plan.json`, `run.json`, events, logs, artifacts, repair notes, and reports.</li>
               <li>Use report recap blocks to summarize inputs, method comparisons, agent decisions, handoff prompts, logs, final outputs, and limitations.</li>
+              <li>Patch existing manifestations during chat refinements; create new scripts or blocks only for missing components or explicit new-artifact requests.</li>
+              <li>Make image-mask handoffs explicit: source-image reference policy, colored instance-mask output, no embedded text/labels, and verifier-gated integration.</li>
               <li>Feed parser diagnostics back to agents until `.aaps` files parse cleanly before reporting completion.</li>
               <li>Run workflows, dry-runs, or selected blocks from CLI or Studio.</li>
             </ul>
