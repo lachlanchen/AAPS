@@ -129,7 +129,7 @@ For biology, this means segmentation is modeled as inspect image -> build priors
 
 AAPS includes default guidance for building reusable blocks without making block design completely free-form. Run `aaps guide blocks` for the full guide and examples.
 
-Default archetypes include intent/context, input discovery, QC guard, method/tool/agent router, loop/batch, code or script action, agent action, agent handoff chain, validation/recovery, and report/artifact blocks. Custom blocks are encouraged, but they should still declare typed inputs, outputs, executable actions or agent prompts, environment/tool requirements, validations, recovery, artifacts, and review checkpoints. Agent handoff chains should carry source artifacts, QC findings, failure reasons, high-quality prompts, expected schemas, and verification criteria across Codex, AgInTiFlow, image-generation agents, and verifier agents. See [docs/block-design.md](docs/block-design.md).
+Default archetypes include intent/context, input discovery, QC guard, method/tool/agent router, loop/batch, code or script action, agent action, agent handoff chain, validation/recovery, and report recap/artifact blocks. Custom blocks are encouraged, but they should still declare typed inputs, outputs, executable actions or agent prompts, environment/tool requirements, validations, recovery, artifacts, and review checkpoints. Agent handoff chains should carry source artifacts, QC findings, failure reasons, high-quality prompts, expected schemas, and verification criteria across Codex, AgInTiFlow, image-generation agents, and verifier agents. Report recap blocks should consume input evidence, method comparisons, QC decisions, handoff packets, logs, validation summaries, checkpoints, and final artifacts. See [docs/block-design.md](docs/block-design.md) and [docs/report-paradigm.md](docs/report-paradigm.md).
 
 ## Examples
 
@@ -177,13 +177,13 @@ aaps webapp disable                     # persistently disable automatic Studio 
 aaps webapp enable                      # re-enable automatic Studio startup
 aaps webapp stop --project .            # stop the local Studio on the selected port
 aaps webapp restart --project .         # stop and relaunch Studio for the same project
-aaps chat --project . --session default # synced CLI/Studio chat with Ctrl-J multiline, /sessions, /webapp, /parse, /compile, /run
+aaps chat --project . --session default # synced CLI/Studio chat with Ctrl-J multiline, /sessions, /webapp, /parse, /manifest, /run
 aaps                                    # same as aaps chat
 aaps studio --project .                 # foreground Studio server
 aaps update                             # update a global npm install when a newer release exists
 ```
 
-`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/compile`, `/check`, `/run`, `/webapp start|stop|restart|reuse|enable|disable|status`, `/session <id>`, `/sessions`, `/history`, and `/backend codex|aginti|print`. Plain messages use the running Studio backend when available, so the terminal and web UI share the same named session history. Open Studio with `?session=<id>` or pick the session from the Studio dropdown to see the same transcript. Studio also has a `+ New` session button that asks for a session name and working path; that cwd is stored and passed to AgInTi/Codex for backend calls. AAPS stores session metadata in each project’s `.aaps-work/aaps-sessions.sqlite`, including session id, friendly name, project root, command cwd, active `.aaps` file, backend, provider, agent session id, timestamps, and history path. In a real terminal it supports Ctrl-J for multiline prompts, ignores Ctrl-J on an empty prompt, and uses Up/Down for prompt history or multi-line cursor movement.
+`aaps chat` is an AAPS-specific interactive shell, not a generic AgInTiFlow clone. It keeps the same project scope while exposing AAPS actions: `/files`, `/status`, `/parse`, `/manifest`, `/compile`, `/check`, `/run`, `/webapp start|stop|restart|reuse|enable|disable|status`, `/session <id>`, `/sessions`, `/history`, and `/backend codex|aginti|print`. Plain messages use the running Studio backend when available, so the terminal and web UI share the same named session history. Open Studio with `?session=<id>` or pick the session from the Studio dropdown to see the same transcript. Studio also has a `+ New` session button that asks for a session name and working path; that cwd is stored and passed to AgInTi/Codex for backend calls. AAPS stores session metadata in each project’s `.aaps-work/aaps-sessions.sqlite`, including session id, friendly name, project root, command cwd, active `.aaps` file, backend, provider, agent session id, timestamps, and history path. In a real terminal it supports Ctrl-J for multiline prompts, ignores Ctrl-J on an empty prompt, and uses Up/Down for prompt history or multi-line cursor movement.
 
 Direct prompt handoff:
 
@@ -194,7 +194,7 @@ aaps prompt "Use AgInTiFlow to repair this project" --backend aginti --project .
 aaps prompt "Draft the workflow only" --backend print --project .
 ```
 
-By default, direct prompts prepare an AAPS backend-agent handoff and invoke Codex when it is available. Use `--backend aginti` to route the same AAPS handoff through AgInTiFlow, or `--backend print` / `--print-prompt` to save and inspect the generated prompt without running an agent. AAPS resolves `codex` and `aginti` through `AAPS_CODEX_BIN` / `AAPS_AGINTI_BIN`, login-shell lookup, npm global prefix, and common Homebrew/npm/nvm/fnm/bun/volta paths, so macOS GUI-launched or npm-launched sessions do not depend only on the current minimal PATH. This keeps AAPS usable as a declarative workflow layer while letting Codex or AgInTiFlow act as implementation backends for prompt-level tasks.
+By default, direct prompts prepare an AAPS backend-agent handoff and invoke Codex when it is available. Use `--backend aginti` to route the same AAPS handoff through AgInTiFlow, or `--backend print` / `--print-prompt` to save and inspect the generated prompt without running an agent. Use `--codex-session <id>` or `--codex-resume-last` when a long manifestation should reuse a Codex exec session instead of a one-shot ephemeral call. AAPS resolves `codex` and `aginti` through `AAPS_CODEX_BIN` / `AAPS_AGINTI_BIN`, login-shell lookup, npm global prefix, and common Homebrew/npm/nvm/fnm/bun/volta paths, so macOS GUI-launched or npm-launched sessions do not depend only on the current minimal PATH. This keeps AAPS usable as a declarative workflow layer while letting Codex or AgInTiFlow act as implementation backends for prompt-level tasks.
 
 The handoff prompt includes three explicit CLI routes: installed `aaps`, Docker-safe `npx -y @lazyingart/aaps@<version>` when package installs/network are approved, and a host/source `node scripts/aaps.js` fallback only when that path is visible inside the active sandbox.
 
@@ -203,7 +203,7 @@ The package is published as `@lazyingart/aaps`. Future releases use GitHub Actio
 Studio tabs:
 
 - **Bottom Chat Dock**: available on every tab. It routes messages through the selected backend agent and keeps the transcript behind the History button.
-- **Project**: first tab. Create a starter topic workspace, edit `aaps.project.json`, browse `.aaps` and script files, configure Codex/DeepSeek/AgInTiFlow backend settings, run compile checks, copy a tmux command, and dry-run or run the active workflow.
+- **Project**: first tab. Create a starter topic workspace, edit `aaps.project.json`, browse `.aaps` and script files, configure Codex/DeepSeek/AgInTiFlow backend settings, run manifest checks, copy a tmux command, and dry-run or run the active workflow.
 - **Blocks**: create reusable blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions with preview artifacts.
 - **Programs**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
 
@@ -219,18 +219,19 @@ AAPS_MOCK_CODEX=1 npm run studio
 
 ## Executable Runtime
 
-AAPS separates parse, compile, plan, and execute:
+AAPS separates parse, manifest/compile, plan, and execute:
 
 ```text
-.aaps -> parser -> unresolved IR -> AAPSCompiler -> resolved IR -> execution plan -> readiness check -> runtime -> validation/recovery/report
+.aaps -> parser -> unresolved IR -> AAPSCompiler/manifest -> resolved IR -> execution plan -> readiness check -> runtime -> validation/recovery/report
 ```
 
-The parser is deterministic and does not invent missing code. The compiler can run in `check`, `suggest`, `apply`, `interactive`, or `force` mode. It detects missing imports, blocks, scripts, tools, agents, binaries, Python packages, and inputs. In safe apply mode it can create missing local block files, Python scripts, requirements entries, compile artifacts, setup prompts, and Codex prompts without installing packages or deleting user files.
+The parser is deterministic and does not invent missing code. The manifest compiler can run in `check`, `suggest`, `apply`, `interactive`, or `force` mode. It detects missing imports, blocks, scripts, tools, agents, binaries, Python packages, and inputs. In safe apply mode it can create missing local block files, Python scripts, requirements entries, manifest artifacts, setup prompts, and Codex prompts without installing packages or deleting user files.
 
 CLI examples:
 
 ```bash
 node scripts/aaps.js compile workflows/main.aaps --project . --mode check --json
+node scripts/aaps.js manifest workflows/main.aaps --project . --mode check --json
 node scripts/aaps.js compile workflows/main.aaps --project . --mode suggest --json
 node scripts/aaps.js compile workflows/main.aaps --project . --mode apply --json
 node scripts/aaps.js missing workflows/main.aaps --project . --json

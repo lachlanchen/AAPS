@@ -1685,7 +1685,9 @@ function usage() {
   return [
     "Usage:",
     "  aaps-compiler compile <file> --project . [--mode check|suggest|apply|interactive|force] [--json]",
+    "  aaps-compiler manifest <file> --project . [--mode check|suggest|apply|interactive|force] [--json]",
     "  aaps-compiler compile-project --project . [--mode check|suggest|apply] [--json]",
+    "  aaps-compiler manifest-project --project . [--mode check|suggest|apply] [--json]",
     "  aaps-compiler missing <file> --project . [--json]",
     "  aaps-compiler generate-block <name> --project . [--mode apply] [--json]",
     "  aaps-compiler generate-script <name-or-path> --project . [--mode apply] [--json]",
@@ -1694,7 +1696,7 @@ function usage() {
 }
 
 function printHuman(report) {
-  console.log(`AAPS compile ${report.compileId}: ${report.status}`);
+  console.log(`AAPS manifest ${report.compileId}: ${report.status}`);
   console.log(`Project: ${report.project.name}`);
   console.log(`File: ${report.file || "(none)"}`);
   console.log(`Compile dir: ${report.compileDir}`);
@@ -1719,7 +1721,7 @@ function main() {
     return;
   }
   let report;
-  if (command === "compile" || command === "missing" || command === "prepare-setup") {
+  if (command === "compile" || command === "manifest" || command === "missing" || command === "prepare-setup") {
     const file = positional[0] || options.file;
     if (!file && !options.source) throw new Error(`${command} requires a .aaps file or --source.`);
     report = compile({ ...options, file, mode: command === "missing" || command === "prepare-setup" ? "suggest" : options.mode });
@@ -1733,7 +1735,7 @@ function main() {
       console.log(JSON.stringify(payload, null, 2));
       return;
     }
-  } else if (command === "compile-project") {
+  } else if (command === "compile-project" || command === "manifest-project") {
     report = compile({ ...options, mode: options.mode });
   } else if (command === "generate-block") {
     const target = positional[0];

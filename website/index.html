@@ -84,15 +84,15 @@
             <h2>Install AAPS from npm</h2>
             <p>
               AAPS is published as a scoped npm package so one install can provide the parser,
-              compiler/planner, CLI runner, and local Studio server. Release publishing is
+              manifest compiler/planner, CLI runner, and local Studio server. Release publishing is
               configured for GitHub Actions Trusted Publishing, so npm accepts the release
               workflow through OIDC.
             </p>
             <ul class="check-list">
               <li>CLI binary: `aaps`.</li>
               <li>Local webapp: `aaps studio --host 127.0.0.1 --port 8797`.</li>
-            <li>Parser/compiler: `aaps parse`, `aaps compile`, `aaps plan`, `aaps check`, and `aaps validate`.</li>
-              <li>Runtime: `aaps run`, `aaps run-block`, readiness checks, and compile prompts.</li>
+            <li>Parser/manifest: `aaps parse`, `aaps manifest`, `aaps plan`, `aaps check`, and `aaps validate`.</li>
+              <li>Runtime: `aaps run`, `aaps run-block`, readiness checks, and manifest prompts.</li>
               <li>License: Apache-2.0 for research, commercial use, and company-backed development.</li>
               <li>Publisher: GitHub `lachlanchen/AAPS`, workflow `npm-publish.yml`.</li>
             </ul>
@@ -100,7 +100,7 @@
           <pre class="code-card"><code>npm install -g @lazyingart/aaps
 aaps studio --host 127.0.0.1 --port 8797
 aaps parse workflows/main.aaps --project .
-aaps compile workflows/main.aaps --project . --mode check
+aaps manifest workflows/main.aaps --project . --mode check
 aaps check workflows/main.aaps --project .
 aaps run workflows/main.aaps --project . --json</code></pre>
         </div>
@@ -121,7 +121,7 @@ aaps run workflows/main.aaps --project . --json</code></pre>
               tucked behind a History button and colored user/AAPS messages. It supports project file actions, script browsing, block inspection, block-level chat,
               inline/external code editing, environment/tool/agent registry browsing,
               typed ports, artifacts, validations, recovery policies, human review markers,
-              tree visualization, loops, conditions, functional blocks, block readiness, compile reports, setup prompts, and JSON IR preview.
+              tree visualization, loops, conditions, functional blocks, block readiness, manifest reports, setup prompts, and JSON IR preview.
             </p>
             <a class="button button-primary" href="./studio/">Launch Studio</a>
           </div>
@@ -240,7 +240,7 @@ aaps run workflows/main.aaps --project . --json</code></pre>
               <li>Use `import` and `include` to connect project-root relative block and skill files.</li>
               <li>Connect tasks with `after`, branch with `if`, and iterate with `for_each`.</li>
               <li>Mix natural-language prompts, typed artifacts, executable actions, and QC gates.</li>
-              <li>Compile to JSON IR, execution plans, run logs, or Markdown runbooks.</li>
+              <li>Manifest to JSON IR, execution plans, run logs, report recaps, or Markdown runbooks.</li>
             </ul>
           </div>
           <pre class="code-card"><code>pipeline "Ship AAPS Studio" {
@@ -311,7 +311,7 @@ aaps run workflows/main.aaps --project . --json</code></pre>
             <p class="eyebrow">Runtime</p>
             <h2>Readable workflows that can actually run</h2>
             <p>
-              AAPS now separates parse, compile, plan, and execute. The compiler resolves missing
+              AAPS now separates parse, manifest, plan, and execute. The manifest compiler resolves missing
               blocks, scripts, tools, agents, dependencies, setup prompts, and provenance before
               the runtime builds an execution plan. The first runtime executes shell,
               Python, inline Python, Node, npm, agent-prompt, noop, and manual steps, writes stdout/stderr logs,
@@ -320,11 +320,12 @@ aaps run workflows/main.aaps --project . --json</code></pre>
             </p>
             <ul class="check-list">
               <li>Generate `aaps_plan/0.1` from the same parser used by Studio.</li>
-              <li>Run `aaps compile` in check, suggest, apply, interactive, or force mode.</li>
+              <li>Run `aaps manifest` in check, suggest, apply, interactive, or force mode.</li>
               <li>Write `block_readiness.json`, `tool_resolution.json`, and `agent_compile_plan.json`.</li>
               <li>Resolve project imports and expose missing or circular dependency diagnostics.</li>
               <li>Execute `for_each list_files(...)` loops for folder-level image pipelines.</li>
               <li>Record `resolved_workflow.json`, `execution_plan.json`, `run.json`, events, logs, artifacts, repair notes, and reports.</li>
+              <li>Use report recap blocks to summarize inputs, method comparisons, agent decisions, handoff prompts, logs, final outputs, and limitations.</li>
               <li>Run workflows, dry-runs, or selected blocks from CLI or Studio.</li>
             </ul>
           </div>

@@ -25,11 +25,15 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
 7. When agents hand work to other agents or image generators, pass a structured
    handoff packet with source artifacts, QC findings, failure reason,
    high-quality prompt, expected output schema, and verification criteria.
-8. Compile missing implementation beneath the block contract. Do not weaken
+8. Manifest/compile missing implementation beneath the block contract. Do not weaken
    required inputs, outputs, GPU/tool/agent requirements, or validations just to
    pass readiness.
 9. Every block that writes artifacts should also declare how those artifacts are
    validated and where a human or agent can inspect them.
+10. Treat downstream prompts as artifacts. If a block asks Codex, AgInTiFlow, an
+    image generator, or a verifier agent to continue the work, the prompt should
+    include evidence paths, domain priors, QC findings, failure reason, expected
+    schema, constraints, and a verifier checklist.
 
 ## Default Archetypes
 
@@ -52,7 +56,9 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
   Codex, AgInTiFlow, image-generation agents, or other backend agents.
 - **Validation and recovery**: proves outputs exist and are meaningful, then
   retries, falls back, repairs, skips, or asks for review.
-- **Report and artifact**: collects figures, tables, logs, decisions,
-  limitations, and final reports into durable outputs.
+- **Report recap and artifact**: reconstructs the full run from original input,
+  method candidates, QC decisions, agent handoffs, logs, validation summaries,
+  checkpoints, final artifacts, limitations, and publication outputs.
 
 Run `aaps guide blocks` to print the full guide with example `.aaps` snippets.
+Run `aaps guide report` to print the default report-recap paradigm and prompt.

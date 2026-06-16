@@ -102,8 +102,8 @@
             <label>Args <textarea id="field-args" rows="3" placeholder="image_path = data/raw/example.tif"></textarea></label>
             <label>Requirements <textarea id="field-requirements" rows="4" placeholder="command = python3&#10;file = scripts/qc_image.py&#10;tool = threshold_segmentation&#10;agent = codex_repair_agent"></textarea></label>
             <label>Environment <textarea id="field-environment" rows="3" placeholder="python = python3&#10;setup = python3 -m venv .venv"></textarea></label>
-            <label>Compile Agent <input id="field-compile-agent" placeholder="codex_repair_agent" /></label>
-            <label>Compile Prompt <textarea id="field-compile-prompt" rows="3" placeholder="Create project-local code or setup prompts when this block is missing scripts/tools."></textarea></label>
+            <label>Manifest Agent <input id="field-compile-agent" placeholder="codex_repair_agent" /></label>
+            <label>Manifest Prompt <textarea id="field-compile-prompt" rows="3" placeholder="Create project-local code or setup prompts when this block is missing scripts/tools."></textarea></label>
             <label>Action Code <textarea id="field-code" rows="8" placeholder="Python inline code, shell script notes, or loaded external script preview"></textarea></label>
             <label>Run Commands <textarea id="field-run" rows="3" placeholder="npm test"></textarea></label>
             <label>Validation Rules <textarea id="field-validations" rows="3" placeholder="output file exists"></textarea></label>
@@ -187,7 +187,7 @@
             <div id="program-active-summary" class="program-active-summary">No active program loaded.</div>
             <div class="form-actions">
               <button id="program-load-btn" type="button">Load Program</button>
-              <button id="program-compile-btn" type="button">Compile</button>
+              <button id="program-compile-btn" type="button">Manifest</button>
               <button id="program-dry-run-btn" type="button">Dry Run</button>
               <button id="program-run-btn" type="button">Run</button>
               <button id="program-edit-selected-btn" type="button">Edit Selected in Blocks</button>
@@ -246,8 +246,8 @@
               <button id="validate-project-btn" type="button">Validate</button>
               <button id="save-project-btn" type="button">Save Manifest</button>
               <button id="compile-check-btn" type="button">Check Missing</button>
-              <button id="compile-suggest-btn" type="button">Compile</button>
-              <button id="compile-apply-btn" type="button">Apply Safe Compile</button>
+              <button id="compile-suggest-btn" type="button">Manifest</button>
+              <button id="compile-apply-btn" type="button">Apply Safe Manifest</button>
               <button id="save-active-file-btn" type="button">Save Active File</button>
               <button id="dry-run-active-file-btn" type="button">Dry Run</button>
               <button id="run-active-file-btn" type="button">Run</button>
@@ -313,7 +313,7 @@
                 </label>
                 <label class="settings-check">
                   <input id="auto-compile-after-chat" type="checkbox" />
-                  <span>Auto compile after chat edits</span>
+                  <span>Auto manifest after chat edits</span>
                 </label>
                 <label class="settings-check">
                   <input id="agent-context-pack" type="checkbox" />
@@ -377,8 +377,8 @@
         <section class="panel project-structure-panel">
           <div class="panel-head">
             <div>
-              <h2>Compile / Runtime</h2>
-              <p>Compile resolves missing blocks, scripts, tools, agents, and setup prompts before dry-runs or real runs.</p>
+              <h2>Manifest / Runtime</h2>
+              <p>Manifest resolves missing blocks, scripts, tools, agents, and setup prompts before dry-runs or real runs.</p>
             </div>
             <span id="run-status">idle</span>
           </div>
@@ -466,7 +466,7 @@
           <label>Inputs <textarea id="skill-edit-inputs" rows="5" placeholder="image_dir:dir&#10;output_root:dir"></textarea></label>
           <label>Outputs <textarea id="skill-edit-outputs" rows="5" placeholder="masks:dir&#10;metrics_csv:file"></textarea></label>
           <label>Requirements <textarea id="skill-edit-requirements" rows="5" placeholder="pythonPackages = numpy, pillow&#10;commands = python3"></textarea></label>
-          <label class="wide">Compile Prompt <textarea id="skill-edit-compile-prompt" rows="4" placeholder="Tell the backend agent how to implement missing scripts/tools for this skill."></textarea></label>
+          <label class="wide">Manifest Prompt <textarea id="skill-edit-compile-prompt" rows="4" placeholder="Tell the backend agent how to implement missing scripts/tools for this skill."></textarea></label>
         </div>
         <section class="skill-chat-inline">
           <h3>Skill Chat</h3>
@@ -507,7 +507,7 @@
           <label>Args <textarea id="node-detail-args" rows="4"></textarea></label>
           <label>Requirements <textarea id="node-detail-requirements" rows="4"></textarea></label>
           <label>Environment <textarea id="node-detail-environment" rows="4"></textarea></label>
-          <label class="wide">Compile Prompt <textarea id="node-detail-compile-prompt" rows="4"></textarea></label>
+          <label class="wide">Manifest Prompt <textarea id="node-detail-compile-prompt" rows="4"></textarea></label>
           <label class="wide">Action Code <textarea id="node-detail-code" rows="6"></textarea></label>
           <label>Run Commands <textarea id="node-detail-run" rows="4"></textarea></label>
           <label>Validation Rules <textarea id="node-detail-validations" rows="4"></textarea></label>

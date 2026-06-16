@@ -8,7 +8,7 @@ Current parser target: `aaps_ir/0.2`.
 
 Project manifest target: `aaps_project/0.1`. Multi-file projects use `aaps.project.json` plus project-root relative `.aaps` files. See [project-management.md](project-management.md).
 
-Compile target: `aaps_compile_report/0.1`. The compiler is a separate phase after parsing and before planning/execution. It resolves missing project-local blocks, scripts, tools, agents, dependencies, setup prompts, and provenance without making parsing nondeterministic. See [compiler.md](compiler.md).
+Manifest/compile target: `aaps_compile_report/0.1`. The manifest compiler is a separate phase after parsing and before planning/execution. It resolves missing project-local blocks, scripts, tools, agents, dependencies, setup prompts, and provenance without making parsing nondeterministic. See [compiler.md](compiler.md). `aaps manifest` is the preferred user-facing command; `aaps compile` remains a compatibility alias.
 
 ## Design Goals
 

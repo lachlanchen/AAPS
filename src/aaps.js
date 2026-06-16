@@ -20,6 +20,9 @@
     "archives",
     "references",
   ];
+  function quoteAaps(value) {
+    return `"${String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
   const BLOCK_DESIGN_PRINCIPLES = [
     "Respect AAPS grammar first: use pipeline, agent, block, skill, task, stage, method, action, guard, choose, if, else, for_each, typed input/output, exec, validate, retry, fallback, repair, recover, review, and artifact declarations.",
     "Treat every reusable block as a contract: purpose, typed inputs, typed outputs, parameters, environment, tools, agents, scripts, executable actions, validations, recovery policy, artifacts, and review expectations.",
@@ -31,6 +34,21 @@
     "Compile missing implementation beneath the block contract. Do not weaken required inputs, outputs, GPU/tool/agent requirements, or validations just to pass readiness.",
     "Every block that writes artifacts should also declare how those artifacts are validated and where a human or agent can inspect them.",
   ];
+  const REPORT_RECAP_PRINCIPLES = [
+    "A report block is an execution recap, not a loose conclusion: it should reconstruct the task from input goal through intermediate decisions to final artifacts.",
+    "Report inputs should include source artifacts, method comparison outputs, QC/agent decisions, run manifests, logs, validation summaries, handoff packets, and final artifact indexes.",
+    "Report prompts should require evidence-backed statements: cite paths, run IDs, checkpoint IDs, selected methods, rejected methods, fallbacks, and remaining limitations.",
+    "For agentic workflows, the report should document the agent chain: who inspected, what evidence they used, what they handed off, what schema was expected, who verified, and what was accepted.",
+    "If an external agent or image generator was not actually called, record a prepared handoff/template truthfully instead of claiming generated results.",
+    "Publication-oriented reports should write durable TeX/PDF or Markdown/HTML plus an artifact index that Studio can open and future runs can compare.",
+  ];
+  const REPORT_RECAP_PROMPT = [
+    "Write a complete AAPS execution recap from evidence, not memory.",
+    "Include the original user goal, input files, project/workflow identity, parse/manifest/check/run status, method candidates, QC metrics, agent decisions, handoff packets, final outputs, validation results, logs, checkpoints, and limitations.",
+    "Compare deterministic methods, model/agent methods, and fallbacks with figure/table references.",
+    "For each agent handoff, record source artifacts, observed defects, failure reason, high-quality downstream prompt, expected output schema, verification rubric, and final verifier decision.",
+    "Do not claim an agent generated an artifact unless a run log and declared output prove it.",
+  ].join(" ");
   const BLOCK_ARCHETYPES = [
     {
       id: "intent_context",
@@ -219,17 +237,26 @@
     },
     {
       id: "report_artifact",
-      title: "Report and Artifact Block",
-      purpose: "Collect results, figures, tables, logs, decisions, and limitations into durable outputs.",
-      useWhen: "A user needs a PDF/TeX/Markdown/HTML report, artifact index, or publication-ready summary.",
-      contract: ["input verified artifacts", "output report", "output artifact_index:json", "compile log", "validate nonempty"],
+      title: "Report Recap and Artifact Block",
+      purpose: "Reconstruct the whole run from inputs, intermediate decisions, logs, agent handoffs, validations, and final outputs.",
+      useWhen: "A user needs a PDF/TeX/Markdown/HTML report, artifact index, publication-ready summary, or debug recap.",
+      contract: ["input source artifacts", "input method comparisons", "input agent decisions", "input run logs", "output report", "output artifact_index:json", "validate nonempty"],
       snippet: [
         "block build_report {",
         "  input artifact_root: folder required = \"artifacts\"",
+        "  input run_log: file = \"runs/latest/run.json\"",
+        "  input agent_decisions: json = \"artifacts/agent_decisions.json\"",
+        "  input handoff_packets: folder = \"artifacts/agent_handoffs\"",
         "  output report_tex: tex = \"publications/report.tex\"",
         "  output report_pdf: pdf = \"publications/report.pdf\"",
         "  output artifact_index: json = \"publications/artifacts.json\"",
+        "  compile_agent \"codex_report_agent\"",
+        `  compile_prompt ${quoteAaps(REPORT_RECAP_PROMPT)}`,
         "  exec python_script \"scripts/build_report.py\"",
+        "  arg artifact_root = \"${input.artifact_root}\"",
+        "  arg run_log = \"${input.run_log}\"",
+        "  arg agent_decisions = \"${input.agent_decisions}\"",
+        "  arg handoff_packets = \"${input.handoff_packets}\"",
         "  validate nonempty \"${output.report_tex}\"",
         "  validate nonempty \"${output.report_pdf}\"",
         "  validate json \"${output.artifact_index}\"",
@@ -256,6 +283,25 @@
     });
     lines.push("", "Custom blocks are allowed, but they should still state their contract, evidence, and recovery behavior.");
     return lines.join("\n");
+  }
+
+  function reportParadigmMarkdown() {
+    return [
+      "# AAPS Report Recap Paradigm",
+      "",
+      "AAPS reports should be generated from the project evidence stream: source inputs, parsed workflow, manifest/compile reports, execution logs, QC decisions, agent handoffs, validation summaries, and final artifacts.",
+      "",
+      "## Principles",
+      ...REPORT_RECAP_PRINCIPLES.map((item, index) => `${index + 1}. ${item}`),
+      "",
+      "## Default Agent Prompt",
+      "",
+      REPORT_RECAP_PROMPT,
+      "",
+      "## Minimal Contract",
+      "",
+      "A serious report block should declare inputs for source data, run logs, method comparisons, agent decisions, and handoff packets; outputs for TeX/PDF or Markdown/HTML; an artifact index; and validations for every durable report output.",
+    ].join("\n");
   }
 
   function unquote(value) {
@@ -2596,8 +2642,11 @@
     PROJECT_VERSION,
     PROJECT_FILE_CATEGORIES,
     BLOCK_DESIGN_PRINCIPLES,
+    REPORT_RECAP_PRINCIPLES,
+    REPORT_RECAP_PROMPT,
     BLOCK_ARCHETYPES,
     blockDesignGuideMarkdown,
+    reportParadigmMarkdown,
     parseAAPS,
     parseAAPSProject,
     serializeAAPS,

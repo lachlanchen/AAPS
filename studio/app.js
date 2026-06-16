@@ -218,16 +218,16 @@ const STUDIO_I18N = {
     projectWorkspaceText: "aaps.project.json describes one topic workspace: workflows, reusable blocks, scripts, tools, agents, data, artifacts, and runs.",
     workspaceFiles: "Workspace Files",
     workspaceFilesText: "Workflows are runnable programs. Blocks/skills are reusable capabilities. Scripts, tools, agents, and environments make blocks executable.",
-    compileRuntime: "Compile / Runtime",
-    compileRuntimeText: "Compile resolves missing blocks, scripts, tools, agents, and setup prompts before dry-runs or real runs.",
+    compileRuntime: "Manifest / Runtime",
+    compileRuntimeText: "Manifest resolves missing blocks, scripts, tools, agents, and setup prompts before dry-runs or real runs.",
     structure: "Structure",
     load: "Load",
     sample: "Sample",
     validate: "Validate",
     saveManifest: "Save Manifest",
     checkMissing: "Check Missing",
-    compile: "Compile",
-    applyCompile: "Apply Safe Compile",
+    compile: "Manifest",
+    applyCompile: "Apply Safe Manifest",
     saveActive: "Save Active File",
     dryRun: "Dry Run",
     run: "Run",
@@ -576,7 +576,7 @@ function renderRuntime(record) {
       <div class="project-kpi"><strong>${plan.executableSteps || 0}</strong>exec</div>
       <div class="project-kpi"><strong>${failed}</strong>failed</div>
       <div class="project-kpi"><strong>${readyBlocks}/${(readiness.blocks || []).length || 0}</strong>ready</div>
-      <div class="project-kpi"><strong>${compileRequests}</strong>compile prompts</div>
+      <div class="project-kpi"><strong>${compileRequests}</strong>manifest prompts</div>
     </div>
     <div>${escapeHtml(result.runDir || "")}</div>
   `;
@@ -587,7 +587,7 @@ function renderRuntime(record) {
 function renderCompile(record) {
   if (!record) {
     lastCompileResult = null;
-    compileSummaryEl.innerHTML = "<div>No compile has started.</div>";
+    compileSummaryEl.innerHTML = "<div>No manifest has started.</div>";
     compileLogEl.textContent = "";
     return;
   }
@@ -597,7 +597,7 @@ function renderCompile(record) {
   const written = [...(result.generatedFiles || []), ...(result.modifiedFiles || [])].filter((item) => item.written);
   const prompts = (result.agentPrompts || []).length + (result.setupPrompts || []).length;
   compileSummaryEl.innerHTML = `
-    <div><strong>Compile ${escapeHtml(record.id || result.compileId || "")}</strong> · ${escapeHtml(record.status || result.status || "unknown")} · ${escapeHtml(result.mode || record.mode || "")}</div>
+    <div><strong>Manifest ${escapeHtml(record.id || result.compileId || "")}</strong> · ${escapeHtml(record.status || result.status || "unknown")} · ${escapeHtml(result.mode || record.mode || "")}</div>
     <div class="project-kpis">
       <div class="project-kpi"><strong>${missing.length}</strong>missing</div>
       <div class="project-kpi"><strong>${written.length}</strong>written</div>
@@ -611,7 +611,7 @@ function renderCompile(record) {
             .slice(0, 8)
             .map((item) => `<li>${escapeHtml(item.type)}: ${escapeHtml(item.name || item.expected || "")}</li>`)
             .join("")}</ul>`
-        : "<div>Compile status is ready for planning and execution.</div>"
+        : "<div>Manifest status is ready for planning and execution.</div>"
     }
   `;
   compileLogEl.textContent = JSON.stringify(result, null, 2);
@@ -2114,7 +2114,7 @@ function renderNodeDetailInspector(node) {
       </div>
     </section>
     <section class="node-detail-section">
-      <h3>Compile Contract</h3>
+      <h3>Manifest Contract</h3>
       <p><strong>Agent:</strong> ${escapeHtml(node.compile?.agent || "(inherit/default)")}</p>
       <pre>${escapeHtml(node.compile?.prompt || "No compile prompt declared.")}</pre>
     </section>
@@ -3088,7 +3088,7 @@ function localChatEdit(text) {
     startCompile(mode).catch((error) => {
       compileLogEl.textContent = error.message;
     });
-    return `Started an AAPS ${mode} compile for the active workflow.`;
+    return `Started an AAPS ${mode} manifest for the active workflow.`;
   }
   match = raw.match(/^rename pipeline\s+(.+)$/i);
   if (match) {
@@ -3504,7 +3504,7 @@ async function pollRun(id) {
 
 async function pollCompile(id) {
   const response = await fetch(`/api/aaps/compile?id=${encodeURIComponent(id)}`);
-  if (!response.ok) throw new Error(`compile status returned ${response.status}`);
+  if (!response.ok) throw new Error(`manifest status returned ${response.status}`);
   const record = await response.json();
   renderCompile(record);
   if (record.status === "running") {
@@ -3515,7 +3515,7 @@ async function pollCompile(id) {
     }, 1200);
   } else {
     loadArtifacts(projectPathEl.value || ".").catch(() => {});
-    addMessage("assistant", `AAPS compile ${id} ${record.status}.`);
+    addMessage("assistant", `AAPS manifest ${id} ${record.status}.`);
   }
 }
 
@@ -3526,7 +3526,7 @@ async function startCompile(mode = "check", projectWide = false) {
     throw new Error(manifest.error);
   }
   const file = manifest.activeFile || manifest.defaultMain || "pipeline.aaps";
-  compileSummaryEl.innerHTML = `<div>Starting ${mode} compile...</div>`;
+  compileSummaryEl.innerHTML = `<div>Starting ${mode} manifest...</div>`;
   compileLogEl.textContent = "";
   const response = await fetch("/api/aaps/compile", {
     method: "POST",
@@ -3780,7 +3780,7 @@ function prepareRepairPrompt() {
     "## Environment",
     environmentLines(node.environment || {}) || "(none)",
     "",
-    "## Compile Agent",
+    "## Manifest Agent",
     node.compile?.agent || "(none)",
     "",
     "## Validations",
@@ -4214,7 +4214,7 @@ document.getElementById("program-load-btn")?.addEventListener("click", () => {
 document.getElementById("program-compile-btn")?.addEventListener("click", () => {
   const file = programWorkflowSelectEl?.value || selectedProgramFile || selectedWorkflowFile;
   if (file) setManifestActiveFile(file);
-  startCompile("check").catch((error) => addMessage("assistant", `Could not compile selected program: ${error.message}`));
+  startCompile("check").catch((error) => addMessage("assistant", `Could not manifest selected program: ${error.message}`));
 });
 
 document.getElementById("program-dry-run-btn")?.addEventListener("click", () => {
@@ -4267,19 +4267,19 @@ document.getElementById("validate-project-btn").addEventListener("click", () => 
 
 document.getElementById("compile-check-btn").addEventListener("click", () => {
   startCompile("check").catch((error) => {
-    addMessage("assistant", `Could not compile/check active workflow: ${error.message}`);
+    addMessage("assistant", `Could not manifest/check active workflow: ${error.message}`);
   });
 });
 
 document.getElementById("compile-suggest-btn").addEventListener("click", () => {
   startCompile("suggest").catch((error) => {
-    addMessage("assistant", `Could not compile active workflow: ${error.message}`);
+    addMessage("assistant", `Could not manifest active workflow: ${error.message}`);
   });
 });
 
 document.getElementById("compile-apply-btn").addEventListener("click", () => {
   startCompile("apply").catch((error) => {
-    addMessage("assistant", `Could not apply safe compile: ${error.message}`);
+    addMessage("assistant", `Could not apply safe manifest: ${error.message}`);
   });
 });
 

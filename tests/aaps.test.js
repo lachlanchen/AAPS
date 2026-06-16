@@ -144,6 +144,9 @@ const blockGuide = AAPS.blockDesignGuideMarkdown();
 assert(blockGuide.includes("AAPS Block Design Guide"));
 assert(blockGuide.includes("Method, Tool, and Agent Router Block"));
 assert(blockGuide.includes("Agent Handoff Chain Block"));
+assert(AAPS.REPORT_RECAP_PRINCIPLES.length >= 4);
+assert(AAPS.REPORT_RECAP_PROMPT.includes("complete AAPS execution recap"));
+assert(AAPS.reportParadigmMarkdown().includes("AAPS Report Recap Paradigm"));
 const guideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "blocks", "--json", "--no-auto-update"], {
   cwd: path.join(__dirname, ".."),
   encoding: "utf8",
@@ -153,6 +156,25 @@ const guidePayload = JSON.parse(guideCli.stdout);
 assert.strictEqual(guidePayload.ok, true);
 assert(guidePayload.archetypes.some((item) => item.id === "validation_recovery"));
 assert(guidePayload.archetypes.some((item) => item.id === "agent_handoff_chain"));
+const reportGuideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "report", "--json", "--no-auto-update"], {
+  cwd: path.join(__dirname, ".."),
+  encoding: "utf8",
+});
+assert.strictEqual(reportGuideCli.status, 0, reportGuideCli.stderr || reportGuideCli.stdout);
+const reportGuidePayload = JSON.parse(reportGuideCli.stdout);
+assert.strictEqual(reportGuidePayload.ok, true);
+assert.strictEqual(reportGuidePayload.topic, "report");
+assert(reportGuidePayload.markdown.includes("Default Agent Prompt"));
+const manifestAliasSmoke = childProcess.spawnSync(
+  process.execPath,
+  ["scripts/aaps.js", "manifest", "examples/hello.aaps", "--project", ".", "--mode", "check", "--json", "--no-auto-update"],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+  }
+);
+assert.strictEqual(manifestAliasSmoke.status, 0, manifestAliasSmoke.stderr || manifestAliasSmoke.stdout);
+assert.strictEqual(JSON.parse(manifestAliasSmoke.stdout).status, "compiled");
 
 assert.strictEqual(AAPS.PROJECT_VERSION, "aaps_project/0.1");
 assert.strictEqual(AutoUpdate.isNewerVersion("0.4.29", "0.4.28"), true);
@@ -850,7 +872,6 @@ assert(fs.existsSync(path.join(compilerProject, "scripts", "threshold_segment.py
 assert(fs.readFileSync(path.join(compilerProject, "workflows", "main.aaps"), "utf8").includes('import block "blocks/segment_image.aaps"'));
 assert(compileApplyReport.generatedFiles.some((item) => item.file === "scripts/threshold_segment.py" && item.written));
 assert(compileApplyReport.modifiedFiles.some((item) => item.file === "workflows/main.aaps" && item.written));
-
 const parsedCompiledProject = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "parse", "workflows/main.aaps", "--project", ".aaps-work/tests/compiler-project"],

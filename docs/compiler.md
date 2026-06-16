@@ -1,20 +1,20 @@
-# AAPS Agent-Based Compiler
+# AAPS Agent-Based Manifest Compiler
 
-The compiler is the bridge between deterministic parsing and execution. Parsing reads `.aaps` and reports unresolved facts. Compilation decides what is missing, what can be generated safely, what needs setup, and what should be handed to Codex or another agent.
+The manifest compiler is the bridge between deterministic parsing and execution. Parsing reads `.aaps` and reports unresolved facts. Manifestation decides what is missing, what can be generated safely, what needs setup, and what should be handed to Codex or another agent. The CLI keeps `compile` as a compatibility alias, but user-facing docs and Studio prefer `manifest`.
 
 ## Phases
 
 ```text
 .aaps script
 -> parse phase: deterministic IR, diagnostics, imports, unresolved references
--> compile phase: missing component report, generated assets, prompts, resolved IR
+-> manifest/compile phase: missing component report, generated assets, prompts, resolved IR
 -> plan phase: execution order, loops, conditions, actions, validations
 -> execute phase: readiness, block execution, artifacts, recovery, report
 ```
 
-The parse phase never silently invents code. The compile phase may generate safe project-local files only when the mode allows it.
+The parse phase never silently invents code. The manifest/compile phase may generate safe project-local files only when the mode allows it.
 
-## Compile Modes
+## Manifest Modes
 
 - `check`: report missing blocks, scripts, tools, agents, commands, packages, and inputs. No project files are changed.
 - `suggest`: write compile artifacts and prompts, but do not modify the project.
@@ -24,7 +24,7 @@ The parse phase never silently invents code. The compile phase may generate safe
 
 ## Artifacts
 
-Each compile creates `runs/<timestamp>_compile/` with:
+Each manifest creates `runs/<timestamp>_compile/` with:
 
 - `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`
 - `execution_plan.json`, `block_readiness.json`
@@ -38,9 +38,12 @@ Generated file records include timestamp, reason, target path, hash before/after
 
 ```bash
 aaps compile workflows/main.aaps --project . --mode check --json
+aaps manifest workflows/main.aaps --project . --mode check --json
 aaps compile workflows/main.aaps --project . --mode suggest --json
+aaps manifest workflows/main.aaps --project . --mode apply --json
 aaps compile workflows/main.aaps --project . --mode apply --json
 aaps compile-project --project . --mode check
+aaps manifest-project --project . --mode check
 aaps missing workflows/main.aaps --project . --json
 aaps generate-block segment_image --project . --mode apply
 aaps generate-script scripts/threshold_segment.py --project . --mode apply

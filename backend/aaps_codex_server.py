@@ -1164,7 +1164,7 @@ def create_starter_project(body: dict) -> dict:
             indent=2,
         )
         + "\n",
-        "notes/README.md": f"# {name}\n\nGoal: {goal}\n\nUse Studio Project -> Compile before running workflows.\n",
+        "notes/README.md": f"# {name}\n\nGoal: {goal}\n\nUse Studio Project -> Manifest before running workflows.\n",
     }
 
     written: list[str] = []
@@ -2135,7 +2135,9 @@ Rules:
 - Programs should call or reference reusable blocks, and any required block must be discoverable and editable as a project block file.
 - Blocks must be compile-ready: include enough biological/project context, executable action requirements, validations, recovery/review expectations, and declared artifacts for a later compiler or backend agent to implement and self-debug the scripts.
 - When generating or requesting scripts, require a small-preview/test mode, explicit CLI arguments, an output manifest, logs, and validation-friendly CSV/JSON/figure/report outputs.
-- For compile or repair edits, make the missing component explicit and require a follow-up `aaps validate`, `aaps parse`, `aaps check`, and executable run when safe. Difficult implementation repair should route to Codex GPT-5.5 xhigh or an equivalent careful code agent.
+- For manifest/compile or repair edits, make the missing component explicit and require a follow-up `aaps validate`, `aaps parse`, `aaps check`, and executable run when safe. Difficult implementation repair should route to Codex GPT-5.5 xhigh or an equivalent careful code agent.
+- Report blocks are complete recaps, not loose conclusions: they should consume source inputs, method comparisons, QC/agent decisions, handoff packets, run logs, validation summaries, checkpoints, and final artifacts, then write a durable TeX/PDF/Markdown/HTML plus an artifact index.
+- Agent blocks that write prompts for downstream agents must create high-quality prompt artifacts with task goal, evidence paths, QC defects, failure reason, method history, expected schema, constraints, and verifier checklist.
 - Hardware requirements are part of the block contract. If a block declares GPU as required, its implementation must request GPU execution or record an explicit verified fallback; do not silently downgrade to CPU.
 - Do not claim to commit, push, deploy, or execute commands.
 
@@ -2187,7 +2189,9 @@ AAPS v0.2 supports:
 - If the current source is clearly biology and the user asks for a novel/writing pipeline, or vice versa, do not silently overwrite. Ask whether to create a new AAPS/workflow or explicitly override/switch domain.
 - For backend-agent generated blocks/scripts, include self-debug instructions: run a small representative preview, inspect logs, verify declared outputs, and refine until masks/metrics/artifacts are meaningful.
 - For biology segmentation, prefer a clear method route such as Cellpose/multiscale Cellpose when available, and deterministic threshold/morphology fallback when unavailable. Always declare how the compiler/runtime proves the result.
-- For compile/repair conversations, preserve the `.aaps` contract and repair the failing block/script/tool underneath it. If readiness reports a missing script/tool/dependency/GPU contract, name that failure in the response and either edit the source to make the compile target clear or route the repair to Codex GPT-5.5 xhigh.
+- For manifest/compile/repair conversations, preserve the `.aaps` contract and repair the failing block/script/tool underneath it. If readiness reports a missing script/tool/dependency/GPU contract, name that failure in the response and either edit the source to make the manifest target clear or route the repair to Codex GPT-5.5 xhigh.
+- When a user asks for a report, create or refine a report recap block that explicitly consumes logs, method candidates, agent decisions, handoff packets, validation records, and final artifacts. Require it to cite paths and truthfully distinguish executed agent calls from prepared prompt-only handoffs.
+- When a workflow agent will call another agent or image generator, create a durable prompt/handoff artifact first and make the verifier block consume the downstream output through a declared schema.
 - Do not make success claims from chat text alone. A real completion must cite parser/check/run evidence, declared artifacts, or an explicit blocker.
 
 Current source:
@@ -3340,10 +3344,12 @@ Return a concise JSON response matching the requested schema.
 
 Default AAPS agent policy:
 - Work from the `.aaps` program first; it is the source contract.
-- For compile/repair work, use parser/readiness/runtime evidence rather than guessing.
+- For manifest/compile/repair work, use parser/readiness/runtime evidence rather than guessing.
 - Prefer Codex GPT-5.5 xhigh for difficult code generation or implementation repair.
 - Do not weaken requirements to hide missing tools, dependencies, hardware, artifacts, or validations.
 - When an agent must hand a task to another agent or image generator, write a durable handoff packet containing source artifacts, QC findings, failure reason, high-quality prompt, expected output schema, and verification criteria.
+- When an agent writes a downstream prompt, make that prompt itself high quality and artifact-backed: include evidence paths, domain priors, constraints, expected schema, safety rules, and a verifier checklist.
+- Report generation should recap the whole task from inputs through decisions and final outputs using logs and artifacts, not just summarize a final result.
 - Return concrete files, commands, artifacts, or blockers.
 
 Prompt:

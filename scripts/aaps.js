@@ -54,7 +54,9 @@ function usage() {
     "Usage:",
     "  aaps parse <file> [--project .]",
     "  aaps compile <file> [--project .] [--mode check|suggest|apply|interactive|force] [--json]",
+    "  aaps manifest <file> [--project .] [--mode check|suggest|apply|interactive|force] [--json]",
     "  aaps compile-project [--project .] [--mode check|suggest|apply] [--json]",
+    "  aaps manifest-project [--project .] [--mode check|suggest|apply] [--json]",
     "  aaps missing <file> [--project .] [--json]",
     "  aaps generate-block <name> [--project .] [--mode apply] [--json]",
     "  aaps generate-script <name-or-path> [--project .] [--mode apply] [--json]",
@@ -65,7 +67,7 @@ function usage() {
     "  aaps snapshot [--project .] [--label name] [--json]",
     "  aaps checkpoint [--project .] [--label name] [--init-git] [--json]",
     "  aaps versions [--project .] [--limit 120] [--json]",
-    "  aaps guide blocks [--json]",
+    "  aaps guide blocks|report [--json]",
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
@@ -91,6 +93,8 @@ function usage() {
     "  --set <name=value> Override an AAPS input or parameter at runtime; repeatable.",
     "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --backend <name>  Prompt backend for direct goals. Defaults to codex.",
+    "  --codex-session <id> Resume an existing Codex exec session for direct prompts.",
+    "  --codex-resume-last Resume the latest Codex exec session for direct prompts.",
     "  --session <id>    Shared chat session for syncing CLI and Studio. Defaults to default.",
     "  --session-name <name> Friendly name stored in the AAPS session database.",
     "  --label <name>    Version snapshot label for `aaps snapshot`.",
@@ -688,7 +692,7 @@ function buildPromptHandoff(projectDir, goal, options) {
     "4. Prefer editing `.aaps` workflows, blocks, scripts, tool registries, and agent registries before ad hoc prose.",
     "5. Run `aaps validate`, `aaps parse`, `aaps compile ... --mode check`, `aaps check`, and `aaps run ...` when the workflow is executable.",
     "6. Treat parser, compiler, readiness, and validation output as evidence. If `aaps check` reports a missing script/tool/GPU contract/dependency, repair the implementation that violates the contract and rerun the same check.",
-    "7. For implementation repair or code generation, act as a compile agent: use deliberate reasoning, change the smallest project-local files needed, and verify by command and declared artifacts. Codex GPT-5.5 xhigh is appropriate for difficult compile/repair passes.",
+    "7. For implementation repair or code generation, act as a manifest/compile agent: use deliberate reasoning, change the smallest project-local files needed, and verify by command and declared artifacts. Codex GPT-5.5 xhigh is appropriate for difficult manifestation/repair passes.",
     "8. If a step is prompt-only, record it as a handoff unless you actually execute it and verify declared outputs.",
     "9. Save durable reports under `reports/` and durable generated artifacts under project-local folders.",
     "10. Preserve AAPS provenance: before major rewrites, run `aaps snapshot --project . --label before-<change>` and record generated/modified files in logs.",
@@ -703,6 +707,7 @@ function buildPromptHandoff(projectDir, goal, options) {
     "- `.aaps` files are not YAML. Do not write `name:`, `stages:`, YAML arrays, or loose key/value workflow files.",
     "- Use the native AAPS language shape: `pipeline \"Name\" { ... agent ... task ... exec shell \"...\" output ... validate exists \"...\" }`.",
     "- Before claiming success, run `aaps validate <workflow> --project .`, `aaps parse <workflow> --project . --json`, and `aaps compile <workflow> --project . --mode check --json`.",
+    "- `aaps manifest` is the user-facing alias for `aaps compile`. Use manifest language when explaining the phase to humans, and compile language when referencing old commands or JSON fields.",
     "- If parse/validate/compile fails, repair the `.aaps` file and rerun the checks. Do not continue with an invalid workflow.",
     "- If `aaps compile --mode apply` or `aaps check` creates a missing-component report, use the report as the repair target. Repair scripts/tools/registries beneath the contract, then rerun `aaps check`.",
     "- Hardware and environment requirements are part of the contract. For example, a `requires_gpu \"required\"` block must have an implementation that actually requests GPU execution or records an explicit verified fallback; do not silently switch it to CPU.",
@@ -710,6 +715,23 @@ function buildPromptHandoff(projectDir, goal, options) {
     "## Default Block Design Guide",
     "",
     AAPS.blockDesignGuideMarkdown ? AAPS.blockDesignGuideMarkdown({ compact: true }) : "",
+    "",
+    "## Report Recap Paradigm",
+    "",
+    AAPS.reportParadigmMarkdown ? AAPS.reportParadigmMarkdown() : "",
+    "",
+    "## Prompt-Generation Contract",
+    "",
+    "- AAPS agents often need to write prompts for downstream agents inside the workflow. Treat those prompts as executable artifacts.",
+    "- A downstream agent prompt must include task goal, source artifact paths, domain priors, observed QC findings, failure reason, method history, expected output schema, color/format constraints, safety constraints, and verifier checklist.",
+    "- For image generation or mask refinement, include what must remain unchanged, what must be improved, instance/color conventions, allowed output files, and how the next verifier agent will judge success.",
+    "- Save prompt templates or handoff packets under project-local artifacts even when the downstream agent is not called, and mark the status truthfully as prepared/template/not_needed/blocked.",
+    "",
+    "## Manifestation Strategy",
+    "",
+    "- Manifest broad workflows block by block: first make the `.aaps` contract parseable, then generate or repair scripts/tools/prompts for one block, run focused checks, and move to the next block.",
+    "- Prefer a reused backend session for long multi-block manifestation when the caller supplied a Codex session (`--codex-session` or `--codex-resume-last`) or a persistent AgInTi session; otherwise keep the one-shot run self-contained.",
+    "- Record each block manifestation decision in compile/run artifacts so the next block can reuse context without guessing.",
     "",
     "## Scientific Runtime Contract",
     "",
@@ -734,21 +756,36 @@ function buildPromptHandoff(projectDir, goal, options) {
 function codexPromptArgs(projectDir, outputPath, options = {}) {
   const model = String(options.model || options.codexModel || process.env.AAPS_CODEX_MODEL || "gpt-5.5");
   const reasoning = String(options.reasoning || options.codexReasoning || process.env.AAPS_CODEX_REASONING || "xhigh");
-  const args = [
-    "exec",
-    "--ephemeral",
-    "--model",
-    model,
-    "-c",
-    `model_reasoning_effort="${reasoning}"`,
-    "--cd",
-    projectDir,
-    "--output-last-message",
-    outputPath,
-  ];
+  const resumeSession = String(options.codexSession || process.env.AAPS_CODEX_SESSION || "").trim();
+  const resumeLast = Boolean(options.codexResumeLast || process.env.AAPS_CODEX_RESUME_LAST === "1");
+  const args = resumeSession || resumeLast
+    ? [
+        "exec",
+        "resume",
+        "--model",
+        model,
+        "-c",
+        `model_reasoning_effort="${reasoning}"`,
+        "--output-last-message",
+        outputPath,
+      ]
+    : [
+        "exec",
+        "--ephemeral",
+        "--model",
+        model,
+        "-c",
+        `model_reasoning_effort="${reasoning}"`,
+        "--cd",
+        projectDir,
+        "--output-last-message",
+        outputPath,
+      ];
   if (options.codexBypassSandbox || process.env.AAPS_CODEX_BYPASS_SANDBOX === "1") {
     args.push("--dangerously-bypass-approvals-and-sandbox");
   }
+  if (resumeLast) args.push("--last");
+  else if (resumeSession) args.push(resumeSession);
   args.push("-");
   return args;
 }
@@ -771,9 +808,15 @@ function commandPromptWithCodex(projectDir, handoff, payload, options) {
   const outputPath = path.join(projectDir, ".aaps-work", "prompts", `${timestampSlug()}-codex-output.md`);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const args = codexPromptArgs(projectDir, outputPath, options);
+  const codexResumeRequested = Boolean(
+    options.codexSession ||
+      options.codexResumeLast ||
+      process.env.AAPS_CODEX_SESSION ||
+      process.env.AAPS_CODEX_RESUME_LAST === "1"
+  );
   payload.command = [codexCommand.command, ...args];
   payload.backendCommand = { name: "codex", command: codexCommand.command, source: codexCommand.source };
-  payload.handoffMode = "stdin_with_saved_handoff";
+  payload.handoffMode = codexResumeRequested ? "codex_exec_resume_with_saved_handoff" : "stdin_with_saved_handoff";
   payload.outputPath = outputPath;
   payload.outputFile = toProjectPath(path.relative(projectDir, outputPath));
   const auditStartedAtMs = Date.now();
@@ -1044,8 +1087,20 @@ function commandAudit(fileArg, options) {
 
 function commandGuide(topic, options) {
   const subject = String(topic || "blocks").toLowerCase();
+  if (["report", "reports", "reporting", "recap", "artifact-report"].includes(subject)) {
+    const payload = {
+      ok: true,
+      topic: "report",
+      principles: AAPS.REPORT_RECAP_PRINCIPLES || [],
+      prompt: AAPS.REPORT_RECAP_PROMPT || "",
+      markdown: AAPS.reportParadigmMarkdown ? AAPS.reportParadigmMarkdown() : "",
+    };
+    if (options.json) print(payload, true);
+    else print(payload.markdown, false);
+    return;
+  }
   if (!["block", "blocks", "block-design", "design"].includes(subject)) {
-    throw new Error(`Unknown AAPS guide topic: ${topic}. Supported topic: blocks.`);
+    throw new Error(`Unknown AAPS guide topic: ${topic}. Supported topics: blocks, report.`);
   }
   const payload = {
     ok: true,
@@ -1345,7 +1400,8 @@ function chatHelp() {
     "  /files                  List project .aaps files.",
     "  /validate [file]        Validate the project or selected file.",
     "  /parse <file>           Parse a .aaps file.",
-    "  /compile <file> [mode]  Compile/check/apply a .aaps file.",
+    "  /manifest <file> [mode] Manifest/check/apply a .aaps file.",
+    "  /compile <file> [mode]  Alias for /manifest.",
     "  /check <file>           Compile check shortcut.",
     "  /run <file>             Run a .aaps file.",
     "  /backend <name>         Set prompt backend: codex, aginti, or print.",
@@ -1542,6 +1598,7 @@ const SLASH_COMMANDS = [
   "/files",
   "/validate",
   "/parse",
+  "/manifest",
   "/compile",
   "/check",
   "/run",
@@ -2010,9 +2067,9 @@ async function startChat(options) {
       else runCliAndPrint(projectDir, ["parse", words[1], "--project", "."]);
       return false;
     }
-    if (line.startsWith("/compile") || line.startsWith("/check")) {
+    if (line.startsWith("/manifest") || line.startsWith("/compile") || line.startsWith("/check")) {
       const words = splitCliWords(line);
-      if (!words[1]) printAapsMessage("Usage: /compile <file> [check|suggest|apply|force]");
+      if (!words[1]) printAapsMessage("Usage: /manifest <file> [check|suggest|apply|force]");
       else runCliAndPrint(projectDir, ["compile", words[1], "--project", ".", "--mode", line.startsWith("/check") ? "check" : words[2] || "check"]);
       return false;
     }
@@ -2088,7 +2145,9 @@ async function main() {
     "update",
     "upgrade",
     "compile",
+    "manifest",
     "compile-project",
+    "manifest-project",
     "missing",
     "generate-block",
     "generate-script",
@@ -2184,8 +2243,8 @@ async function main() {
     await startChat(options);
     return;
   }
-  if (["compile", "compile-project", "missing", "generate-block", "generate-script", "prepare-setup"].includes(command)) {
-    runCompiler(command, positional, options);
+  if (["compile", "manifest", "compile-project", "manifest-project", "missing", "generate-block", "generate-script", "prepare-setup"].includes(command)) {
+    runCompiler(command === "manifest" ? "compile" : command === "manifest-project" ? "compile-project" : command, positional, options);
     return;
   }
   if (command === "plan" || command === "check" || command === "run") {

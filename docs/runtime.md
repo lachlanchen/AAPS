@@ -101,17 +101,18 @@ ${tool.name.path}
 ${agent.name.name}
 ```
 
-## Agent-Based Compile Before Execution
+## Agent-Based Manifest Before Execution
 
-Use `aaps compile` before a run when the workflow may reference missing blocks, scripts, tools, agents, binaries, or dependencies:
+Use `aaps manifest` before a run when the workflow may reference missing blocks, scripts, tools, agents, binaries, or dependencies. `aaps compile` remains a compatibility alias:
 
 ```bash
 node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
+node scripts/aaps.js manifest workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
 node scripts/aaps.js compile workflows/main.aaps --project . --mode suggest --json
 node scripts/aaps.js compile workflows/main.aaps --project . --mode apply --json
 ```
 
-Compile modes:
+Manifest modes:
 
 - `check`: detect unresolved components and write compile artifacts.
 - `suggest`: produce setup and agent prompts without editing project files.
@@ -119,7 +120,7 @@ Compile modes:
 - `interactive`: prepare approval-oriented prompts.
 - `force`: overwrite generated targets with backups.
 
-Every compile writes `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs.
+Every manifest writes `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs.
 
 Real execution performs a compile/readiness check first and blocks side effects when required components are unresolved.
 
