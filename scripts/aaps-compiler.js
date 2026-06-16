@@ -1064,6 +1064,18 @@ function setupSuggestionFor(check, projectDir, registries) {
 }
 
 function agentPromptFor(missing, step, projectSummary) {
+  const blockContract = step && step.contract ? step.contract : {};
+  const verificationCommands = [
+    step && step.sourceFile ? `aaps validate ${step.sourceFile} --project . --json` : "",
+    step && step.sourceFile ? `aaps parse ${step.sourceFile} --project . --json` : "",
+    step && step.sourceFile ? `aaps check ${step.sourceFile} --project . --json` : "",
+  ].filter(Boolean);
+  const implementationHint = missing.type === "gpu_contract_mismatch"
+    ? [
+        "The AAPS contract requires GPU execution, but the current implementation contradicts it.",
+        "Do not remove or weaken `requires_gpu`. Repair the implementation so it detects GPU availability, requests GPU execution where available, records whether GPU was requested/available/used, and emits validation-friendly logs/artifacts.",
+      ].join(" ")
+    : "Implement or repair the smallest project-local component that satisfies the declared block contract.";
   return [
     `# AAPS Compile Request: ${missing.name}`,
     "",
@@ -1071,12 +1083,25 @@ function agentPromptFor(missing, step, projectSummary) {
     `Required by block: ${missing.block || "(workflow)"}`,
     `Plan path: ${missing.path || ""}`,
     `Expected path/command: ${missing.expected || missing.path || missing.name || ""}`,
+    `Reason: ${missing.reason || ""}`,
+    `Safe auto-action: ${missing.safeAutoAction || "prompt"}`,
     "",
     "## Project Summary",
     JSON.stringify(projectSummary, null, 2),
     "",
-    "## Desired Result",
-    "Create the smallest safe project-local implementation or setup plan that satisfies the block contract.",
+    "## Compile Objective",
+    implementationHint,
+    "",
+    "The `.aaps` source is the contract. Do not make readiness pass by deleting inputs, outputs, validation rules, tool requirements, agent requirements, or hardware requirements. Repair the component beneath the contract unless the contract is clearly invalid, and if so explain the exact invalid field.",
+    "",
+    "Prefer Codex GPT-5.5 xhigh or an equivalent careful code agent for nontrivial code generation/repair. Generated code should be explicit, project-local, CLI-invocable, logged, and testable with a small representative input.",
+    "",
+    "## Required Implementation Shape",
+    "- Use project-relative files and paths.",
+    "- Prefer external scripts with explicit CLI arguments over hidden globals.",
+    "- Write JSON/CSV/log/figure artifacts that match declared AAPS outputs.",
+    "- Preserve existing user files; overwrite only the target file when the compile report says it is the failing component, and keep a backup if possible.",
+    "- After editing, rerun AAPS parse/check commands and repair until readiness/validation is meaningful.",
     "",
     "## Safety Rules",
     "- Do not delete user files.",
@@ -1085,7 +1110,13 @@ function agentPromptFor(missing, step, projectSummary) {
     "- Ask for approval before downloads, package installation, credentials, or risky shell commands.",
     "",
     missing.suggestedSetupCommand ? `Suggested setup: ${missing.suggestedSetupCommand}` : "",
-    step ? ["", "## Block Contract", JSON.stringify(step.contract || {}, null, 2)].join("\n") : "",
+    step ? ["", "## Block Contract", JSON.stringify(blockContract, null, 2)].join("\n") : "",
+    verificationCommands.length ? ["", "## Verification Commands", ...verificationCommands.map((command) => `- \`${command}\``)].join("\n") : "",
+    "",
+    "## Expected Agent Output",
+    "- Files created or modified.",
+    "- Commands run and their status.",
+    "- Remaining readiness failures, if any.",
   ].filter(Boolean).join("\n");
 }
 
