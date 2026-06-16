@@ -28,7 +28,7 @@ The public product site is `https://aaps.lazying.art`. The broader agent portal 
 
 - `aaps.project.json`: project manifest for this repository.
 - `src/aaps.js`: `aaps_ir/0.2` and `aaps_project/0.1` helpers for deterministic parsing, import diagnostics, execution-plan building, and project validation.
-- `scripts/aaps-compiler.js`: agent-aware compile layer that turns unresolved IR into a resolved workflow report, generated local assets, setup prompts, and Codex prompts.
+- `scripts/aaps-compiler.js`: agent-aware manifest layer (legacy compiler module) that turns unresolved IR into a resolved workflow report, generated local assets, setup prompts, and Codex prompts.
 - `studio/`: AAPS Studio, a three-tab PWA with Block Lab chat, project management, block inspector, block-level code chat, source editing, tree visualization, runtime controls, and IR preview.
 - `backend/`: local Codex wrapper and project filesystem server for `/api/aaps/project`, `/api/aaps/block/chat`, `/api/aaps/run`, `/api/aaps/edit`, and `/api/codex/*`.
 - `website/`: bright landing page deployed by GitHub Pages.
@@ -118,7 +118,7 @@ AAPS keeps a clean boundary between intent and execution:
 
 - Prompts can inspect, decide, and synthesize.
 - Blocks must declare typed inputs, outputs, commands, checks, and artifacts.
-- Functional block contracts can also declare environment requirements, tool/agent dependencies, executable actions, tests, validation, recovery, and compile-agent repair prompts.
+- Functional block contracts can also declare environment requirements, tool/agent dependencies, executable actions, tests, validation, recovery, and manifest-agent (`compile_agent`) repair prompts.
 - Method selection belongs in `choose`, `if`, `else`, `method`, and `guard` blocks.
 - Failure handling belongs in `validate`, `recover`, and `review` statements.
 - Chat follows the LazyBlog pattern: it can reply and route, but source mutation happens through bounded edit actions that reparse and redraw the program.
@@ -209,7 +209,7 @@ Studio tabs:
 
 Local backend settings live in `.env` and `.aaps-work/aaps-settings.json`. Copy `.env.example` to `.env`; keep secrets uncommitted. Codex is the default backend agent. The Studio settings panel can switch to DeepSeek's OpenAI-compatible API or to a persistent AgInTiFlow backend session. Backend switching does not change the selected AAPS workflow, block, or program; Studio sends the same selected source plus a project context pack to the chosen backend.
 
-Agent-backed edits are versioned when `Version and save agent edits automatically` is enabled. The context pack includes AAPS grammar/compiler/runtime excerpts, the project manifest, current artifacts, recent Studio history, selected workflow/program/block, diagnostics, and backend settings so Codex or AgInTiFlow can write compile-ready `.aaps` instead of generic prose.
+Agent-backed edits are versioned when `Version and save agent edits automatically` is enabled. The context pack includes AAPS grammar, manifest/runtime excerpts, the project manifest, current artifacts, recent Studio history, selected workflow/program/block, diagnostics, and backend settings so Codex or AgInTiFlow can write manifest-ready `.aaps` instead of generic prose.
 
 For wrapper smoke tests without model calls:
 
@@ -219,28 +219,28 @@ AAPS_MOCK_CODEX=1 npm run studio
 
 ## Executable Runtime
 
-AAPS separates parse, manifest/compile, plan, and execute:
+AAPS separates parse, manifest (compile), plan, and execute:
 
 ```text
-.aaps -> parser -> unresolved IR -> AAPSCompiler/manifest -> resolved IR -> execution plan -> readiness check -> runtime -> validation/recovery/report
+.aaps -> parser -> unresolved IR -> manifest engine (AAPSCompiler) -> resolved IR -> execution plan -> readiness check -> runtime -> validation/recovery/report
 ```
 
-The parser is deterministic and does not invent missing code. The manifest compiler can run in `check`, `suggest`, `apply`, `interactive`, or `force` mode. It detects missing imports, blocks, scripts, tools, agents, binaries, Python packages, and inputs. In safe apply mode it can create missing local block files, Python scripts, requirements entries, manifest artifacts, setup prompts, and Codex prompts without installing packages or deleting user files.
+The parser is deterministic and does not invent missing code. The manifest engine (compile compatibility layer) can run in `check`, `suggest`, `apply`, `interactive`, or `force` mode. It detects missing imports, blocks, scripts, tools, agents, binaries, Python packages, and inputs. In safe apply mode it can create missing local block files, Python scripts, requirements entries, manifest artifacts, setup prompts, and Codex prompts without installing packages or deleting user files.
 
 CLI examples:
 
 ```bash
-node scripts/aaps.js compile workflows/main.aaps --project . --mode check --json
 node scripts/aaps.js manifest workflows/main.aaps --project . --mode check --json
-node scripts/aaps.js compile workflows/main.aaps --project . --mode suggest --json
-node scripts/aaps.js compile workflows/main.aaps --project . --mode apply --json
+node scripts/aaps.js manifest workflows/main.aaps --project . --mode suggest --json
+node scripts/aaps.js manifest workflows/main.aaps --project . --mode apply --json
+node scripts/aaps.js compile workflows/main.aaps --project . --mode check --json  # legacy alias
 node scripts/aaps.js missing workflows/main.aaps --project . --json
 node scripts/aaps.js generate-block segment_image --project . --mode apply
 node scripts/aaps.js generate-script scripts/threshold_segment.py --project . --mode apply
 node scripts/aaps.js prepare-setup workflows/main.aaps --project . --json
 ```
 
-Compile artifacts are written under `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs.
+Manifest artifacts are written under `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs. The folder and JSON names keep `compile` for compatibility.
 
 AAPS can execute deterministic actions today. Use `run` for shell commands or `exec` for typed actions:
 
@@ -261,7 +261,7 @@ Run locally:
 
 ```bash
 node scripts/aaps.js parse examples/executable_runtime.aaps --project . --json
-node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
+node scripts/aaps.js manifest workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
 node scripts/aaps.js plan examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js check workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
 node scripts/aaps.js run examples/executable_runtime.aaps --project . --json
@@ -271,7 +271,7 @@ node scripts/aaps.js validate --project examples/projects/organoid-analysis --js
 node scripts/aaps.js run workflows/executable_static_check.aaps --project examples/projects/app-development --json
 ```
 
-Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, `agent_compile_plan.json`, stdout/stderr logs, repair/setup prompts, artifacts, and `report.md` under the run directory. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
+Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, an agent manifest plan (`agent_compile_plan.json`), stdout/stderr logs, repair/setup prompts, watchdog status/alerts, artifacts, and `report.md` under the run directory. When a `repair true` block fails, AAPS writes dormant-agent Markdown/JSON repair packets with rerun commands and failure evidence. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
 
 ## Codex Wrapper
 

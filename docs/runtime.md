@@ -3,7 +3,7 @@
 AAPS now includes a minimal real runtime:
 
 ```text
-.aaps -> project-aware parser -> unresolved IR -> agent-based compiler -> resolved IR -> execution plan -> readiness/tool/agent checks -> actions -> logs/artifacts -> validation -> recovery/repair -> report
+.aaps -> project-aware parser -> unresolved IR -> agent-based manifest engine -> resolved IR -> execution plan -> readiness/tool/agent checks -> actions -> logs/artifacts -> validation -> recovery/repair -> report
 ```
 
 The runtime is intentionally conservative. It executes deterministic local actions and records prompt/model-only steps as planned work until a model adapter is attached.
@@ -106,29 +106,29 @@ ${agent.name.name}
 Use `aaps manifest` before a run when the workflow may reference missing blocks, scripts, tools, agents, binaries, or dependencies. `aaps compile` remains a compatibility alias:
 
 ```bash
-node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
 node scripts/aaps.js manifest workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
-node scripts/aaps.js compile workflows/main.aaps --project . --mode suggest --json
-node scripts/aaps.js compile workflows/main.aaps --project . --mode apply --json
+node scripts/aaps.js manifest workflows/main.aaps --project . --mode suggest --json
+node scripts/aaps.js manifest workflows/main.aaps --project . --mode apply --json
+node scripts/aaps.js compile workflows/main.aaps --project . --mode check --json  # legacy alias
 ```
 
 Manifest modes:
 
-- `check`: detect unresolved components and write compile artifacts.
+- `check`: detect unresolved components and write manifest artifacts.
 - `suggest`: produce setup and agent prompts without editing project files.
 - `apply`: create safe local block/script/requirements files and record provenance.
 - `interactive`: prepare approval-oriented prompts.
 - `force`: overwrite generated targets with backups.
 
-Every manifest writes `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs.
+Every manifest writes `runs/<timestamp>_compile/` with `parsed_ir.json`, `unresolved_ir.json`, `resolved_ir.json`, `execution_plan.json`, `block_readiness.json`, `compile_report.json`, `missing_components.json`, generated/modified file records, setup prompts, agent prompts, diffs, and logs. The directory/report names retain `compile` for compatibility.
 
-Real execution performs a compile/readiness check first and blocks side effects when required components are unresolved.
+Real execution performs a manifest/readiness check first and blocks side effects when required components are unresolved.
 
-## Readiness, Tools, Agents, And Compile Prompts
+## Readiness, Tools, Agents, And Manifest Prompts
 
 `aaps check` and every run build a block readiness report before execution. Each block is classified as `ready`, `ready_with_warning`, `missing_input`, `missing_script`, `missing_python_package`, `missing_system_command`, `missing_tool`, `missing_agent`, `invalid_output_path`, or `waiting_for_human_review`.
 
-Readiness checks include required inputs, generated runtime artifacts, loop-deferred variables, script files, Python interpreters, Python packages, system commands, tool registry entries, agent registry entries, and writable output directories. Missing scripts, tools, packages, commands, agents, or inputs are converted into an `agent_compile_plan.json` entry when a block declares `compile_agent` or uses an agent. The generated prompt is intentionally conservative: it asks for project-local code/setup, avoids global installs, and asks before risky changes.
+Readiness checks include required inputs, generated runtime artifacts, loop-deferred variables, script files, Python interpreters, Python packages, system commands, tool registry entries, agent registry entries, and writable output directories. Missing scripts, tools, packages, commands, agents, or inputs are converted into an agent manifest plan (`agent_compile_plan.json` for compatibility) when a block declares `compile_agent` or uses an agent. The generated prompt is intentionally conservative: it asks for project-local code/setup, avoids global installs, and asks before risky changes.
 
 ## Validation
 
@@ -155,9 +155,30 @@ Runtime behavior:
 
 - retries failed actions up to `retry`
 - runs fallback commands or fallback block IDs when declared
-- writes repair request Markdown files when `repair true` and the step still fails
-- writes setup/compile prompts for missing scripts, tools, agents, commands, or packages
+- writes repair request Markdown and JSON packets when `repair true` and the step still fails
+- writes setup/manifest prompts for missing scripts, tools, agents, commands, or packages
 - records all events in `events.jsonl`
+
+Repair packets are dormant-agent contracts. They include the failed block path,
+actions, validations, stdout/stderr log paths, rerun commands, recovery rules,
+and a report-block hint when a TeX/PDF/report generator appears to be the
+failing surface. AAPS does not silently patch code from these packets; Codex,
+AgInTiFlow, or another backend can consume them and then rerun the same parser,
+manifest/check, and focused `run-block` commands.
+
+## Runtime Watchdog
+
+Every non-dry run starts a lightweight watchdog process unless
+`AAPS_DISABLE_RUNTIME_WATCHDOG=1` is set. The watchdog writes:
+
+- `runtime_watchdog.json`: monitor configuration and status path
+- `watchdog/status.json`: latest heartbeat with active step/action
+- `watchdog/alerts.jsonl`: stale-heartbeat alerts
+- `repair_prompts/watchdog-stall-*.md`: dormant repair prompt for stalled runs
+
+The watchdog is conservative. It does not kill processes or edit files by
+itself. It creates evidence for a repair agent to inspect block logs, events,
+artifacts, and process state, then make the smallest safe project-local fix.
 
 ## Run Outputs
 
@@ -173,12 +194,14 @@ runtime/aaps-runs/<run-id>/
   agent_compile_plan.json
   report.md
   events.jsonl
+  runtime_watchdog.json
   block_logs/
   artifacts/
   reports/
   errors/
   repair_prompts/
   setup_prompts/
+  watchdog/
 ```
 
 The pipeline `database` path also receives one JSONL summary per run.
@@ -190,7 +213,7 @@ aaps prompt "Create an executable workflow that writes a durable report." --proj
 aaps "Create an executable workflow that writes a durable report." --project .
 aaps prompt "Prepare the backend prompt only." --backend print --project .
 node scripts/aaps.js parse examples/executable_runtime.aaps --project . --json
-node scripts/aaps.js compile workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
+node scripts/aaps.js manifest workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --mode check --json
 node scripts/aaps.js plan examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js check examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js check-block workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --block segment_image --json
@@ -231,4 +254,4 @@ GET  /api/aaps/compile?id=<compile-id>
 
 - Prompt-only and model/API-only steps are recorded or converted into agent prompt files unless they also declare supported executable actions.
 - Conditional expressions currently support simple truthy values and `exists <path>` checks; richer expression evaluation is still future work.
-- Repair currently creates structured prompts and safe local fallbacks; automatic Codex patch application is intentionally not silent.
+- Repair currently creates structured prompts, watchdog alerts, and safe local fallbacks; automatic Codex patch application is intentionally not silent.

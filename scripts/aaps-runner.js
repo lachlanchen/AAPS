@@ -3,7 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { spawnSync, spawn } = require("child_process");
 const AAPS = require("../src/aaps");
 
 function parseArgs(argv) {
@@ -1168,6 +1168,108 @@ function timeoutMs(step) {
   return value;
 }
 
+function startRuntimeWatchdog(runDir, runId, options = {}) {
+  if (String(process.env.AAPS_DISABLE_RUNTIME_WATCHDOG || "").match(/^(1|true|yes)$/i)) {
+    return { enabled: false, reason: "disabled_by_env" };
+  }
+  const watchdogDir = path.join(runDir, "watchdog");
+  ensureDir(watchdogDir);
+  const statusPath = path.join(watchdogDir, "status.json");
+  const donePath = path.join(watchdogDir, "done");
+  const alertsPath = path.join(watchdogDir, "alerts.jsonl");
+  const repairDir = path.join(runDir, "repair_prompts");
+  const intervalMs = Math.max(1000, Number(options.watchdogIntervalMs || process.env.AAPS_WATCHDOG_INTERVAL_MS || 10000));
+  const stallMs = Math.max(intervalMs * 2, Number(options.watchdogStallMs || process.env.AAPS_WATCHDOG_STALL_MS || 120000));
+  const maxMs = Math.max(stallMs, Number(options.watchdogMaxMs || process.env.AAPS_WATCHDOG_MAX_MS || 24 * 60 * 60 * 1000));
+  const code = `
+const fs = require("fs");
+const path = require("path");
+const statusPath = process.argv[1];
+const donePath = process.argv[2];
+const alertsPath = process.argv[3];
+const repairDir = process.argv[4];
+const intervalMs = Number(process.argv[5]);
+const stallMs = Number(process.argv[6]);
+const maxMs = Number(process.argv[7]);
+const started = Date.now();
+let lastAlertKey = "";
+function readStatus() {
+  try { return JSON.parse(fs.readFileSync(statusPath, "utf8")); }
+  catch { return {}; }
+}
+function appendJsonl(file, item) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, JSON.stringify(item) + "\\n");
+}
+function safeName(text) {
+  return String(text || "run").toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "run";
+}
+function writePrompt(status, ageMs) {
+  fs.mkdirSync(repairDir, { recursive: true });
+  const name = safeName(status.activeStep || status.activeAction || status.state || "run");
+  const promptPath = path.join(repairDir, "watchdog-stall-" + name + ".md");
+  const body = [
+    "# AAPS Watchdog Dormant Repair Agent",
+    "",
+    "The runtime heartbeat for this AAPS run appears stale. Do not assume the run is failed; inspect process state, block logs, artifacts, and events first.",
+    "",
+    "## Run",
+    "- Run ID: " + (status.runId || ""),
+    "- Project: " + (status.project || ""),
+    "- Workflow: " + (status.file || ""),
+    "- Active step: " + (status.activeStep || ""),
+    "- Active action: " + (status.activeAction || ""),
+    "- State: " + (status.state || ""),
+    "- Heartbeat age ms: " + ageMs,
+    "",
+    "## Required repair loop",
+    "1. Inspect events.jsonl, block_logs, stdout/stderr, validation records, and generated artifacts.",
+    "2. If the block is stalled, stop only the specific child process if it is safe and clearly associated with this run.",
+    "3. Repair the smallest project-local workflow, script, tool, or environment issue.",
+    "4. Rerun a focused AAPS command such as \`aaps check\`, \`aaps run-block\`, or the failed report block.",
+    "5. If this is a report block, fix the report generator first; do not hand-edit generated TeX/PDF as the durable solution.",
+    "",
+    "## Last status",
+    "\`\`\`json",
+    JSON.stringify(status, null, 2),
+    "\`\`\`",
+    "",
+  ].join("\\n");
+  fs.writeFileSync(promptPath, body, "utf8");
+  return promptPath;
+}
+const timer = setInterval(() => {
+  if (fs.existsSync(donePath) || Date.now() - started > maxMs) {
+    clearInterval(timer);
+    process.exit(0);
+  }
+  let stat;
+  try { stat = fs.statSync(statusPath); }
+  catch { return; }
+  const ageMs = Date.now() - stat.mtimeMs;
+  if (ageMs < stallMs) return;
+  const status = readStatus();
+  if (["finished", "failed", "succeeded", "blocked"].includes(String(status.state || ""))) return;
+  const key = [status.activeStep || "", status.activeAction || "", status.state || ""].join("|");
+  if (key === lastAlertKey) return;
+  lastAlertKey = key;
+  const promptPath = writePrompt(status, Math.round(ageMs));
+  appendJsonl(alertsPath, { time: new Date().toISOString(), runId: status.runId || "", state: status.state || "", activeStep: status.activeStep || "", activeAction: status.activeAction || "", ageMs: Math.round(ageMs), promptPath });
+}, intervalMs);
+`;
+  try {
+    const child = spawn(process.execPath, ["-e", code, statusPath, donePath, alertsPath, repairDir, String(intervalMs), String(stallMs), String(maxMs)], {
+      cwd: runDir,
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    return { enabled: true, pid: child.pid, statusPath, donePath, alertsPath, intervalMs, stallMs, maxMs };
+  } catch (error) {
+    return { enabled: false, error: error.message };
+  }
+}
+
 function run(options) {
   const projectDir = path.resolve(options.project || ".");
   const manifest = readManifest(projectDir);
@@ -1320,9 +1422,40 @@ function run(options) {
     return blocked;
   }
   const eventsFile = path.join(runDir, "events.jsonl");
+  const watchdog = startRuntimeWatchdog(runDir, runId, options);
+  writeJson(path.join(runDir, "runtime_watchdog.json"), {
+    version: "aaps_runtime_watchdog/0.1",
+    runId,
+    ...watchdog,
+  });
   const results = [];
   const fallbackVisited = new Set();
   const methodSelections = [];
+
+  function touchWatchdog(state, extra = {}) {
+    const watchdogDir = path.join(runDir, "watchdog");
+    ensureDir(watchdogDir);
+    writeJson(path.join(watchdogDir, "status.json"), {
+      version: "aaps_watchdog_status/0.1",
+      time: nowIso(),
+      pid: process.pid,
+      runId,
+      state,
+      file: loaded.file,
+      project: projectDir,
+      block: options.block || "",
+      runDir,
+      eventsFile,
+      ...extra,
+    });
+  }
+
+  function finishWatchdog(state, extra = {}) {
+    touchWatchdog(state, extra);
+    const donePath = path.join(runDir, "watchdog", "done");
+    ensureDir(path.dirname(donePath));
+    fs.writeFileSync(donePath, `${nowIso()} ${state}\n`, "utf8");
+  }
 
   function event(payload) {
     appendJsonl(eventsFile, { time: nowIso(), runId, ...payload });
@@ -1355,16 +1488,67 @@ function run(options) {
     return selection;
   }
 
-  function repairRecord(step, reason) {
+  function repairRecord(step, reason, details = {}) {
     const file = path.join(runDir, "repair_prompts", `${step.id || "step"}-repair.md`);
+    const jsonFile = path.join(runDir, "repair_prompts", `${step.id || "step"}-repair.json`);
+    const reportGuidance = /report|latex|tex|pdf/i.test(`${step.id} ${step.path} ${(step.outputs || []).map((item) => item.type || item.name).join(" ")}`);
+    const packet = {
+      version: "aaps_dormant_repair_agent_packet/0.1",
+      runId,
+      project: projectDir,
+      workflow: loaded.file,
+      step: {
+        id: step.id,
+        path: step.path,
+        kind: step.kind,
+        agent: step.agent || "",
+        repair: Boolean(step.repair),
+        retry: step.retry || 0,
+        fallback: step.fallback || "",
+        recovery: step.recovery || [],
+      },
+      reason,
+      details,
+      commands: {
+        parse: `aaps parse ${loaded.file} --project ${projectDir} --json --no-auto-update`,
+        validate: `aaps validate ${loaded.file} --project ${projectDir} --json --no-auto-update`,
+        checkBlock: `aaps check-block ${loaded.file} --project ${projectDir} --block ${step.id} --json --no-auto-update`,
+        rerunBlock: `aaps run-block ${loaded.file} --project ${projectDir} --block ${step.id} --run-root ${runRoot} --json --no-auto-update`,
+      },
+      reportGuidance: reportGuidance
+        ? "This looks like a report/TeX/PDF block. Prefer fixing the report generator or source data escaping, then rerun the report block. Do not hand-edit generated TeX/PDF as the durable fix unless no generator exists."
+        : "",
+    };
+    writeJson(jsonFile, packet);
     const body = [
       `# Repair Request: ${step.id}`,
       "",
       `Path: ${step.path}`,
       `Reason: ${reason}`,
+      `Run directory: ${runDir}`,
+      `JSON packet: ${jsonFile}`,
       "",
       "## Recovery Rules",
       ...(step.recovery || []).map((item) => `- ${item}`),
+      "",
+      "## Rerun Commands",
+      `- \`${packet.commands.parse}\``,
+      `- \`${packet.commands.validate}\``,
+      `- \`${packet.commands.checkBlock}\``,
+      `- \`${packet.commands.rerunBlock}\``,
+      "",
+      ...(reportGuidance
+        ? [
+            "## Report Block Repair Guidance",
+            packet.reportGuidance,
+            "Inspect LaTeX logs for unescaped underscores, percent signs, dollar signs, raw itemize content, missing figures, and overlong verbatim/text paths.",
+            "",
+          ]
+        : []),
+      "## Failure Evidence",
+      "```json",
+      JSON.stringify(details, null, 2),
+      "```",
       "",
       "## Suggested Repair",
       "Inspect stdout, stderr, declared artifacts, and validation failures. Apply the smallest focused repair, then rerun this step.",
@@ -1431,6 +1615,15 @@ function run(options) {
     const loopSuffix = overrides["loop.index"] !== undefined ? `-${overrides["loop.index"]}` : "";
     const stepSlug = AAPS.slug(`${step.id}${loopSuffix}-${action.id}-${attempt}`, "step");
     const stepContext = contextForStep(step, overrides);
+    touchWatchdog("running_action", {
+      activeStep: step.path,
+      activeAction: action.id,
+      actionType: action.type,
+      attempt,
+      timeoutMs: timeoutMs(step),
+      loop: overrides["loop.index"] ?? null,
+      item: overrides.item || "",
+    });
     const expandedCommand = expand(action.command || "", stepContext);
     const missingVariables = [
       ...unresolvedVariables(action.command || "", stepContext),
@@ -1447,6 +1640,7 @@ function run(options) {
         command: action.command || action.entry || action.type,
       };
       event({ type: "action", step: step.path, action: action.id, attempt, outcome });
+      touchWatchdog("action_failed", { activeStep: step.path, activeAction: action.id, attempt, reason: outcome.stderr });
       return outcome;
     }
     let outcome;
@@ -1497,17 +1691,41 @@ function run(options) {
     fs.writeFileSync(path.join(runDir, "block_logs", `${stepSlug}.stdout.log`), outcome.stdout || "", "utf8");
     fs.writeFileSync(path.join(runDir, "block_logs", `${stepSlug}.stderr.log`), outcome.stderr || "", "utf8");
     event({ type: "action", step: step.path, action: action.id, attempt, outcome });
+    touchWatchdog(outcome.status === "failed" ? "action_failed" : "action_finished", {
+      activeStep: step.path,
+      activeAction: action.id,
+      actionType: action.type,
+      attempt,
+      outcomeStatus: outcome.status,
+      returnCode: outcome.code,
+      command: outcome.command,
+      stdoutLog: path.join(runDir, "block_logs", `${stepSlug}.stdout.log`),
+      stderrLog: path.join(runDir, "block_logs", `${stepSlug}.stderr.log`),
+      loop: overrides["loop.index"] ?? null,
+      item: overrides.item || "",
+    });
     return outcome;
   }
 
   function executeStep(step, overrides = {}) {
     const stepContext = contextForStep(step, overrides);
+    touchWatchdog("running_step", {
+      activeStep: step.path,
+      loop: overrides["loop.index"] ?? null,
+      item: overrides.item || "",
+    });
     event({ type: "step_start", step: step.path, executable: step.executable, loop: overrides["loop.index"] ?? "" });
     if (!step.executable) {
       const status = step.promptOnly ? "prompt_only" : "planned";
       const result = { step: step.path, id: step.id, status, loop: overrides["loop.index"] ?? null, actions: [], validations: [], repair: "" };
       results.push(result);
       event({ type: "step_end", step: step.path, status });
+      touchWatchdog("step_finished", {
+        activeStep: step.path,
+        status,
+        loop: overrides["loop.index"] ?? null,
+        item: overrides.item || "",
+      });
       return result;
     }
 
@@ -1563,7 +1781,14 @@ function run(options) {
       event({ type: "fallback_end", step: step.path, fallback: step.fallback, outcome: fallbackResult });
     }
     if (!ok && step.repair) {
-      repair = repairRecord(step, "Action or validation failed.");
+      repair = repairRecord(step, "Action or validation failed.", {
+        actions,
+        validations,
+        fallback: fallbackResult,
+        loop: overrides["loop.index"] ?? null,
+        item: overrides.item || "",
+        context: stepContext,
+      });
       event({ type: "repair_request", step: step.path, file: repair });
     }
 
@@ -1571,6 +1796,13 @@ function run(options) {
     const result = { step: step.path, id: step.id, status, loop: overrides["loop.index"] ?? null, item: overrides.item || "", actions, validations, fallback: fallbackResult, repair };
     results.push(result);
     event({ type: "step_end", step: step.path, status });
+    touchWatchdog("step_finished", {
+      activeStep: step.path,
+      status,
+      repair,
+      loop: overrides["loop.index"] ?? null,
+      item: overrides.item || "",
+    });
     return result;
   }
 
@@ -1693,6 +1925,7 @@ function run(options) {
   const requirements = checkRequirements(ir, projectDir);
   requirements.forEach((check) => event({ type: "requirement", check }));
   event({ type: "run_start", file: loaded.file, dryRun, block: options.block || "" });
+  touchWatchdog("running", { activeStep: "", activeAction: "" });
   if (ir.diagnostics.length) {
     ir.diagnostics.forEach((diagnostic) => event({ type: "parser_diagnostic", diagnostic }));
   }
@@ -1756,6 +1989,7 @@ function run(options) {
     finishedAt: summary.finishedAt,
   });
   event({ type: "run_end", status: summary.status });
+  finishWatchdog(summary.status, { resultCount: results.length, failedCount: failed.length });
   return summary;
 }
 

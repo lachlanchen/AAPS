@@ -5,6 +5,13 @@ inspects images, an AgInTiFlow image-generation block, and a verifier block
 should not rely on transient chat memory. They should exchange durable
 project-local artifacts.
 
+When the handoff changes a project, AAPS should version both the `.aaps`
+workflow contract and the manifested implementation underneath it: generated
+Python/shell scripts, prompts, registry entries, integration manifests, run
+logs, and report builders. Use project-local git checkpoints or AAPS snapshots
+before and after agent-backed manifestation so a user can diff the workflow and
+the code it produced.
+
 ## Required Handoff Packet
 
 Write a JSON handoff packet before calling the downstream agent:
@@ -35,6 +42,9 @@ Codex/vision QC -> handoff_packet.json -> AgInTi/image generation or refinement
 The verifier must compare generated/refined artifacts with the source images and
 candidate outputs. Accepted artifacts should be copied or referenced through the
 main workflow outputs so final reports and Studio artifact views can find them.
+If the verifier rejects the generated result, AAPS should feed the verifier's
+concrete visual defects and failed artifact checks back into the next AgInTi
+prompt, regenerate within the declared retry limit, and record every attempt.
 
 ## Parser Feedback Gate
 

@@ -40,6 +40,7 @@
     "Image-aware handoff packets should include source image paths, crops or previews, upstream visual observations, candidate masks/overlays, QC defects, and the exact downstream prompt.",
     "The downstream agent or image generator must return declared artifacts plus an integration manifest that maps generated files back into the main AAPS outputs.",
     "A verifier agent should consume the source evidence, downstream artifacts, and integration manifest before the workflow accepts regenerated or refined results.",
+    "If the verifier rejects the generated result, feed its concrete visual defects and artifact checks back into the downstream prompt and regenerate until accepted, retried to the declared limit, or blocked.",
     "If the downstream agent is unavailable, record a truthful prompt-only or blocked handoff status instead of claiming a regenerated output.",
     "Parser feedback is part of the agent loop: unresolved syntax or manifest errors must be copied into the next agent instruction and cleared before the task is marked complete.",
   ];
@@ -63,6 +64,11 @@
     },
     verificationRubric: ["criteria the verifier must check"],
     integrationPolicy: "how accepted generated artifacts replace or augment pipeline outputs",
+    retryPolicy: {
+      maxAttempts: 2,
+      feedbackSource: "verifier report path",
+      stopCondition: "accepted | blocked | max_attempts_reached",
+    },
   };
   const REPORT_RECAP_PRINCIPLES = [
     "A report block is an execution recap, not a loose conclusion: it should reconstruct the task from input goal through intermediate decisions to final artifacts.",
@@ -245,6 +251,8 @@
         "  output integration_manifest: json = \"artifacts/integration_manifest.json\"",
         "  output verifier_report: json = \"artifacts/verifier_report.json\"",
         "  prompt \"Build a complete image-aware handoff packet: task goal, source image paths or crops, upstream visual conclusions, observed defects, method history, exact image-generation/refinement prompt, expected artifact schema, integration policy, safety constraints, and verification rubric.\"",
+        "  retry 2",
+        "  recover \"If verifier rejects the generated artifact, append verifier defects to the next downstream prompt and regenerate until accepted or retry limit is reached.\"",
         "  validate json \"${output.handoff_packet}\"",
         "  validate nonempty \"${output.downstream_prompt}\"",
         "  validate json \"${output.integration_manifest}\"",

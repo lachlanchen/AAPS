@@ -575,6 +575,52 @@ const fallbackSummary = JSON.parse(fallbackResult.stdout);
 assert.strictEqual(fallbackSummary.results[0].status, "recovered");
 assert(fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "executable", "fallback.txt")));
 
+const repairPacketFile = path.join(fallbackDir, "repair-packet.aaps");
+fs.writeFileSync(
+  repairPacketFile,
+  `pipeline "Repair Packet Runtime Test" {
+  domain "runtime"
+  task broken_report {
+    output report_pdf: pdf = "runtime/artifacts/executable/missing-report.pdf"
+    exec shell "false"
+    validate exists "${"${output.report_pdf}"}"
+    repair true
+    recover "Prepare a dormant agent repair packet with logs and rerun commands."
+  }
+}
+`,
+  "utf8"
+);
+const repairPacketRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    repairPacketFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "test-runtime-repair-packet",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.notStrictEqual(repairPacketRun.status, 0, repairPacketRun.stdout);
+const repairPacketSummary = JSON.parse(repairPacketRun.stdout);
+assert.strictEqual(repairPacketSummary.status, "failed");
+assert(repairPacketSummary.results[0].repair.endsWith("broken_report-repair.md"));
+const repairRunDir = path.join(__dirname, "..", "runtime", "test-runs", "test-runtime-repair-packet");
+const repairPacketJson = JSON.parse(fs.readFileSync(path.join(repairRunDir, "repair_prompts", "broken_report-repair.json"), "utf8"));
+assert.strictEqual(repairPacketJson.version, "aaps_dormant_repair_agent_packet/0.1");
+assert(repairPacketJson.reportGuidance.includes("report/TeX/PDF block"));
+assert(repairPacketJson.commands.rerunBlock.includes("aaps run-block"));
+assert(fs.existsSync(path.join(repairRunDir, "runtime_watchdog.json")));
+assert(fs.existsSync(path.join(repairRunDir, "watchdog", "status.json")));
+assert(fs.existsSync(path.join(repairRunDir, "watchdog", "done")));
+
 const cliParse = childProcess.spawnSync(
   "node",
   ["scripts/aaps.js", "parse", "workflows/executable_organoid_demo.aaps", "--project", "examples/projects/organoid-analysis"],
