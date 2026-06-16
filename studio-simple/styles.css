@@ -1075,6 +1075,88 @@ p {
   background: var(--panel-soft);
 }
 
+.runtime-mini {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.runtime-mini-head,
+.runtime-mini-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.runtime-mini-head span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eaf4ff;
+  color: #155184;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.runtime-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runtime-mini-grid label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.runtime-mini-grid input,
+.runtime-mini-grid select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.runtime-mini-grid .check-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.runtime-mini-grid .check-row input {
+  width: auto;
+}
+
+.runtime-mini-actions button {
+  flex: 1;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 900;
+}
+
+.runtime-mini-summary {
+  min-height: 36px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 @media (max-width: 1040px) {
   .workspace-grid {
     grid-template-columns: 1fr;

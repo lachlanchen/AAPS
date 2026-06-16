@@ -1478,6 +1478,58 @@ main {
   background: #f7fffd;
 }
 
+.runtime-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fbff;
+}
+
+.runtime-controls label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.runtime-controls input,
+.runtime-controls select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.runtime-controls .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.runtime-controls .check-row input {
+  width: auto;
+}
+
+.runtime-controls button {
+  align-self: end;
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 800;
+}
+
 .project-concept {
   padding: 10px;
   border: 1px solid #bdeff4;

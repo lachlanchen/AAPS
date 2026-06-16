@@ -277,10 +277,16 @@ Runtime reruns can be full, focused, or resumable:
 aaps run workflows/main.aaps --project . --run-id full-run
 aaps run-block workflows/main.aaps --project . --block build_publication_report
 aaps run workflows/main.aaps --project . --resume-run full-run --skip-completed
+aaps run workflows/main.aaps --project . --resume-run full-run --resume-mode no-override
 aaps run workflows/main.aaps --project . --resume-run full-run --from-step codex_refinement_verifier
+aaps run workflows/main.aaps --project . --run-id review-run --pause-on-human-review
+aaps run workflows/main.aaps --project . --continue-run review-run --approve-human-review
+aaps run workflows/main.aaps --project . --pause-after segment_image
 ```
 
-Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, an agent manifest plan (`agent_compile_plan.json`), stdout/stderr logs, repair/setup prompts, watchdog status/alerts, artifacts, and `report.md` under the run directory. When a `repair true` block fails, AAPS writes dormant-agent Markdown/JSON repair packets with rerun commands and failure evidence. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
+Resume now checks artifact freshness before skipping completed steps. A skipped block must still have its declared outputs/artifacts, and those outputs must be newer than the current workflow source, project manifest/registries, script entries, required files, and path-like inputs. If a script, input, source file, or registry changes, AAPS records a dependency-aware invalidation and reruns the affected step instead of silently preserving stale artifacts.
+
+Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, `artifact_freshness.json`, `human_review_queue.json`, `pause_state.json`, an agent manifest plan (`agent_compile_plan.json`), stdout/stderr logs, repair/setup prompts, watchdog status/alerts, artifacts, and `report.md` under the run directory. Human-review actions can pause a run and resume only after explicit approval. Studio exposes the same resume mode, no-override, pause, continue, and review-approval controls in the Runtime panel. When a `repair true` block fails, AAPS writes dormant-agent Markdown/JSON repair packets with rerun commands and failure evidence. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
 
 ## Codex Wrapper
 

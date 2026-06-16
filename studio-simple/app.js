@@ -171,6 +171,8 @@
     blockGroupsOpen: { system: false, user: true },
     artifacts: [],
     artifactCategory: "image",
+    activeRunId: "",
+    lastRunResult: null,
     projectFilesModalPath: "",
     editingElementId: "",
     editingBlockId: "",
@@ -1725,6 +1727,79 @@
     openModal("artifacts-modal");
   }
 
+  function simpleRuntimeOptions(extra = {}) {
+    const payload = {};
+    const resumeRun = $("#simple-resume-run")?.value.trim() || "";
+    const resumeMode = $("#simple-resume-mode")?.value.trim() || "full";
+    const fromStep = $("#simple-from-step")?.value.trim() || "";
+    const pauseAfter = $("#simple-pause-after")?.value.trim() || "";
+    if (resumeRun) payload.resumeRun = resumeRun;
+    if (resumeMode && resumeMode !== "full") payload.resumeMode = resumeMode;
+    if (fromStep) payload.fromStep = fromStep;
+    if (pauseAfter) payload.pauseAfter = pauseAfter;
+    if ($("#simple-pause-review")?.checked) payload.pauseOnHumanReview = true;
+    if ($("#simple-approve-review")?.checked) payload.approveHumanReview = true;
+    return { ...payload, ...extra };
+  }
+
+  function renderSimpleRun(record) {
+    const statusEl = $("#simple-run-status");
+    const summaryEl = $("#simple-run-summary");
+    if (!summaryEl || !statusEl) return;
+    if (!record) {
+      statusEl.textContent = "idle";
+      summaryEl.textContent = "No run yet.";
+      return;
+    }
+    const result = record.result || record;
+    state.lastRunResult = result;
+    if (result.runId) {
+      state.activeRunId = result.runId;
+      const input = $("#simple-resume-run");
+      if (input) input.value = result.runId;
+    } else if (record.id) {
+      state.activeRunId = record.id;
+    }
+    statusEl.textContent = record.status || result.status || "running";
+    const steps = result.plan?.steps || 0;
+    const statuses = result.results || [];
+    const skipped = statuses.filter((item) => item.status === "skipped_completed").length;
+    const failed = statuses.filter((item) => item.status === "failed").length;
+    const review = (result.humanReviewQueue || []).filter((item) => item.status === "pending").length;
+    const invalidated = (result.resumeDecisions || []).filter((item) => item.action === "rerun").length;
+    const pauseText = result.pause?.paused ? ` Paused at ${result.pause.pausedAtId || result.pause.pausedAtStep}.` : "";
+    summaryEl.innerHTML = `
+      <strong>${escapeHtml(result.runId || record.id || "")}</strong>
+      <span>${escapeHtml(result.status || record.status || "")}</span>
+      <span>${steps} steps, ${skipped} skipped, ${invalidated} invalidated, ${failed} failed, ${review} review.${escapeHtml(pauseText)}</span>
+    `;
+  }
+
+  async function pollSimpleRun(id) {
+    for (let index = 0; index < 240; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const record = await jsonFetch(`/api/aaps/run?id=${encodeURIComponent(id)}`);
+      renderSimpleRun(record);
+      if (!["running", "queued"].includes(String(record.status || "").toLowerCase())) return record;
+    }
+    throw new Error("run polling timed out");
+  }
+
+  async function startSimpleRun(dryRun, extra = {}) {
+    if (!state.activeFile) throw new Error("No active .aaps file is selected.");
+    $("#simple-run-status").textContent = dryRun ? "dry run" : "running";
+    const record = await jsonFetch("/api/aaps/run", {
+      path: state.projectPath || ".",
+      file: state.activeFile,
+      source: state.source || "",
+      dryRun,
+      ...simpleRuntimeOptions(extra),
+    });
+    state.activeRunId = record.id;
+    renderSimpleRun(record);
+    return pollSimpleRun(record.id);
+  }
+
   function openNewProjectModal() {
     const nameField = $("#new-project-name");
     const pathField = $("#new-project-path");
@@ -1808,6 +1883,31 @@
       openModal("history-modal");
     });
     $("#artifacts-button").addEventListener("click", openArtifacts);
+    $("#simple-dry-run").addEventListener("click", () => {
+      startSimpleRun(true).catch((error) => {
+        $("#simple-run-status").textContent = "failed";
+        addMessage("assistant", `Dry run failed: ${error.message}`);
+      });
+    });
+    $("#simple-run").addEventListener("click", () => {
+      startSimpleRun(false).catch((error) => {
+        $("#simple-run-status").textContent = "failed";
+        addMessage("assistant", `Run failed: ${error.message}`);
+      });
+    });
+    $("#simple-continue-run").addEventListener("click", () => {
+      const runId = $("#simple-resume-run")?.value.trim() || state.lastRunResult?.runId || state.activeRunId || "";
+      if (!runId) {
+        addMessage("assistant", "Enter a run id or start a run before continuing.");
+        return;
+      }
+      $("#simple-resume-run").value = runId;
+      if ($("#simple-resume-mode").value === "full") $("#simple-resume-mode").value = "skip-completed";
+      startSimpleRun(false, { continueRun: runId, resumeMode: $("#simple-resume-mode").value || "skip-completed" }).catch((error) => {
+        $("#simple-run-status").textContent = "failed";
+        addMessage("assistant", `Continue failed: ${error.message}`);
+      });
+    });
     $("#element-editor-form").addEventListener("submit", saveElementEditor);
     $("#block-editor-form").addEventListener("submit", saveBlockEditor);
     attachDragHandlers();

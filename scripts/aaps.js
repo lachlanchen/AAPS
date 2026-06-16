@@ -91,9 +91,14 @@ function usage() {
     "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
     "  --run-id <id>     Stable run identifier for reproducible test runs.",
     "  --resume-run <id> Resume from an existing run id and reuse its run directory when --run-id is omitted.",
+    "  --continue-run <id> Continue a paused run id using skip-completed resume semantics.",
     "  --skip-completed  Skip steps already succeeded/recovered in the resumed run.",
     "  --resume-mode <mode> Runtime rerun mode: full, skip-completed, no-override, or force.",
     "  --from-step <id>  Skip earlier plan steps and start at the first matching step id/path.",
+    "  --pause-before <id> Pause before the first matching step id/path.",
+    "  --pause-after <id>  Pause after the first matching step id/path.",
+    "  --pause-on-human-review Pause when a manual-review checkpoint is queued.",
+    "  --approve-human-review Mark queued manual-review checkpoints approved while resuming.",
     "  --set <name=value> Override an AAPS input or parameter at runtime; repeatable.",
     "  --image <file>    Attach image evidence to Codex direct prompts; repeatable.",
     "  --dry-run         Build plan/readiness and skip action side effects.",
@@ -1043,10 +1048,15 @@ function runRunner(command, file, options) {
   if (options.runRoot) args.push("--run-root", options.runRoot);
   if (options.runId) args.push("--run-id", options.runId);
   if (options.resumeRun || options.resumeRunId) args.push("--resume-run", options.resumeRun || options.resumeRunId);
+  if (options.continueRun || options.continueRunId) args.push("--continue-run", options.continueRun || options.continueRunId);
   if (options.skipCompleted) args.push("--skip-completed");
   if (options.resumeMode) args.push("--resume-mode", options.resumeMode);
   if (options.rerunMode) args.push("--resume-mode", options.rerunMode);
   if (options.fromStep || options.fromBlock) args.push("--from-step", options.fromStep || options.fromBlock);
+  if (options.pauseBefore) args.push("--pause-before", options.pauseBefore);
+  if (options.pauseAfter) args.push("--pause-after", options.pauseAfter);
+  if (options.pauseOnHumanReview) args.push("--pause-on-human-review");
+  if (options.approveHumanReview || options.humanReviewApproved || options.approveReviews) args.push("--approve-human-review");
   (Array.isArray(options.set) ? options.set : options.set ? [options.set] : []).forEach((item) => {
     args.push("--set", item);
   });
@@ -1056,11 +1066,12 @@ function runRunner(command, file, options) {
     cwd: projectDir,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 50 * 1024 * 1024,
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
   if (result.error) process.stderr.write(`${result.error.message}\n`);
-  process.exit(result.status ?? 1);
+  process.exitCode = result.status ?? 1;
 }
 
 function runCompiler(command, positional, options) {

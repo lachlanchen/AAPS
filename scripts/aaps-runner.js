@@ -3,6 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { spawnSync, spawn } = require("child_process");
 const AAPS = require("../src/aaps");
 
@@ -350,6 +351,267 @@ function ensureDir(dir) {
 
 function writeJson(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function pathLabel(projectDir, file) {
+  const relative = path.relative(projectDir, file);
+  if (!relative.startsWith("..") && !path.isAbsolute(relative)) return relative.split(path.sep).join("/");
+  return file;
+}
+
+function hashFile(file) {
+  const stat = fs.statSync(file);
+  if (!stat.isFile() || stat.size > 16 * 1024 * 1024) return "";
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function fingerprintPath(projectDir, file) {
+  const full = path.resolve(file);
+  const label = pathLabel(projectDir, full);
+  if (!fs.existsSync(full)) return { path: label, fullPath: full, exists: false };
+  const stat = fs.statSync(full);
+  if (stat.isDirectory()) {
+    const entries = walkFiles(full)
+      .slice(0, 1000)
+      .map((entry) => {
+        const entryStat = fs.statSync(entry);
+        return {
+          path: path.relative(full, entry).split(path.sep).join("/"),
+          size: entryStat.size,
+          mtimeMs: Math.round(entryStat.mtimeMs),
+        };
+      });
+    const newestMtimeMs = entries.reduce((max, entry) => Math.max(max, entry.mtimeMs || 0), Math.round(stat.mtimeMs));
+    const digest = crypto.createHash("sha256").update(JSON.stringify(entries)).digest("hex");
+    return {
+      path: label,
+      fullPath: full,
+      exists: true,
+      type: "directory",
+      size: entries.length,
+      mtimeMs: newestMtimeMs,
+      hash: digest,
+      truncated: walkFiles(full).length > entries.length,
+    };
+  }
+  return {
+    path: label,
+    fullPath: full,
+    exists: true,
+    type: "file",
+    size: stat.size,
+    mtimeMs: Math.round(stat.mtimeMs),
+    hash: hashFile(full),
+  };
+}
+
+function uniqueSpecs(specs) {
+  const seen = new Set();
+  return specs.filter((spec) => {
+    const key = `${spec.kind || "path"}:${spec.fullPath || spec.path || spec.key || spec.value || ""}`;
+    if (!key.trim() || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function runtimePathSpec(projectDir, rawValue, context, label, kind = "path") {
+  const raw = unescapeRuntimeString(rawValue);
+  const missingVariables = unresolvedVariables(raw, context);
+  if (missingVariables.length) {
+    return { kind, label, value: raw, unresolved: true, missingVariables };
+  }
+  const value = expand(raw, context).replace(/^["']|["']$/g, "");
+  if (!value) return null;
+  try {
+    const fullPath = resolveRuntimePath(projectDir, value, context);
+    return { kind, label, value, fullPath, path: pathLabel(projectDir, fullPath) };
+  } catch (error) {
+    return { kind, label, value, error: error.message };
+  }
+}
+
+function validationPathSpec(projectDir, rule, context, label) {
+  const parsed = parseValidation(rule);
+  if (!parsed.path || parsed.kind === "manual") return null;
+  return runtimePathSpec(projectDir, parsed.path, context, label || `validation:${parsed.kind}`, "validation");
+}
+
+function captureResumeFingerprint(projectDir, step, stepContext, options = {}) {
+  const sourceFiles = options.sourceFiles || [];
+  const registryFiles = options.registryFiles || [];
+  const dependencySpecs = [];
+  const outputSpecs = [];
+  sourceFiles.forEach((file) => {
+    if (file) dependencySpecs.push({ kind: "workflow_source", label: "workflow source", fullPath: path.resolve(file), path: pathLabel(projectDir, path.resolve(file)) });
+  });
+  registryFiles.forEach((file) => {
+    if (file) dependencySpecs.push({ kind: "registry", label: "project registry", fullPath: path.resolve(file), path: pathLabel(projectDir, path.resolve(file)) });
+  });
+  (step.inputs || []).forEach((port) => {
+    const type = String(port.type || "").toLowerCase();
+    if (!["file", "image", "json", "csv", "table", "folder", "path", "directory"].includes(type)) return;
+    const spec = runtimePathSpec(projectDir, port.value || stepContext[port.name] || "", stepContext, `input:${port.name}`, "input");
+    if (spec) dependencySpecs.push(spec);
+  });
+  (step.actions || []).forEach((action) => {
+    if (["python", "python_script", "node_script"].includes(action.type) && action.entry) {
+      const spec = runtimePathSpec(projectDir, action.entry, stepContext, `action:${action.id || action.type}:entry`, "script");
+      if (spec) dependencySpecs.push(spec);
+    }
+    if (action.type === "python_inline" && action.code) {
+      dependencySpecs.push({
+        kind: "inline_code",
+        label: `action:${action.id || action.type}:code`,
+        key: `${step.path}:${action.id || action.type}:inline_code`,
+        hash: crypto.createHash("sha256").update(expand(action.code, stepContext)).digest("hex"),
+        exists: true,
+        type: "inline",
+        mtimeMs: 0,
+      });
+    }
+  });
+  ((step.requirements && step.requirements.files) || []).forEach((file) => {
+    const spec = runtimePathSpec(projectDir, file, stepContext, "requires:file", "required_file");
+    if (spec) dependencySpecs.push(spec);
+  });
+  (step.outputs || []).forEach((port) => {
+    const spec = runtimePathSpec(projectDir, port.value || "", stepContext, `output:${port.name}`, "output");
+    if (spec) outputSpecs.push(spec);
+  });
+  (step.artifacts || []).forEach((artifact) => {
+    const spec = runtimePathSpec(projectDir, artifact.path || artifact.value || "", stepContext, `artifact:${artifact.name || "artifact"}`, "artifact");
+    if (spec) outputSpecs.push(spec);
+    if (artifact.validation) {
+      const validationSpec = validationPathSpec(projectDir, artifact.validation, stepContext, `artifact_validation:${artifact.name || "artifact"}`);
+      if (validationSpec) outputSpecs.push(validationSpec);
+    }
+  });
+  (step.validations || []).forEach((rule) => {
+    const spec = validationPathSpec(projectDir, rule, stepContext, "validation");
+    if (spec) outputSpecs.push(spec);
+  });
+
+  const dependencies = uniqueSpecs(dependencySpecs).map((spec) => {
+    if (spec.fullPath) return { ...spec, fingerprint: fingerprintPath(projectDir, spec.fullPath) };
+    return spec;
+  });
+  const outputs = uniqueSpecs(outputSpecs).map((spec) => {
+    if (spec.fullPath) return { ...spec, fingerprint: fingerprintPath(projectDir, spec.fullPath) };
+    return spec;
+  });
+  return {
+    version: "aaps_step_resume_fingerprint/0.2",
+    capturedAt: nowIso(),
+    dependencies,
+    outputs,
+    dependencyMaxMtimeMs: dependencies.reduce((max, dep) => Math.max(max, Number(dep.fingerprint?.mtimeMs || dep.mtimeMs || 0)), 0),
+    outputMinMtimeMs: outputs
+      .filter((out) => out.fingerprint && out.fingerprint.exists)
+      .reduce((min, out) => Math.min(min, Number(out.fingerprint.mtimeMs || 0)), Number.POSITIVE_INFINITY),
+  };
+}
+
+function fingerprintChanged(previous, current) {
+  if (!previous || !current) return false;
+  if (previous.exists !== current.exists) return true;
+  if (!previous.exists && !current.exists) return false;
+  if (previous.type !== current.type) return true;
+  if (previous.hash && current.hash) return previous.hash !== current.hash;
+  if (previous.size !== current.size) return true;
+  return Math.abs(Number(previous.mtimeMs || 0) - Number(current.mtimeMs || 0)) > 2;
+}
+
+function evaluateResumeFreshness(projectDir, previousResult, currentFingerprint, mode = "skip-completed") {
+  const previousFingerprint = previousResult && previousResult.resumeFingerprint;
+  const checks = [];
+  if (!previousFingerprint) {
+    const missingOutputs = (currentFingerprint.outputs || []).filter((out) => out.fullPath && !fs.existsSync(out.fullPath));
+    return {
+      ok: missingOutputs.length === 0,
+      status: missingOutputs.length ? "missing_output" : "legacy_unverified",
+      reason: missingOutputs.length ? "Previous result has no fingerprint and current outputs are missing." : "Previous result has no fingerprint; current outputs exist but dependency freshness is unverified.",
+      mode,
+      checks,
+      missingOutputs: missingOutputs.map((out) => out.path || out.value),
+      staleOutputs: [],
+      changedDependencies: [],
+    };
+  }
+
+  const previousDeps = new Map((previousFingerprint.dependencies || []).map((dep) => [dep.key || dep.path || dep.fullPath || dep.label, dep]));
+  const changedDependencies = [];
+  (currentFingerprint.dependencies || []).forEach((dep) => {
+    const key = dep.key || dep.path || dep.fullPath || dep.label;
+    const prior = previousDeps.get(key);
+    const changed = prior ? fingerprintChanged(prior.fingerprint || prior, dep.fingerprint || dep) : Boolean(dep.fingerprint?.exists);
+    checks.push({ kind: "dependency", path: dep.path || dep.value || key, ok: !changed, changed });
+    if (changed) changedDependencies.push(dep.path || dep.value || key);
+  });
+
+  const missingOutputs = [];
+  const staleOutputs = [];
+  (currentFingerprint.outputs || []).forEach((out) => {
+    const exists = Boolean(out.fingerprint && out.fingerprint.exists);
+    const outputMtime = Number(out.fingerprint?.mtimeMs || 0);
+    const stale = exists && currentFingerprint.dependencyMaxMtimeMs && outputMtime + 2 < currentFingerprint.dependencyMaxMtimeMs;
+    checks.push({ kind: "output", path: out.path || out.value, ok: exists && !stale, exists, stale, outputMtime, dependencyMaxMtimeMs: currentFingerprint.dependencyMaxMtimeMs });
+    if (!exists) missingOutputs.push(out.path || out.value);
+    if (stale) staleOutputs.push(out.path || out.value);
+  });
+
+  const ok = changedDependencies.length === 0 && missingOutputs.length === 0 && staleOutputs.length === 0;
+  const status = changedDependencies.length
+    ? "dependency_changed"
+    : missingOutputs.length
+      ? "missing_output"
+      : staleOutputs.length
+        ? "stale_output"
+        : "fresh";
+  return {
+    ok,
+    status,
+    reason: ok ? "completed step outputs are fresh for the current dependencies" : "resume skip invalidated by artifact/dependency freshness check",
+    mode,
+    checks,
+    missingOutputs,
+    staleOutputs,
+    changedDependencies,
+  };
+}
+
+function compactResumeFingerprint(fingerprint) {
+  if (!fingerprint) return fingerprint;
+  function compactItem(item) {
+    const fp = item.fingerprint
+      ? {
+          exists: item.fingerprint.exists,
+          type: item.fingerprint.type,
+          size: item.fingerprint.size,
+          mtimeMs: item.fingerprint.mtimeMs,
+          hash: item.fingerprint.hash,
+          truncated: item.fingerprint.truncated,
+        }
+      : undefined;
+    return {
+      kind: item.kind,
+      label: item.label,
+      path: item.path || item.value || item.key || "",
+      key: item.key || "",
+      unresolved: item.unresolved || undefined,
+      missingVariables: item.missingVariables || undefined,
+      error: item.error || undefined,
+      fingerprint: fp,
+    };
+  }
+  return {
+    version: fingerprint.version,
+    capturedAt: fingerprint.capturedAt,
+    dependencyMaxMtimeMs: fingerprint.dependencyMaxMtimeMs,
+    outputMinMtimeMs: Number.isFinite(fingerprint.outputMinMtimeMs) ? fingerprint.outputMinMtimeMs : 0,
+    dependencies: (fingerprint.dependencies || []).map(compactItem),
+    outputs: (fingerprint.outputs || []).map(compactItem),
+  };
 }
 
 function appendJsonl(file, value) {
@@ -1181,7 +1443,7 @@ function completedForResume(result) {
 }
 
 function loadResumeState(runRoot, options = {}) {
-  const resumeRunId = String(options.resumeRun || options.resumeRunId || "").trim();
+  const resumeRunId = String(options.resumeRun || options.resumeRunId || options.continueRun || options.continueRunId || "").trim();
   const resumeMode = String(options.resumeMode || options.rerunMode || (options.skipCompleted ? "skip-completed" : resumeRunId ? "skip-completed" : "full")).trim() || "full";
   if (!resumeRunId && resumeMode === "full") {
     return {
@@ -1212,6 +1474,7 @@ function loadResumeState(runRoot, options = {}) {
     completed,
     skipCompleted: ["skip-completed", "resume", "no-override", "no_override"].includes(resumeMode) || Boolean(options.skipCompleted),
     fromStep: String(options.fromStep || options.fromBlock || "").trim(),
+    continueRun: String(options.continueRun || options.continueRunId || "").trim(),
   };
 }
 
@@ -1348,15 +1611,20 @@ function run(options) {
   writeJson(path.join(runDir, "resolved_workflow.json"), ir);
   writeJson(path.join(runDir, "execution_plan.json"), plan);
   writeJson(path.join(runDir, "resume_state.json"), {
-    version: "aaps_runtime_resume/0.1",
+    version: "aaps_runtime_resume/0.2",
     enabled: resumeState.enabled,
     mode: resumeState.mode,
     resumeRunId: resumeState.resumeRunId,
+    continueRun: resumeState.continueRun || "",
     previousRunDir: resumeState.previousRunDir || "",
     previousRunStatus: resumeState.previousRun ? resumeState.previousRun.status : "",
     completedStepCount: resumeState.completed.size,
     skipCompleted: resumeState.skipCompleted,
     fromStep: resumeState.fromStep || "",
+    pauseBefore: String(options.pauseBefore || "").trim(),
+    pauseAfter: String(options.pauseAfter || "").trim(),
+    pauseOnHumanReview: Boolean(options.pauseOnHumanReview),
+    approveHumanReview: Boolean(options.approveHumanReview || options.humanReviewApproved || options.approveReviews),
   });
 
   const context = contextFrom(ir, manifest, runId, projectDir, runDir, registries);
@@ -1495,7 +1763,35 @@ function run(options) {
   const results = [];
   const fallbackVisited = new Set();
   const methodSelections = [];
+  const resumeDecisions = [];
+  const humanReviewQueue = [];
+  const pauseState = {
+    paused: false,
+    status: "not_paused",
+    reason: "",
+    pausedAtStep: "",
+    pausedAtId: "",
+    nextHint: "",
+    requestedBy: "",
+    time: "",
+  };
   let fromStepReached = !resumeState.fromStep;
+
+  function sourceFingerprintFiles() {
+    const files = [];
+    const sourceFile = options.source ? path.resolve(options.source) : path.resolve(projectDir, loaded.file || "");
+    if (sourceFile && fs.existsSync(sourceFile)) files.push(sourceFile);
+    const manifestFile = path.join(projectDir, "aaps.project.json");
+    if (fs.existsSync(manifestFile)) files.push(manifestFile);
+    return files;
+  }
+
+  function registryFingerprintFiles() {
+    return Object.values(registries.files || {})
+      .filter(Boolean)
+      .map((file) => path.resolve(projectDir, file))
+      .filter((file) => fs.existsSync(file));
+  }
 
   function touchWatchdog(state, extra = {}) {
     const watchdogDir = path.join(runDir, "watchdog");
@@ -1538,6 +1834,70 @@ function run(options) {
       runId,
       selections: methodSelections,
     });
+  }
+
+  function writeArtifactFreshness() {
+    writeJson(path.join(runDir, "artifact_freshness.json"), {
+      version: "aaps_artifact_freshness/0.1",
+      runId,
+      decisions: resumeDecisions,
+    });
+  }
+
+  function writeHumanReviewQueue() {
+    writeJson(path.join(runDir, "human_review_queue.json"), {
+      version: "aaps_human_review_queue/0.1",
+      runId,
+      status: humanReviewQueue.some((item) => item.status === "pending") ? "pending" : "empty",
+      items: humanReviewQueue,
+    });
+  }
+
+  function writePauseState() {
+    writeJson(path.join(runDir, "pause_state.json"), {
+      version: "aaps_pause_state/0.1",
+      runId,
+      ...pauseState,
+      continueCommand: pauseState.paused
+        ? `aaps run ${loaded.file} --project ${projectDir} --resume-run ${runId} --resume-mode skip-completed --json`
+        : "",
+    });
+  }
+
+  function pauseRun(reason, step, requestedBy, extra = {}) {
+    if (pauseState.paused) return;
+    pauseState.paused = true;
+    pauseState.status = "paused";
+    pauseState.reason = reason;
+    pauseState.pausedAtStep = step.path || "";
+    pauseState.pausedAtId = step.id || "";
+    pauseState.requestedBy = requestedBy || "";
+    pauseState.nextHint = `Resume with --resume-run ${runId} --resume-mode skip-completed${reason === "human_review" ? " --approve-human-review" : ""}.`;
+    pauseState.time = nowIso();
+    Object.assign(pauseState, extra);
+    writePauseState();
+    event({ type: "run_paused", reason, step: step.path, requestedBy, pauseState });
+    touchWatchdog("paused", { activeStep: step.path, reason, requestedBy });
+  }
+
+  function addHumanReview(step, action, overrides = {}, details = {}) {
+    const entry = {
+      id: `${AAPS.slug(step.path, "step")}-${humanReviewQueue.length + 1}`,
+      status: "pending",
+      step: step.path,
+      stepId: step.id,
+      action: action ? action.id || action.command || action.type || "" : "",
+      prompt: action ? action.command || action.code || "Manual review required." : "Manual review required.",
+      loop: overrides["loop.index"] ?? null,
+      item: overrides.item || "",
+      createdAt: nowIso(),
+      details,
+      approveCommand: `aaps run ${loaded.file} --project ${projectDir} --resume-run ${runId} --resume-mode skip-completed --approve-human-review --json`,
+    };
+    humanReviewQueue.push(entry);
+    writeHumanReviewQueue();
+    event({ type: "human_review_queued", entry });
+    return entry;
   }
 
   function recordMethodSelection(stage, chooseSteps, candidates, selected, reason, overrides = {}) {
@@ -1728,7 +2088,10 @@ function run(options) {
     } else if (action.type === "noop") {
       outcome = { status: "succeeded", code: 0, stdout: "noop\n", stderr: "", command: "noop" };
     } else if (action.type === "manual") {
-      outcome = { status: "manual_review", code: 0, stdout: "", stderr: "", command: action.command || "manual review" };
+      const approved = Boolean(options.approveHumanReview || options.humanReviewApproved || options.approveReviews);
+      outcome = approved
+        ? { status: "succeeded", code: 0, stdout: "manual review approved by runtime option\n", stderr: "", command: action.command || "manual review", approved: true }
+        : { status: "manual_review", code: 0, stdout: "", stderr: "", command: action.command || "manual review" };
     } else if (action.type === "agent") {
       const agentName = action.command || action.entry || step.agent || "codex_repair_agent";
       const promptFile = path.join(runDir, "repair_prompts", `${stepSlug}.agent.md`);
@@ -1781,6 +2144,10 @@ function run(options) {
   function executeStep(step, overrides = {}) {
     const stepContext = contextForStep(step, overrides);
     const resumeKey = resultResumeKey(step.path, overrides["loop.index"] ?? null, overrides.item || "");
+    const currentResumeFingerprint = captureResumeFingerprint(projectDir, step, stepContext, {
+      sourceFiles: sourceFingerprintFiles(),
+      registryFiles: registryFingerprintFiles(),
+    });
     if (!fromStepReached) {
       if (matchesStepSelector(step, resumeState.fromStep)) {
         fromStepReached = true;
@@ -1802,32 +2169,81 @@ function run(options) {
         return result;
       }
     }
-    if (resumeState.skipCompleted && resumeState.completed.has(resumeKey)) {
-      const previous = resumeState.completed.get(resumeKey);
+    if (String(options.pauseBefore || "").trim() && matchesStepSelector(step, String(options.pauseBefore).trim())) {
       const result = {
         step: step.path,
         id: step.id,
-        status: "skipped_completed",
-        reason: "resume_skip_completed",
-        previousStatus: previous.status,
-        previousRunId: resumeState.resumeRunId || (resumeState.previousRun && resumeState.previousRun.runId) || "",
-        previousRunDir: resumeState.previousRunDir || "",
+        status: "paused_before_step",
+        reason: `pause_before:${options.pauseBefore}`,
         loop: overrides["loop.index"] ?? null,
         item: overrides.item || "",
         actions: [],
         validations: [],
         repair: "",
+        resumeFingerprint: compactResumeFingerprint(currentResumeFingerprint),
       };
       results.push(result);
-      event({ type: "step_skipped", step: step.path, reason: result.reason, previousStatus: previous.status });
-      touchWatchdog("step_finished", {
-        activeStep: step.path,
-        status: result.status,
-        reason: result.reason,
+      pauseRun("pause_before_step", step, "pause-before", { selector: String(options.pauseBefore).trim() });
+      return result;
+    }
+    if (resumeState.skipCompleted && resumeState.completed.has(resumeKey)) {
+      const previous = resumeState.completed.get(resumeKey);
+      const approveReview = Boolean(options.approveHumanReview || options.humanReviewApproved || options.approveReviews);
+      const freshness =
+        previous.status === "manual_review" && !approveReview
+          ? {
+              ok: false,
+              status: "human_review_pending",
+              reason: "Previous step stopped at a human-review checkpoint; resume requires --approve-human-review before it can be skipped.",
+              mode: resumeState.mode,
+              checks: [],
+              missingOutputs: [],
+              staleOutputs: [],
+              changedDependencies: [],
+            }
+          : evaluateResumeFreshness(projectDir, previous, currentResumeFingerprint, resumeState.mode);
+      const decision = {
+        time: nowIso(),
+        step: step.path,
+        id: step.id,
+        key: resumeKey,
+        previousStatus: previous.status,
+        action: freshness.ok ? "skip" : "rerun",
+        freshness,
         loop: overrides["loop.index"] ?? null,
         item: overrides.item || "",
-      });
-      return result;
+      };
+      resumeDecisions.push(decision);
+      writeArtifactFreshness();
+      if (freshness.ok) {
+        const result = {
+          step: step.path,
+          id: step.id,
+          status: "skipped_completed",
+          reason: `resume_skip_completed:${freshness.status}`,
+          previousStatus: previous.status,
+          previousRunId: resumeState.resumeRunId || (resumeState.previousRun && resumeState.previousRun.runId) || "",
+          previousRunDir: resumeState.previousRunDir || "",
+          loop: overrides["loop.index"] ?? null,
+          item: overrides.item || "",
+          actions: [],
+          validations: [],
+          repair: "",
+          freshness,
+          resumeFingerprint: compactResumeFingerprint(currentResumeFingerprint),
+        };
+        results.push(result);
+        event({ type: "step_skipped", step: step.path, reason: result.reason, previousStatus: previous.status, freshness });
+        touchWatchdog("step_finished", {
+          activeStep: step.path,
+          status: result.status,
+          reason: result.reason,
+          loop: overrides["loop.index"] ?? null,
+          item: overrides.item || "",
+        });
+        return result;
+      }
+      event({ type: "resume_invalidation", step: step.path, previousStatus: previous.status, freshness });
     }
     touchWatchdog("running_step", {
       activeStep: step.path,
@@ -1837,7 +2253,7 @@ function run(options) {
     event({ type: "step_start", step: step.path, executable: step.executable, loop: overrides["loop.index"] ?? "" });
     if (!step.executable) {
       const status = step.promptOnly ? "prompt_only" : "planned";
-      const result = { step: step.path, id: step.id, status, loop: overrides["loop.index"] ?? null, actions: [], validations: [], repair: "" };
+      const result = { step: step.path, id: step.id, status, loop: overrides["loop.index"] ?? null, actions: [], validations: [], repair: "", resumeFingerprint: compactResumeFingerprint(currentResumeFingerprint) };
       results.push(result);
       event({ type: "step_end", step: step.path, status });
       touchWatchdog("step_finished", {
@@ -1850,6 +2266,7 @@ function run(options) {
     }
 
     const actions = [];
+    const manualReviewActions = [];
     let ok = true;
     for (const action of step.actions) {
       let attempt = 0;
@@ -1859,8 +2276,10 @@ function run(options) {
         outcome = executeAction(step, action, attempt, overrides);
       } while (outcome.status === "failed" && attempt <= step.retry);
       actions.push(outcome);
+      if (outcome.status === "manual_review") manualReviewActions.push({ action, outcome });
       if (outcome.status === "failed") ok = false;
     }
+    manualReviewActions.forEach(({ action, outcome }) => addHumanReview(step, action, overrides, { command: outcome.command }));
 
     const validations = [];
     const validationRules = [...(step.validations || [])];
@@ -1912,8 +2331,23 @@ function run(options) {
       event({ type: "repair_request", step: step.path, file: repair });
     }
 
-    const status = ok ? (fallbackResult ? "recovered" : "succeeded") : "failed";
-    const result = { step: step.path, id: step.id, status, loop: overrides["loop.index"] ?? null, item: overrides.item || "", actions, validations, fallback: fallbackResult, repair };
+    const status = manualReviewActions.length ? "manual_review" : ok ? (fallbackResult ? "recovered" : "succeeded") : "failed";
+    const resultFingerprint = captureResumeFingerprint(projectDir, step, stepContext, {
+      sourceFiles: sourceFingerprintFiles(),
+      registryFiles: registryFingerprintFiles(),
+    });
+    const result = {
+      step: step.path,
+      id: step.id,
+      status,
+      loop: overrides["loop.index"] ?? null,
+      item: overrides.item || "",
+      actions,
+      validations,
+      fallback: fallbackResult,
+      repair,
+      resumeFingerprint: compactResumeFingerprint(resultFingerprint),
+    };
     results.push(result);
     event({ type: "step_end", step: step.path, status });
     touchWatchdog("step_finished", {
@@ -1923,6 +2357,11 @@ function run(options) {
       loop: overrides["loop.index"] ?? null,
       item: overrides.item || "",
     });
+    if (manualReviewActions.length && options.pauseOnHumanReview) {
+      pauseRun("human_review", step, "pause-on-human-review", { queueCount: humanReviewQueue.length });
+    } else if (String(options.pauseAfter || "").trim() && matchesStepSelector(step, String(options.pauseAfter).trim())) {
+      pauseRun("pause_after_step", step, "pause-after", { selector: String(options.pauseAfter).trim() });
+    }
     return result;
   }
 
@@ -1973,16 +2412,22 @@ function run(options) {
   }
 
   function executeTree(step, overrides = {}) {
+    if (pauseState.paused) return null;
     if (step.kind === "for_each") {
       const items = enumerateLoopItems(step, overrides);
       event({ type: "loop_start", step: step.path, iterator: step.iterator, count: items.length });
       const result = executeStep(step, overrides);
+      if (pauseState.paused) return result;
       const children = childrenByPath.get(step.path) || [];
-      items.forEach((itemOverrides) => {
+      for (const itemOverrides of items) {
+        if (pauseState.paused) break;
         const merged = { ...overrides, ...itemOverrides };
         event({ type: "loop_item", step: step.path, item: merged.item, index: merged["loop.index"] });
-        children.forEach((child) => executeTree(child, merged));
-      });
+        for (const child of children) {
+          if (pauseState.paused) break;
+          executeTree(child, merged);
+        }
+      }
       event({ type: "loop_end", step: step.path, count: items.length });
       return result;
     }
@@ -1997,12 +2442,18 @@ function run(options) {
     const methodChildren = children.filter((child) => child.kind === "method");
     if (step.kind === "stage" && chooseChildren.length && methodChildren.length) {
       const result = executeStep(step, overrides);
-      chooseChildren.forEach((child) => executeTree(child, overrides));
+      if (pauseState.paused) return result;
+      for (const child of chooseChildren) {
+        if (pauseState.paused) break;
+        executeTree(child, overrides);
+      }
       const runnableMethods = methodChildren.filter((child) => conditionPasses(child, overrides));
       const executedMethodPaths = new Set();
       let selectedResult = null;
-      runnableMethods.forEach((candidate, index) => {
-        if (selectedResult && selectedResult.status !== "failed") return;
+      for (let index = 0; index < runnableMethods.length; index += 1) {
+        if (pauseState.paused) break;
+        const candidate = runnableMethods[index];
+        if (selectedResult && selectedResult.status !== "failed") continue;
         recordMethodSelection(
           step,
           chooseChildren,
@@ -2016,7 +2467,7 @@ function run(options) {
         if (selectedResult && selectedResult.fallback && selectedResult.fallback.step) {
           executedMethodPaths.add(selectedResult.fallback.step);
         }
-      });
+      }
       methodChildren.forEach((candidate) => {
         if (executedMethodPaths.has(candidate.path)) return;
         const reason = runnableMethods.includes(candidate) ? "method_not_selected" : "condition_false";
@@ -2032,13 +2483,17 @@ function run(options) {
         results.push(skipped);
         event({ type: "step_skipped", step: candidate.path, reason, selectedMethod: skipped.selectedMethod });
       });
-      children
-        .filter((child) => child.kind !== "choose" && child.kind !== "method")
-        .forEach((child) => executeTree(child, overrides));
+      for (const child of children.filter((item) => item.kind !== "choose" && item.kind !== "method")) {
+        if (pauseState.paused) break;
+        executeTree(child, overrides);
+      }
       return result;
     }
     const result = executeStep(step, overrides);
-    children.forEach((child) => executeTree(child, overrides));
+    for (const child of children) {
+      if (pauseState.paused) break;
+      executeTree(child, overrides);
+    }
     return result;
   }
 
@@ -2052,12 +2507,27 @@ function run(options) {
   requirements.filter((check) => !check.ok).forEach((check) => {
     event({ type: "missing_requirement", check });
   });
-  rootSteps.forEach((step) => executeTree(step));
+  writeArtifactFreshness();
+  writeHumanReviewQueue();
+  writePauseState();
+  for (const step of rootSteps) {
+    if (pauseState.paused) break;
+    executeTree(step);
+  }
 
   const failed = results.filter((item) => item.status === "failed");
+  const manualPending = humanReviewQueue.filter((item) => item.status === "pending");
   const missingRequirements = requirements.filter((item) => !item.ok);
   const failedReadiness = (readiness.blocks || []).filter((item) => !item.ready);
-  const summaryStatus = ir.diagnostics.length || missingRequirements.length || failedReadiness.length ? "failed" : failed.length ? "failed" : "succeeded";
+  const summaryStatus = pauseState.paused
+    ? "paused"
+    : ir.diagnostics.length || missingRequirements.length || failedReadiness.length
+      ? "failed"
+      : failed.length
+        ? "failed"
+        : manualPending.length
+          ? "waiting_for_human_review"
+          : "succeeded";
   const summary = {
     ok: ir.diagnostics.length === 0 && failed.length === 0 && missingRequirements.length === 0 && failedReadiness.length === 0,
     runId,
@@ -2081,7 +2551,11 @@ function run(options) {
       completedStepCount: resumeState.completed.size,
       skipCompleted: resumeState.skipCompleted,
       fromStep: resumeState.fromStep || "",
+      freshnessArtifact: path.join(runDir, "artifact_freshness.json"),
     },
+    pause: pauseState,
+    humanReviewQueue,
+    resumeDecisions,
     plan: {
       steps: plan.steps.length,
       executableSteps: plan.executableSteps,
@@ -2093,6 +2567,9 @@ function run(options) {
     startedAt: fs.existsSync(eventsFile) ? fs.statSync(eventsFile).birthtime.toISOString() : nowIso(),
     finishedAt: nowIso(),
   };
+  writeArtifactFreshness();
+  writeHumanReviewQueue();
+  writePauseState();
   writeJson(path.join(runDir, "run.json"), summary);
   fs.writeFileSync(
     path.join(runDir, "report.md"),
@@ -2103,9 +2580,16 @@ function run(options) {
       `File: ${summary.file}`,
       `Dry run: ${summary.dryRun}`,
       summary.resume && summary.resume.enabled ? `Resume: ${summary.resume.mode} from ${summary.resume.resumeRunId || summary.resume.previousRunDir || "previous run"}` : "",
+      summary.pause && summary.pause.paused ? `Paused: ${summary.pause.reason} at ${summary.pause.pausedAtStep}` : "",
+      summary.humanReviewQueue && summary.humanReviewQueue.length ? `Human review queue: ${summary.humanReviewQueue.length} pending item(s)` : "",
+      summary.resumeDecisions && summary.resumeDecisions.length ? `Resume freshness decisions: ${summary.resumeDecisions.length}` : "",
       "",
       "## Steps",
-      ...results.map((item) => `- ${item.status}: ${item.step}${item.repair ? ` (repair: ${item.repair})` : ""}`),
+      ...results.map((item) => `- ${item.status}: ${item.step}${item.freshness ? ` (${item.freshness.status})` : ""}${item.repair ? ` (repair: ${item.repair})` : ""}`),
+      "",
+      summary.pause && summary.pause.paused
+        ? `Continue: \`aaps run ${loaded.file} --project ${projectDir} --resume-run ${runId} --resume-mode skip-completed --json\``
+        : "",
       "",
     ].join("\n"),
     "utf8"
@@ -2148,13 +2632,14 @@ function main() {
     context["project.python"] = projectPython(manifest, registries);
     const readiness = buildReadiness(plan, projectDir, manifest, registries, context);
     const compilePlan = AAPS.buildAgentCompilePlan(plan, readiness);
-    console.log(JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, runtimeOverrides, plan, readiness, compilePlan }, null, 2));
-    process.exit(ir.diagnostics.length || !readiness.ok || (options.block && plan.blockFilter && plan.blockFilter.matched === 0) ? 1 : 0);
+    process.stdout.write(`${JSON.stringify({ file: loaded.file, diagnostics: ir.diagnostics, runtimeOverrides, plan, readiness, compilePlan }, null, 2)}\n`);
+    process.exitCode = ir.diagnostics.length || !readiness.ok || (options.block && plan.blockFilter && plan.blockFilter.matched === 0) ? 1 : 0;
+    return;
   }
   const summary = run(options);
-  if (options.json) console.log(JSON.stringify(summary, null, 2));
-  else console.log(`AAPS run ${summary.runId}: ${summary.status}\n${summary.runDir}`);
-  process.exit(summary.ok ? 0 : 1);
+  if (options.json) process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  else process.stdout.write(`AAPS run ${summary.runId}: ${summary.status}\n${summary.runDir}\n`);
+  process.exitCode = summary.ok ? 0 : 1;
 }
 
 module.exports = {

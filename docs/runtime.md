@@ -192,6 +192,9 @@ runtime/aaps-runs/<run-id>/
   block_readiness.json
   tool_resolution.json
   agent_compile_plan.json
+  artifact_freshness.json
+  human_review_queue.json
+  pause_state.json
   report.md
   events.jsonl
   runtime_watchdog.json
@@ -260,12 +263,31 @@ aaps run workflows/main.aaps --project . \
   --skip-completed
 ```
 
+`--resume-mode no-override` uses the same checked skip policy but makes the
+intent explicit: preserve completed outputs when they are still fresh, and rerun
+only missing or stale work.
+
+```bash
+aaps run workflows/main.aaps --project . \
+  --resume-run main-full \
+  --resume-mode no-override
+```
+
 The resumed run writes `resume_state.json` and archives the previous `run.json`
-under `resume/` before replacing the active summary. Skipped steps are recorded
-as `skipped_completed`, keyed by step path, loop index, and loop item. This lets
+under `resume/` before replacing the active summary. It also writes
+`artifact_freshness.json`, which records every resume decision as `skip` or
+`rerun`.
+
+Skipped steps are recorded as `skipped_completed`, keyed by step path, loop
+index, and loop item. A step is skipped only when its declared outputs,
+artifacts, and validation targets still exist and are not older than the current
+workflow source, project manifest/registries, script entries, required files, or
+path-like inputs. If a script, source file, input file/folder, project manifest,
+tool registry, agent registry, or environment registry changes, the runtime
+records a dependency-aware invalidation and reruns the affected step. This lets
 large workflows split image grids once, skip finished Cellpose or threshold
 steps, and rerun only later agent QC, AgInTi refinement, verifier, or report
-blocks.
+blocks without trusting stale evidence.
 
 Focused rerun levels:
 
@@ -283,10 +305,37 @@ aaps run workflows/main.aaps --project . --resume-run main-full --from-step code
 aaps run workflows/main.aaps --project . --resume-run main-full --run-id report-only-rerun --skip-completed
 ```
 
-Current limits: resume skips based on the prior `run.json`; it does not yet
-revalidate skipped artifacts unless a later block depends on them. Human-review
-pause/resume and per-action interactive approval remain future runtime state
-machine work.
+Pause and continue:
+
+```bash
+# Stop cleanly before or after a named step.
+aaps run workflows/main.aaps --project . --run-id paused-run --pause-before segment_image
+aaps run workflows/main.aaps --project . --run-id paused-run --pause-after segment_image
+
+# Continue a paused run in the same run directory.
+aaps run workflows/main.aaps --project . --continue-run paused-run --resume-mode skip-completed
+```
+
+When paused, the runtime writes `pause_state.json`, returns status `paused`, and
+stops walking later root steps, child steps, and loop items. `pause_state.json`
+contains the paused step, reason, timestamp, and a suggested continue command.
+
+Human review:
+
+```bash
+aaps run workflows/main.aaps --project . --run-id review-run --pause-on-human-review
+aaps run workflows/main.aaps --project . --continue-run review-run --approve-human-review
+```
+
+`exec manual` creates a pending item in `human_review_queue.json`. Without
+`--approve-human-review`, a previous `manual_review` result is not treated as
+complete during resume. With explicit approval, the checkpoint can be skipped and
+the run continues downstream.
+
+Studio exposes the same controls in the Runtime panel: resume run id, resume
+mode, from-step, pause before/after, pause on human review, approve queued
+review, and Continue Run. The simple Studio includes a compact Run / Resume
+panel with the same backend contract.
 
 ## Studio
 

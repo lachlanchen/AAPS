@@ -37,7 +37,7 @@ Before the runtime resume update, AAPS did not have a first-class way to:
 `run-block` existed, but that is focused block execution, not a whole-workflow
 resume policy.
 
-## Minimal Runtime Resume Added
+## Runtime Resume Implemented
 
 The runtime now supports:
 
@@ -62,21 +62,41 @@ Resume writes:
 
 - `resume_state.json`
 - archived previous `run.json` under `resume/` when reusing the same run id
+- `artifact_freshness.json` with skip/rerun freshness decisions
+- `human_review_queue.json` for pending manual checkpoints
+- `pause_state.json` for clean pause/continue state
 - `skipped_completed` result records for reused steps
 
 The skip key is step path plus loop index plus loop item. This is important for
 folder/image loops: one tile can be rerun while other completed tiles remain
 skipped.
 
-## Remaining Work
+## Added After The Audit
 
-- Add Studio controls for resume mode, from-step, and no-overwrite policy.
-- Add explicit stop/pause commands that mark `run.json` as paused instead of
-  relying on external process termination.
-- Add human-review checkpoints that pause a run and can continue after approval.
-- Add artifact freshness checks before skipping a completed block.
-- Add dependency-aware downstream invalidation: if a script or input changed,
-  AAPS should suggest rerunning affected blocks even if a previous run says they
-  completed.
-- Add UI visualization for `skipped_completed`, `skipped_before_from_step`,
-  resumed, repaired, and stale-artifact states.
+AAPS now has first-class runtime controls for the missing items identified
+above:
+
+- Studio classic Runtime panel includes resume run id, resume mode,
+  `no-override`, from-step, pause before/after, pause on human review, approve
+  queued review, and Continue Run.
+- Studio simple has a compact Run / Resume panel backed by the same
+  `/api/aaps/run` payload.
+- CLI supports `--continue-run`, `--resume-mode no-override`,
+  `--pause-before`, `--pause-after`, `--pause-on-human-review`, and
+  `--approve-human-review`.
+- Pause state is explicit: `run.json` returns status `paused`, and
+  `pause_state.json` records the step, reason, timestamp, and continue command.
+- Human review is explicit: `exec manual` queues a pending item in
+  `human_review_queue.json`, and a previous `manual_review` result is not
+  skipped until a resume uses `--approve-human-review`.
+- Resume skip is now freshness-checked. A step is skipped only if declared
+  outputs/artifacts/validation targets still exist and are not older than the
+  current workflow source, project manifest/registries, script entries, required
+  files, or path-like inputs.
+- Dependency-aware invalidation records `rerun` decisions in
+  `artifact_freshness.json` when scripts, inputs, source files, or registries
+  change.
+
+Remaining future refinement: a richer interactive approval UI can mark
+individual queue items approved with reviewer notes. The current implementation
+uses the safe CLI/API approval flag for the whole resume request.

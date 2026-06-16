@@ -50,6 +50,39 @@
           </div>
 
         </div>
+        <div class="runtime-mini">
+          <div class="runtime-mini-head">
+            <strong>Run / Resume</strong>
+            <span id="simple-run-status">idle</span>
+          </div>
+          <div class="runtime-mini-grid">
+            <label>Resume
+              <input id="simple-resume-run" placeholder="run id" />
+            </label>
+            <label>Mode
+              <select id="simple-resume-mode">
+                <option value="full">full</option>
+                <option value="skip-completed">skip</option>
+                <option value="no-override">no override</option>
+                <option value="force">force</option>
+              </select>
+            </label>
+            <label>From
+              <input id="simple-from-step" placeholder="step id" />
+            </label>
+            <label>Pause
+              <input id="simple-pause-after" placeholder="after step" />
+            </label>
+            <label class="check-row"><input id="simple-pause-review" type="checkbox" /> review pause</label>
+            <label class="check-row"><input id="simple-approve-review" type="checkbox" /> approve review</label>
+          </div>
+          <div class="runtime-mini-actions">
+            <button id="simple-dry-run" type="button">Dry Run</button>
+            <button id="simple-run" type="button">Run</button>
+            <button id="simple-continue-run" type="button">Continue</button>
+          </div>
+          <div id="simple-run-summary" class="runtime-mini-summary">No run yet.</div>
+        </div>
       </section>
 
       <section class="panel program-panel" aria-labelledby="program-title" data-testid="program-region">

@@ -384,6 +384,37 @@
           </div>
           <div id="compile-summary" class="compile-summary"></div>
           <pre id="compile-log"></pre>
+          <div class="runtime-controls" aria-label="Runtime resume and pause controls">
+            <label>Resume run
+              <input id="runtime-resume-run" placeholder="run id to reuse" />
+            </label>
+            <label>Resume mode
+              <select id="runtime-resume-mode">
+                <option value="full">full rerun</option>
+                <option value="skip-completed">skip completed</option>
+                <option value="no-override">no override</option>
+                <option value="force">force</option>
+              </select>
+            </label>
+            <label>From step
+              <input id="runtime-from-step" placeholder="optional step id/path" />
+            </label>
+            <label>Pause before
+              <input id="runtime-pause-before" placeholder="optional step id/path" />
+            </label>
+            <label>Pause after
+              <input id="runtime-pause-after" placeholder="optional step id/path" />
+            </label>
+            <label class="check-row">
+              <input id="runtime-pause-human-review" type="checkbox" />
+              <span>pause on human review</span>
+            </label>
+            <label class="check-row">
+              <input id="runtime-approve-human-review" type="checkbox" />
+              <span>approve queued review on continue</span>
+            </label>
+            <button id="runtime-continue-btn" type="button">Continue Run</button>
+          </div>
           <div id="run-summary" class="run-summary"></div>
           <pre id="run-log"></pre>
         </section>

@@ -3727,6 +3727,15 @@ def start_aaps_run(body: dict) -> dict:
     project_arg_value = project_arg(project_dir)
     dry_run = bool(body.get("dryRun") or body.get("dry_run"))
     block = str(body.get("block") or body.get("blockId") or "").strip()
+    resume_run = str(body.get("resumeRun") or body.get("resume_run") or body.get("resumeRunId") or "").strip()
+    continue_run = str(body.get("continueRun") or body.get("continue_run") or body.get("continueRunId") or "").strip()
+    resume_mode = str(body.get("resumeMode") or body.get("resume_mode") or body.get("rerunMode") or "").strip()
+    from_step = str(body.get("fromStep") or body.get("from_step") or body.get("fromBlock") or "").strip()
+    pause_before = str(body.get("pauseBefore") or body.get("pause_before") or "").strip()
+    pause_after = str(body.get("pauseAfter") or body.get("pause_after") or "").strip()
+    skip_completed = bool(body.get("skipCompleted") or body.get("skip_completed"))
+    pause_on_human_review = bool(body.get("pauseOnHumanReview") or body.get("pause_on_human_review"))
+    approve_human_review = bool(body.get("approveHumanReview") or body.get("approve_human_review") or body.get("humanReviewApproved"))
     input_overrides = parse_runtime_input_overrides(body)
     source = str(body.get("source") or "")
     file_name = str(body.get("file") or "").strip()
@@ -3751,6 +3760,15 @@ def start_aaps_run(body: dict) -> dict:
         "file": file_name,
         "dryRun": dry_run,
         "block": block,
+        "resumeRun": resume_run,
+        "continueRun": continue_run,
+        "resumeMode": resume_mode,
+        "fromStep": from_step,
+        "pauseBefore": pause_before,
+        "pauseAfter": pause_after,
+        "skipCompleted": skip_completed,
+        "pauseOnHumanReview": pause_on_human_review,
+        "approveHumanReview": approve_human_review,
         "inputOverrides": input_overrides,
         "result": None,
         "error": "",
@@ -3767,10 +3785,10 @@ def start_aaps_run(body: dict) -> dict:
             project_arg_value,
             "--run-root",
             str(RUN_DIR),
-            "--run-id",
-            run_id,
             "--json",
         ]
+        if not continue_run:
+            command.extend(["--run-id", run_id])
         if source_path:
             command.extend(["--source", source_path])
         elif file_name:
@@ -3779,6 +3797,24 @@ def start_aaps_run(body: dict) -> dict:
             command.append("--dry-run")
         if block:
             command.extend(["--block", block])
+        if resume_run:
+            command.extend(["--resume-run", resume_run])
+        if continue_run:
+            command.extend(["--continue-run", continue_run])
+        if skip_completed:
+            command.append("--skip-completed")
+        if resume_mode:
+            command.extend(["--resume-mode", resume_mode])
+        if from_step:
+            command.extend(["--from-step", from_step])
+        if pause_before:
+            command.extend(["--pause-before", pause_before])
+        if pause_after:
+            command.extend(["--pause-after", pause_after])
+        if pause_on_human_review:
+            command.append("--pause-on-human-review")
+        if approve_human_review:
+            command.append("--approve-human-review")
         for key, value in input_overrides.items():
             command.extend(["--set", f"{key}={value}"])
         try:
@@ -3803,10 +3839,12 @@ def start_aaps_run(body: dict) -> dict:
                     )
                 else:
                     result = {"ok": False, "message": process.stdout.strip(), "parseError": str(exc)}
-            succeeded = bool(result.get("ok")) or str(result.get("status") or "").lower() == "succeeded"
+            runtime_status = str(result.get("status") or "").lower()
+            succeeded = bool(result.get("ok")) or runtime_status in {"succeeded", "paused", "waiting_for_human_review"}
+            stored_status = runtime_status if runtime_status in {"paused", "waiting_for_human_review"} else ("succeeded" if succeeded else "failed")
             current.update(
                 {
-                    "status": "succeeded" if succeeded else "failed",
+                    "status": stored_status,
                     "updated_at": now_iso(),
                     "result": result,
                     "error": process.stderr.strip() if process.returncode and not succeeded else "",

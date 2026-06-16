@@ -27,6 +27,14 @@ const projectPathEl = document.getElementById("project-path");
 const runStatusEl = document.getElementById("run-status");
 const runSummaryEl = document.getElementById("run-summary");
 const runLogEl = document.getElementById("run-log");
+const runtimeResumeRunEl = document.getElementById("runtime-resume-run");
+const runtimeResumeModeEl = document.getElementById("runtime-resume-mode");
+const runtimeFromStepEl = document.getElementById("runtime-from-step");
+const runtimePauseBeforeEl = document.getElementById("runtime-pause-before");
+const runtimePauseAfterEl = document.getElementById("runtime-pause-after");
+const runtimePauseHumanReviewEl = document.getElementById("runtime-pause-human-review");
+const runtimeApproveHumanReviewEl = document.getElementById("runtime-approve-human-review");
+const runtimeContinueBtnEl = document.getElementById("runtime-continue-btn");
 const artifactSummaryEl = document.getElementById("artifact-summary");
 const artifactListEl = document.getElementById("artifact-list");
 const refreshArtifactsBtnEl = document.getElementById("refresh-artifacts-btn");
@@ -563,21 +571,44 @@ function renderRuntime(record) {
   }
   const result = record.result || record;
   lastRuntimeResult = result;
+  if (runtimeResumeRunEl && result.runId) runtimeResumeRunEl.value = result.runId;
   runStatusEl.textContent = record.status || result.status || "unknown";
   const plan = result.plan || {};
   const failed = (result.results || []).filter((item) => item.status === "failed").length;
+  const skipped = (result.results || []).filter((item) => item.status === "skipped_completed").length;
+  const invalidated = (result.resumeDecisions || []).filter((item) => item.action === "rerun").length;
+  const humanReviews = (result.humanReviewQueue || []).filter((item) => item.status === "pending").length;
   const readiness = result.readiness || {};
   const readyBlocks = (readiness.blocks || []).filter((item) => item.ready).length;
   const compileRequests = result.compilePlan?.requests?.length || 0;
+  const pause = result.pause || {};
   runSummaryEl.innerHTML = `
     <div><strong>${escapeHtml(result.runId || record.id || "")}</strong> · ${escapeHtml(result.file || record.file || "")}</div>
     <div class="project-kpis">
       <div class="project-kpi"><strong>${plan.steps || 0}</strong>steps</div>
       <div class="project-kpi"><strong>${plan.executableSteps || 0}</strong>exec</div>
       <div class="project-kpi"><strong>${failed}</strong>failed</div>
+      <div class="project-kpi"><strong>${skipped}</strong>skipped</div>
+      <div class="project-kpi"><strong>${invalidated}</strong>invalidated</div>
+      <div class="project-kpi"><strong>${humanReviews}</strong>review</div>
       <div class="project-kpi"><strong>${readyBlocks}/${(readiness.blocks || []).length || 0}</strong>ready</div>
       <div class="project-kpi"><strong>${compileRequests}</strong>manifest prompts</div>
     </div>
+    ${
+      pause.paused
+        ? `<div><strong>Paused:</strong> ${escapeHtml(pause.reason || "")} at ${escapeHtml(pause.pausedAtStep || "")}. ${escapeHtml(pause.nextHint || "")}</div>`
+        : ""
+    }
+    ${
+      humanReviews
+        ? `<div><strong>Human review queue:</strong> ${humanReviews} pending item(s). Use Continue Run with approval after review.</div>`
+        : ""
+    }
+    ${
+      invalidated
+        ? `<div><strong>Freshness invalidation:</strong> ${invalidated} completed step(s) reran because outputs were missing/stale or dependencies changed.</div>`
+        : ""
+    }
     <div>${escapeHtml(result.runDir || "")}</div>
   `;
   runLogEl.textContent = JSON.stringify(result, null, 2);
@@ -3549,7 +3580,24 @@ async function startCompile(mode = "check", projectWide = false) {
   return record;
 }
 
-async function startRuntimeRun(dryRun, blockId = "") {
+function runtimeControlPayload(overrides = {}) {
+  const payload = {};
+  const resumeRun = String(runtimeResumeRunEl?.value || "").trim();
+  const resumeMode = String(runtimeResumeModeEl?.value || "full").trim();
+  const fromStep = String(runtimeFromStepEl?.value || "").trim();
+  const pauseBefore = String(runtimePauseBeforeEl?.value || "").trim();
+  const pauseAfter = String(runtimePauseAfterEl?.value || "").trim();
+  if (resumeRun) payload.resumeRun = resumeRun;
+  if (resumeMode && resumeMode !== "full") payload.resumeMode = resumeMode;
+  if (fromStep) payload.fromStep = fromStep;
+  if (pauseBefore) payload.pauseBefore = pauseBefore;
+  if (pauseAfter) payload.pauseAfter = pauseAfter;
+  if (runtimePauseHumanReviewEl?.checked) payload.pauseOnHumanReview = true;
+  if (runtimeApproveHumanReviewEl?.checked) payload.approveHumanReview = true;
+  return { ...payload, ...overrides };
+}
+
+async function startRuntimeRun(dryRun, blockId = "", runtimeOptions = {}) {
   const manifest = getProjectManifest();
   if (manifest.error) {
     projectStatusEl.textContent = "invalid JSON";
@@ -3568,6 +3616,7 @@ async function startRuntimeRun(dryRun, blockId = "") {
       source: sourceForExecution(file),
       dryRun,
       block: blockId,
+      ...runtimeControlPayload(runtimeOptions),
     }),
   });
   if (!response.ok) throw new Error(`run API returned ${response.status}`);
@@ -4304,6 +4353,23 @@ document.getElementById("dry-run-active-file-btn").addEventListener("click", () 
 document.getElementById("run-active-file-btn").addEventListener("click", () => {
   startRuntimeRun(false).catch((error) => {
     addMessage("assistant", `Could not run active file: ${error.message}`);
+  });
+});
+
+runtimeContinueBtnEl?.addEventListener("click", () => {
+  const runId = String(runtimeResumeRunEl?.value || lastRuntimeResult?.runId || "").trim();
+  if (!runId) {
+    addMessage("assistant", "Enter a run id or start a run before continuing.");
+    return;
+  }
+  if (runtimeResumeRunEl) runtimeResumeRunEl.value = runId;
+  if (runtimeResumeModeEl && runtimeResumeModeEl.value === "full") runtimeResumeModeEl.value = "skip-completed";
+  startRuntimeRun(false, "", {
+    continueRun: runId,
+    resumeMode: runtimeResumeModeEl?.value || "skip-completed",
+    approveHumanReview: Boolean(runtimeApproveHumanReviewEl?.checked),
+  }).catch((error) => {
+    addMessage("assistant", `Could not continue run: ${error.message}`);
   });
 });
 

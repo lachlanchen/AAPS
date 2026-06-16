@@ -697,6 +697,254 @@ assert.strictEqual(resumeSecondJson.resume.enabled, true);
 assert.strictEqual(resumeSecondJson.results[0].status, "skipped_completed");
 assert.strictEqual(fs.readFileSync(resumeMarker, "utf8"), "keep");
 assert(fs.existsSync(path.join(__dirname, "..", "runtime", "test-runs", "test-runtime-resume", "resume_state.json")));
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "test-runs", "test-runtime-resume", "artifact_freshness.json")));
+
+fs.rmSync(resumeMarker, { force: true });
+const resumeMissingOutput = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    resumeRuntimeFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--resume-run",
+    "test-runtime-resume",
+    "--resume-mode",
+    "no-override",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(resumeMissingOutput.status, 0, resumeMissingOutput.stderr || resumeMissingOutput.stdout);
+const resumeMissingOutputJson = JSON.parse(resumeMissingOutput.stdout);
+assert(resumeMissingOutputJson.resumeDecisions.some((item) => item.action === "rerun" && item.freshness.status === "missing_output"));
+assert.strictEqual(fs.readFileSync(resumeMarker, "utf8"), "first");
+
+const dependencyProject = path.join(__dirname, "..", ".aaps-work", "tests", "resume-dependency-project");
+fs.rmSync(dependencyProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(dependencyProject, "workflows"), { recursive: true });
+fs.mkdirSync(path.join(dependencyProject, "scripts"), { recursive: true });
+fs.writeFileSync(
+  path.join(dependencyProject, "scripts", "write_marker.py"),
+  `import argparse
+from pathlib import Path
+parser = argparse.ArgumentParser()
+parser.add_argument("--output")
+args = parser.parse_args()
+Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+Path(args.output).write_text("v1\\n", encoding="utf-8")
+`,
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(dependencyProject, "workflows", "main.aaps"),
+  `pipeline "Dependency Resume Test" {
+  task write_from_script {
+    output marker: text = "outputs/marker.txt"
+    exec python_script "scripts/write_marker.py"
+    arg output = "${"${output.marker}"}"
+    validate exists "${"${output.marker}"}"
+  }
+}
+`,
+  "utf8"
+);
+const depFirst = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--file",
+    "workflows/main.aaps",
+    "--project",
+    dependencyProject,
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "dependency-resume",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(depFirst.status, 0, depFirst.stderr || depFirst.stdout);
+fs.writeFileSync(
+  path.join(dependencyProject, "scripts", "write_marker.py"),
+  `import argparse
+from pathlib import Path
+parser = argparse.ArgumentParser()
+parser.add_argument("--output")
+args = parser.parse_args()
+Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+Path(args.output).write_text("v2\\n", encoding="utf-8")
+`,
+  "utf8"
+);
+const depSecond = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--file",
+    "workflows/main.aaps",
+    "--project",
+    dependencyProject,
+    "--run-root",
+    "runtime/test-runs",
+    "--resume-run",
+    "dependency-resume",
+    "--skip-completed",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(depSecond.status, 0, depSecond.stderr || depSecond.stdout);
+const depSecondJson = JSON.parse(depSecond.stdout);
+assert(depSecondJson.resumeDecisions.some((item) => item.action === "rerun" && item.freshness.status === "dependency_changed"));
+assert.strictEqual(fs.readFileSync(path.join(dependencyProject, "outputs", "marker.txt"), "utf8"), "v2\n");
+
+const pauseRuntimeFile = path.join(fallbackDir, "pause-runtime.aaps");
+fs.rmSync(path.join(__dirname, "..", "runtime", "artifacts", "pause"), { recursive: true, force: true });
+fs.writeFileSync(
+  pauseRuntimeFile,
+  `pipeline "Pause Runtime Test" {
+  task first {
+    output out: text = "runtime/artifacts/pause/first.txt"
+    exec shell "mkdir -p runtime/artifacts/pause && printf first > runtime/artifacts/pause/first.txt"
+    validate exists "${"${output.out}"}"
+  }
+  task second {
+    output out: text = "runtime/artifacts/pause/second.txt"
+    exec shell "mkdir -p runtime/artifacts/pause && printf second > runtime/artifacts/pause/second.txt"
+    validate exists "${"${output.out}"}"
+  }
+  task third {
+    output out: text = "runtime/artifacts/pause/third.txt"
+    exec shell "mkdir -p runtime/artifacts/pause && printf third > runtime/artifacts/pause/third.txt"
+    validate exists "${"${output.out}"}"
+  }
+}
+`,
+  "utf8"
+);
+const pauseRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    pauseRuntimeFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "pause-resume",
+    "--pause-after",
+    "second",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(pauseRun.status, 0, pauseRun.stderr || pauseRun.stdout);
+const pauseRunJson = JSON.parse(pauseRun.stdout);
+assert.strictEqual(pauseRunJson.status, "paused");
+assert.strictEqual(pauseRunJson.pause.pausedAtId, "second");
+assert(!fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "pause", "third.txt")));
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "test-runs", "pause-resume", "pause_state.json")));
+const continueRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    pauseRuntimeFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--continue-run",
+    "pause-resume",
+    "--resume-mode",
+    "skip-completed",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(continueRun.status, 0, continueRun.stderr || continueRun.stdout);
+const continueRunJson = JSON.parse(continueRun.stdout);
+assert.strictEqual(continueRunJson.status, "succeeded");
+assert(continueRunJson.results.some((item) => item.id === "first" && item.status === "skipped_completed"));
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "pause", "third.txt")));
+
+const manualRuntimeFile = path.join(fallbackDir, "manual-runtime.aaps");
+fs.rmSync(path.join(__dirname, "..", "runtime", "artifacts", "manual"), { recursive: true, force: true });
+fs.writeFileSync(
+  manualRuntimeFile,
+  `pipeline "Manual Review Runtime Test" {
+  task approve_overlay {
+    exec manual "Approve segmentation overlay before report generation."
+  }
+  task write_after_approval {
+    output out: text = "runtime/artifacts/manual/after.txt"
+    exec shell "mkdir -p runtime/artifacts/manual && printf approved > runtime/artifacts/manual/after.txt"
+    validate exists "${"${output.out}"}"
+  }
+}
+`,
+  "utf8"
+);
+const manualPause = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    manualRuntimeFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "manual-review-resume",
+    "--pause-on-human-review",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(manualPause.status, 0, manualPause.stderr || manualPause.stdout);
+const manualPauseJson = JSON.parse(manualPause.stdout);
+assert.strictEqual(manualPauseJson.status, "paused");
+assert.strictEqual(manualPauseJson.humanReviewQueue.length, 1);
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "test-runs", "manual-review-resume", "human_review_queue.json")));
+assert(!fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "manual", "after.txt")));
+const manualContinue = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    manualRuntimeFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--continue-run",
+    "manual-review-resume",
+    "--resume-mode",
+    "skip-completed",
+    "--approve-human-review",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(manualContinue.status, 0, manualContinue.stderr || manualContinue.stdout);
+const manualContinueJson = JSON.parse(manualContinue.stdout);
+assert.strictEqual(manualContinueJson.status, "succeeded");
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "manual", "after.txt")));
 
 const repairPacketFile = path.join(fallbackDir, "repair-packet.aaps");
 fs.writeFileSync(

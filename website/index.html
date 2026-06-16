@@ -324,6 +324,8 @@ aaps run workflows/main.aaps --project . --json</code></pre>
               <li>Write `block_readiness.json`, `tool_resolution.json`, and agent manifest plans (`agent_compile_plan.json`).</li>
               <li>Resolve project imports and expose missing or circular dependency diagnostics.</li>
               <li>Execute `for_each list_files(...)` loops for folder-level image pipelines.</li>
+              <li>Resume runs with checked skip, no-override preservation, and dependency-aware artifact invalidation.</li>
+              <li>Pause before/after named steps, continue paused runs, and queue human-review checkpoints for approval.</li>
               <li>Record `resolved_workflow.json`, `execution_plan.json`, `run.json`, events, logs, artifacts, repair notes, and reports.</li>
               <li>Use report recap blocks to summarize inputs, method comparisons, agent decisions, handoff prompts, logs, final outputs, and limitations.</li>
               <li>Feed parser diagnostics back to agents until `.aaps` files parse cleanly before reporting completion.</li>
