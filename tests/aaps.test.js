@@ -513,6 +513,66 @@ const inlineRun = childProcess.spawnSync(
 assert.strictEqual(inlineRun.status, 0, inlineRun.stderr || inlineRun.stdout);
 assert.strictEqual(JSON.parse(inlineRun.stdout).status, "succeeded");
 
+const wrapperResumeProject = path.join(__dirname, "..", ".aaps-work", "tests", "wrapper-resume-project");
+fs.rmSync(wrapperResumeProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(wrapperResumeProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(wrapperResumeProject, "workflows", "main.aaps"),
+  `pipeline "Wrapper Resume Forwarding" {
+  task first {
+    exec python_inline
+    code """
+from pathlib import Path
+Path("outputs").mkdir(parents=True, exist_ok=True)
+Path("outputs/first.txt").write_text("should have been skipped\\n", encoding="utf-8")
+"""
+  }
+
+  task second {
+    output report: json = "outputs/second.json"
+    exec python_inline
+    code """
+from pathlib import Path
+Path("outputs").mkdir(parents=True, exist_ok=True)
+Path("outputs/second.json").write_text('{"second": true}\\n', encoding="utf-8")
+"""
+    validate json "${"${output.report}"}"
+  }
+}
+`,
+  "utf8"
+);
+const wrapperResumeRun = childProcess.spawnSync(
+  process.execPath,
+  [
+    "scripts/aaps.js",
+    "run",
+    "workflows/main.aaps",
+    "--project",
+    wrapperResumeProject,
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "wrapper-resume-from-step",
+    "--resume-run",
+    "previous-run-placeholder",
+    "--resume-mode",
+    "full",
+    "--from-step",
+    "second",
+    "--json",
+    "--no-auto-update",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(wrapperResumeRun.status, 0, wrapperResumeRun.stderr || wrapperResumeRun.stdout);
+const wrapperResumePayload = JSON.parse(wrapperResumeRun.stdout);
+assert.strictEqual(wrapperResumePayload.status, "succeeded");
+assert.strictEqual(wrapperResumePayload.resume.fromStep, "second");
+assert(wrapperResumePayload.results.some((result) => result.id === "first" && result.status === "skipped_before_from_step"));
+assert(fs.existsSync(path.join(wrapperResumeProject, "outputs", "second.json")));
+assert(!fs.existsSync(path.join(wrapperResumeProject, "outputs", "first.txt")), "aaps run wrapper did not forward --from-step");
+
 const runtimeResult = childProcess.spawnSync(
   "node",
   [

@@ -1042,6 +1042,11 @@ function runRunner(command, file, options) {
   if (options.block) args.push("--block", options.block);
   if (options.runRoot) args.push("--run-root", options.runRoot);
   if (options.runId) args.push("--run-id", options.runId);
+  if (options.resumeRun || options.resumeRunId) args.push("--resume-run", options.resumeRun || options.resumeRunId);
+  if (options.skipCompleted) args.push("--skip-completed");
+  if (options.resumeMode) args.push("--resume-mode", options.resumeMode);
+  if (options.rerunMode) args.push("--resume-mode", options.rerunMode);
+  if (options.fromStep || options.fromBlock) args.push("--from-step", options.fromStep || options.fromBlock);
   (Array.isArray(options.set) ? options.set : options.set ? [options.set] : []).forEach((item) => {
     args.push("--set", item);
   });
