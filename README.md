@@ -271,6 +271,15 @@ node scripts/aaps.js validate --project examples/projects/organoid-analysis --js
 node scripts/aaps.js run workflows/executable_static_check.aaps --project examples/projects/app-development --json
 ```
 
+Runtime reruns can be full, focused, or resumable:
+
+```bash
+aaps run workflows/main.aaps --project . --run-id full-run
+aaps run-block workflows/main.aaps --project . --block build_publication_report
+aaps run workflows/main.aaps --project . --resume-run full-run --skip-completed
+aaps run workflows/main.aaps --project . --resume-run full-run --from-step codex_refinement_verifier
+```
+
 Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, an agent manifest plan (`agent_compile_plan.json`), stdout/stderr logs, repair/setup prompts, watchdog status/alerts, artifacts, and `report.md` under the run directory. When a `repair true` block fails, AAPS writes dormant-agent Markdown/JSON repair packets with rerun commands and failure evidence. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
 
 ## Codex Wrapper

@@ -575,6 +575,69 @@ const fallbackSummary = JSON.parse(fallbackResult.stdout);
 assert.strictEqual(fallbackSummary.results[0].status, "recovered");
 assert(fs.existsSync(path.join(__dirname, "..", "runtime", "artifacts", "executable", "fallback.txt")));
 
+const resumeRuntimeFile = path.join(fallbackDir, "resume-runtime.aaps");
+fs.writeFileSync(
+  resumeRuntimeFile,
+  `pipeline "Resume Runtime Test" {
+  task split_tiles {
+    output marker: text = "runtime/artifacts/resume/marker.txt"
+    exec shell "mkdir -p runtime/artifacts/resume && printf first > runtime/artifacts/resume/marker.txt"
+    validate exists "${"${output.marker}"}"
+  }
+  task downstream_check {
+    output report: text = "runtime/artifacts/resume/downstream.txt"
+    exec shell "mkdir -p runtime/artifacts/resume && printf checked > runtime/artifacts/resume/downstream.txt"
+    validate exists "${"${output.report}"}"
+  }
+}
+`,
+  "utf8"
+);
+const resumeFirst = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    resumeRuntimeFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--run-id",
+    "test-runtime-resume",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(resumeFirst.status, 0, resumeFirst.stderr || resumeFirst.stdout);
+const resumeMarker = path.join(__dirname, "..", "runtime", "artifacts", "resume", "marker.txt");
+fs.writeFileSync(resumeMarker, "keep", "utf8");
+const resumeSecond = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps-runner.js",
+    "run",
+    "--source",
+    resumeRuntimeFile,
+    "--project",
+    ".",
+    "--run-root",
+    "runtime/test-runs",
+    "--resume-run",
+    "test-runtime-resume",
+    "--skip-completed",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), encoding: "utf8" }
+);
+assert.strictEqual(resumeSecond.status, 0, resumeSecond.stderr || resumeSecond.stdout);
+const resumeSecondJson = JSON.parse(resumeSecond.stdout);
+assert.strictEqual(resumeSecondJson.resume.enabled, true);
+assert.strictEqual(resumeSecondJson.results[0].status, "skipped_completed");
+assert.strictEqual(fs.readFileSync(resumeMarker, "utf8"), "keep");
+assert(fs.existsSync(path.join(__dirname, "..", "runtime", "test-runs", "test-runtime-resume", "resume_state.json")));
+
 const repairPacketFile = path.join(fallbackDir, "repair-packet.aaps");
 fs.writeFileSync(
   repairPacketFile,

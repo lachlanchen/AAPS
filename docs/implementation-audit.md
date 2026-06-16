@@ -77,6 +77,7 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
 - Chat local fallback supports common edit commands; full natural-language editing depends on the Codex wrapper.
 - Prompt-only/model-only steps are recorded or converted into prompt files by the runtime, but they are not API-executed unless they declare supported executable actions or a future adapter.
 - Human review checkpoints are represented and logged, but there is not yet a dedicated review queue UI.
+- Runtime resume supports `--resume-run`, `--skip-completed`, and `--from-step`, but skipped artifacts are trusted from prior `run.json` records rather than revalidated through a freshness policy.
 - `include` dependencies are parsed and validated as relative paths, but they are not yet resolved into a merged executable module graph.
 - Conditional expressions support simple truthy values and `exists <path>` checks; advanced data-dependent expression evaluation is still future runtime work.
 - Source references are selective and strongest for AutoAppDev, LazyBlog, OrganoidQuant, and OrganoidCompactnessAnalysis. Broader repos were inspected for relevant files, but not every listed project produced a copied source reference.
@@ -84,7 +85,7 @@ This audit maps the requested AAPS Studio/workflow scope to the current implemen
 ## Not Yet Implemented
 
 - Full block execution engine for external model/API/internal tools.
-- Run state machine with pause/resume and human approval checkpoints.
+- Human-review pause/continue state machine and approval checkpoints.
 - Rich artifact database writer beyond JSONL summaries.
 - Broader domain-specific validation runners for plots, screenshots, manuscript outputs, and advanced image metrics beyond the current PGM mask checks.
 - Human review UI queue.
@@ -99,4 +100,4 @@ Build the fuller runtime:
 .aaps -> parse -> resolve imports/includes -> preflight blocks -> evaluate branches/loops -> run executable/model blocks -> write artifacts/logs -> validate -> recover/review -> report
 ```
 
-The next useful version should add richer branch expressions, review pause/resume, and model/tool adapters beyond local shell/Python/Node plus prompt-preparation agents.
+The next useful version should add richer branch expressions, review pause/continue, artifact freshness checks for resumed runs, and model/tool adapters beyond local shell/Python/Node plus prompt-preparation agents.

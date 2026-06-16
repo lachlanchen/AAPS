@@ -15,7 +15,7 @@ Manifest/compile target: `aaps_compile_report/0.1`. The manifest compiler is a s
 - Treat prompts as first-class code while making inputs and outputs explicit.
 - Represent reusable work as `skill` blocks and orchestration as `task` blocks.
 - Support nested `stage`, `action`, `method`, `choose`, `guard`, `if`, `else`, and `for_each` blocks.
-- Preserve enough structure for Codex, agent wrappers, and future AgInTiFlow runners to preflight, compile missing code/setup, execute, recover, pause, resume, audit, and visualize work.
+- Preserve enough structure for Codex, agent wrappers, and AgInTiFlow runners to preflight, compile missing code/setup, execute, recover, resume from prior run records, audit, and visualize work.
 
 ## Core Blocks
 

@@ -10,7 +10,7 @@ AAPS treats prompts as executable design intent, but it does not let intent blur
 4. **Vision-first does not mean model-only.** For biology, an agent may inspect an image, build priors, route to Cellpose or thresholding, then use a prompt model for QC and exception handling.
 5. **Chat is memory; actions are API calls.** Following the LazyBlog pattern, chat can propose, explain, and route. Source mutation happens through bounded edit actions that reparse and render the program.
 6. **Every block owns its boundary.** Inputs, outputs, metrics, run commands, and checks are declared near the block that owns them.
-7. **Runtimes must be resumable.** AAPS IR preserves IDs and dependency edges so future Codex or AgInTiFlow runtimes can pause, resume, and audit work.
+7. **Runtimes must be resumable.** AAPS IR preserves IDs and dependency edges so runs can be resumed, focused from a later step, skipped when completed artifacts already exist, and audited after Codex or AgInTiFlow handoffs.
 8. **Failure is a first-class path.** `validate`, `recover`, and `review` statements make fallback routes, skipped inputs, retries, and human approval visible in the script.
 
 ## Segmentation Example

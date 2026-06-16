@@ -239,6 +239,55 @@ node scripts/aaps.js run workflows/executable_static_check.aaps --project exampl
 
 The folder segmentation demo is the end-to-end smoke test. It generates demo PGM images if the folder is empty, evaluates `list_files(data/demo_images, pattern="*.pgm")`, runs QC, threshold segmentation, mask quantification, and batch summary once per image, then validates per-image masks and combined CSV/JSON/Markdown artifacts.
 
+## Resume And Rerun Modes
+
+AAPS runtime resume is separate from chat/session resume. Chat sessions preserve
+messages, cwd, backend settings, and active files. Runtime resume controls
+workflow execution and artifact overwrite behavior.
+
+Default execution is a full rerun:
+
+```bash
+aaps run workflows/main.aaps --project . --run-id main-full
+```
+
+To resume an existing run directory and skip steps that previously succeeded or
+recovered:
+
+```bash
+aaps run workflows/main.aaps --project . \
+  --resume-run main-full \
+  --skip-completed
+```
+
+The resumed run writes `resume_state.json` and archives the previous `run.json`
+under `resume/` before replacing the active summary. Skipped steps are recorded
+as `skipped_completed`, keyed by step path, loop index, and loop item. This lets
+large workflows split image grids once, skip finished Cellpose or threshold
+steps, and rerun only later agent QC, AgInTi refinement, verifier, or report
+blocks.
+
+Focused rerun levels:
+
+```bash
+# Full workflow rerun with a new run id.
+aaps run workflows/main.aaps --project . --run-id fresh-run
+
+# Rerun one block and its ancestors through the existing run-block filter.
+aaps run-block workflows/main.aaps --project . --block build_publication_report
+
+# Resume from the first matching step id/path and skip earlier plan steps.
+aaps run workflows/main.aaps --project . --resume-run main-full --from-step codex_refinement_verifier
+
+# Resume into a new run directory while reusing completed evidence from another run.
+aaps run workflows/main.aaps --project . --resume-run main-full --run-id report-only-rerun --skip-completed
+```
+
+Current limits: resume skips based on the prior `run.json`; it does not yet
+revalidate skipped artifacts unless a later block depends on them. Human-review
+pause/resume and per-action interactive approval remain future runtime state
+machine work.
+
 ## Studio
 
 The Studio Project tab can start a dry run or real run for the active `.aaps` file. Local Studio uses:

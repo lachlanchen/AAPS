@@ -1168,6 +1168,53 @@ function timeoutMs(step) {
   return value;
 }
 
+function resultResumeKey(stepPath, loop = null, item = "") {
+  return JSON.stringify({
+    step: String(stepPath || ""),
+    loop: loop === undefined ? null : loop,
+    item: String(item || ""),
+  });
+}
+
+function completedForResume(result) {
+  return ["succeeded", "recovered", "manual_review", "prompt_only", "planned", "skipped_completed"].includes(String(result && result.status));
+}
+
+function loadResumeState(runRoot, options = {}) {
+  const resumeRunId = String(options.resumeRun || options.resumeRunId || "").trim();
+  const resumeMode = String(options.resumeMode || options.rerunMode || (options.skipCompleted ? "skip-completed" : resumeRunId ? "skip-completed" : "full")).trim() || "full";
+  if (!resumeRunId && resumeMode === "full") {
+    return {
+      enabled: false,
+      mode: "full",
+      resumeRunId: "",
+      previousRunDir: "",
+      previousRun: null,
+      completed: new Map(),
+      skipCompleted: false,
+    };
+  }
+  const previousRunDir = path.join(runRoot, resumeRunId || String(options.runId || ""));
+  const previousRunPath = path.join(previousRunDir, "run.json");
+  const previousRun = fs.existsSync(previousRunPath) ? readJsonIfExists(previousRunPath) : null;
+  const completed = new Map();
+  ((previousRun && previousRun.results) || []).forEach((result) => {
+    if (!completedForResume(result)) return;
+    completed.set(resultResumeKey(result.step, result.loop, result.item || ""), result);
+  });
+  return {
+    enabled: Boolean(resumeRunId || resumeMode !== "full" || options.skipCompleted),
+    mode: resumeMode,
+    resumeRunId,
+    previousRunDir,
+    previousRunPath,
+    previousRun,
+    completed,
+    skipCompleted: ["skip-completed", "resume", "no-override", "no_override"].includes(resumeMode) || Boolean(options.skipCompleted),
+    fromStep: String(options.fromStep || options.fromBlock || "").trim(),
+  };
+}
+
 function startRuntimeWatchdog(runDir, runId, options = {}) {
   if (String(process.env.AAPS_DISABLE_RUNTIME_WATCHDOG || "").match(/^(1|true|yes)$/i)) {
     return { enabled: false, reason: "disabled_by_env" };
@@ -1282,8 +1329,9 @@ function run(options) {
   if (options.block) {
     plan = filterPlanByBlock(plan, options.block, true);
   }
-  const runId = options.runId || `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const runRoot = path.resolve(options.runRoot || path.join(projectDir, "runtime", "runs"));
+  const resumeState = loadResumeState(runRoot, options);
+  const runId = options.runId || resumeState.resumeRunId || `run-${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const runDir = path.join(runRoot, runId);
   ensureDir(runDir);
   ensureDir(path.join(runDir, "artifacts"));
@@ -1292,8 +1340,24 @@ function run(options) {
   ensureDir(path.join(runDir, "errors"));
   ensureDir(path.join(runDir, "repair_prompts"));
   ensureDir(path.join(runDir, "setup_prompts"));
+  if (resumeState.previousRun && resumeState.previousRunPath && path.resolve(resumeState.previousRunPath) === path.resolve(path.join(runDir, "run.json"))) {
+    const resumeArchiveDir = path.join(runDir, "resume");
+    ensureDir(resumeArchiveDir);
+    fs.copyFileSync(resumeState.previousRunPath, path.join(resumeArchiveDir, `${new Date().toISOString().replace(/[:.]/g, "-")}-previous-run.json`));
+  }
   writeJson(path.join(runDir, "resolved_workflow.json"), ir);
   writeJson(path.join(runDir, "execution_plan.json"), plan);
+  writeJson(path.join(runDir, "resume_state.json"), {
+    version: "aaps_runtime_resume/0.1",
+    enabled: resumeState.enabled,
+    mode: resumeState.mode,
+    resumeRunId: resumeState.resumeRunId,
+    previousRunDir: resumeState.previousRunDir || "",
+    previousRunStatus: resumeState.previousRun ? resumeState.previousRun.status : "",
+    completedStepCount: resumeState.completed.size,
+    skipCompleted: resumeState.skipCompleted,
+    fromStep: resumeState.fromStep || "",
+  });
 
   const context = contextFrom(ir, manifest, runId, projectDir, runDir, registries);
   context["project.python"] = projectPython(manifest, registries);
@@ -1431,6 +1495,7 @@ function run(options) {
   const results = [];
   const fallbackVisited = new Set();
   const methodSelections = [];
+  let fromStepReached = !resumeState.fromStep;
 
   function touchWatchdog(state, extra = {}) {
     const watchdogDir = path.join(runDir, "watchdog");
@@ -1459,6 +1524,12 @@ function run(options) {
 
   function event(payload) {
     appendJsonl(eventsFile, { time: nowIso(), runId, ...payload });
+  }
+
+  function matchesStepSelector(step, selector) {
+    if (!selector) return false;
+    const value = String(selector);
+    return step.id === value || step.path === value || step.path.includes(value);
   }
 
   function writeMethodSelections() {
@@ -1709,6 +1780,55 @@ function run(options) {
 
   function executeStep(step, overrides = {}) {
     const stepContext = contextForStep(step, overrides);
+    const resumeKey = resultResumeKey(step.path, overrides["loop.index"] ?? null, overrides.item || "");
+    if (!fromStepReached) {
+      if (matchesStepSelector(step, resumeState.fromStep)) {
+        fromStepReached = true;
+        event({ type: "resume_from_step", step: step.path, selector: resumeState.fromStep });
+      } else {
+        const result = {
+          step: step.path,
+          id: step.id,
+          status: "skipped_before_from_step",
+          reason: `before_from_step:${resumeState.fromStep}`,
+          loop: overrides["loop.index"] ?? null,
+          item: overrides.item || "",
+          actions: [],
+          validations: [],
+          repair: "",
+        };
+        results.push(result);
+        event({ type: "step_skipped", step: step.path, reason: result.reason });
+        return result;
+      }
+    }
+    if (resumeState.skipCompleted && resumeState.completed.has(resumeKey)) {
+      const previous = resumeState.completed.get(resumeKey);
+      const result = {
+        step: step.path,
+        id: step.id,
+        status: "skipped_completed",
+        reason: "resume_skip_completed",
+        previousStatus: previous.status,
+        previousRunId: resumeState.resumeRunId || (resumeState.previousRun && resumeState.previousRun.runId) || "",
+        previousRunDir: resumeState.previousRunDir || "",
+        loop: overrides["loop.index"] ?? null,
+        item: overrides.item || "",
+        actions: [],
+        validations: [],
+        repair: "",
+      };
+      results.push(result);
+      event({ type: "step_skipped", step: step.path, reason: result.reason, previousStatus: previous.status });
+      touchWatchdog("step_finished", {
+        activeStep: step.path,
+        status: result.status,
+        reason: result.reason,
+        loop: overrides["loop.index"] ?? null,
+        item: overrides.item || "",
+      });
+      return result;
+    }
     touchWatchdog("running_step", {
       activeStep: step.path,
       loop: overrides["loop.index"] ?? null,
@@ -1952,6 +2072,16 @@ function run(options) {
     requirements,
     readiness,
     compilePlan,
+    resume: {
+      enabled: resumeState.enabled,
+      mode: resumeState.mode,
+      resumeRunId: resumeState.resumeRunId,
+      previousRunDir: resumeState.previousRunDir || "",
+      previousRunStatus: resumeState.previousRun ? resumeState.previousRun.status : "",
+      completedStepCount: resumeState.completed.size,
+      skipCompleted: resumeState.skipCompleted,
+      fromStep: resumeState.fromStep || "",
+    },
     plan: {
       steps: plan.steps.length,
       executableSteps: plan.executableSteps,
@@ -1972,6 +2102,7 @@ function run(options) {
       `Status: ${summary.status}`,
       `File: ${summary.file}`,
       `Dry run: ${summary.dryRun}`,
+      summary.resume && summary.resume.enabled ? `Resume: ${summary.resume.mode} from ${summary.resume.resumeRunId || summary.resume.previousRunDir || "previous run"}` : "",
       "",
       "## Steps",
       ...results.map((item) => `- ${item.status}: ${item.step}${item.repair ? ` (repair: ${item.repair})` : ""}`),

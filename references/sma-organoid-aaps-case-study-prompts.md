@@ -165,6 +165,52 @@ The user then made the versioning expectation explicit:
 - The final AAPS result should prove that adjacent agent handoff works through
   files and parser-checked workflow structure, not just through chat text.
 
+## Prompt 7: Finish Task First, Then Generalize Session Semantics
+
+During the AgInTi stress-test refinement, the user emphasized execution order
+and separation of concerns:
+
+- First finish the SMA segmentation/report task through AAPS.
+- Then generalize the AAPS runtime/session behavior.
+- Resume should use the same AAPS workflow/chat session where possible, similar
+  to AgInTiFlow session logic.
+- AAPS should distinguish chat-session continuity from runtime-run continuity.
+  Chat sessions preserve prompts, cwd, backend settings, and selected project.
+  Runtime runs preserve block status, artifacts, logs, validation, and repair
+  state.
+- A long AAPS task should be stoppable in the middle, resumable later, and
+  restartable at different levels.
+
+## Prompt 8: Runtime Resume, No-Override, And Selective Rerun
+
+After the report and AgInTi artifacts were verified, the user asked to check
+what was still missing and specifically named workflow resume:
+
+- Document all recent messages and save the original prompts as references.
+- Check missing AAPS behavior, especially session management.
+- Add support for stopping a workflow mid-run and resuming it.
+- Support full rerun, current-run resume, and focused rerun of later stages.
+- Support no-overwrite/no-override behavior for completed artifacts.
+- Skip blocks that already finished successfully. In the SMA case this means:
+  - split the grid into tiles once and skip it later;
+  - skip expensive Cellpose/threshold steps if their masks/overlays/metrics are
+    already valid;
+  - rerun only Codex image-view QC, AgInTi image generation/refinement,
+    verifier, or report blocks when needed.
+
+This led to the runtime resume mode:
+
+```bash
+aaps run workflows/main.aaps --project . --resume-run <run-id> --skip-completed
+aaps run workflows/main.aaps --project . --resume-run <run-id> --from-step codex_refinement_verifier
+aaps run-block workflows/main.aaps --project . --block build_publication_report
+```
+
+The intended behavior is conservative: AAPS should skip based on a prior
+`run.json`, record `skipped_completed` steps in the new run summary, preserve
+previous artifacts unless explicitly rerun, and write `resume_state.json` so the
+decision is auditable.
+
 ## Harness Principles Captured
 
 1. Natural language is the top-level programming surface.
@@ -185,6 +231,9 @@ The user then made the versioning expectation explicit:
    workflow is not considered complete.
 10. Hardware and environment intent, including GPU preference for tools such as
     Cellpose, belongs in the AAPS block contract.
+11. Runtime resume is part of the harness. AAPS should preserve and expose
+    which steps were rerun, skipped, resumed, repaired, or accepted as existing
+    evidence.
 
 ## Expected Acceptance Checks
 
@@ -216,3 +265,7 @@ It should also create nonempty publication artifacts:
 - A report block should be a normal executable block, not an afterthought.
 - AAPS should surface project snapshots, manifest reports, run logs, and
   fallback decisions in Studio and CLI.
+- Runtime resume is now minimally supported through `--resume-run`,
+  `--skip-completed`, and `--from-step`. Future work should add richer pause,
+  stop, human-review checkpoints, and artifact revalidation policies for skipped
+  steps.
