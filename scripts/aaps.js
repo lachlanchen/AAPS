@@ -727,8 +727,8 @@ function buildPromptHandoff(projectDir, goal, options) {
 }
 
 function codexPromptArgs(projectDir, outputPath, options = {}) {
-  const model = String(options.model || options.codexModel || process.env.AAPS_CODEX_MODEL || "gpt-5.3-codex");
-  const reasoning = String(options.reasoning || options.codexReasoning || process.env.AAPS_CODEX_REASONING || "high");
+  const model = String(options.model || options.codexModel || process.env.AAPS_CODEX_MODEL || "gpt-5.5");
+  const reasoning = String(options.reasoning || options.codexReasoning || process.env.AAPS_CODEX_REASONING || "xhigh");
   const args = [
     "exec",
     "--ephemeral",

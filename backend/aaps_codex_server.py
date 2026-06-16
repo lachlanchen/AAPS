@@ -100,7 +100,7 @@ DEFAULT_SETTINGS = {
     "codexChatModel": "gpt-5.5",
     "codexChatReasoning": "medium",
     "codexTaskModel": "gpt-5.5",
-    "codexTaskReasoning": "high",
+    "codexTaskReasoning": "xhigh",
     "codexTimeout": 240,
     "deepseekBaseUrl": "https://api.deepseek.com",
     "deepseekModel": "deepseek-v4-pro",
@@ -269,7 +269,7 @@ def read_settings() -> dict:
     for key, fallback in {
         "codexReasoning": "medium",
         "codexChatReasoning": "medium",
-        "codexTaskReasoning": "high",
+        "codexTaskReasoning": "xhigh",
     }.items():
         if settings.get(key) not in {"low", "medium", "high", "xhigh"}:
             settings[key] = fallback
@@ -1956,7 +1956,7 @@ def codex_command(schema: str, output_path: Path, settings: dict | None = None, 
         reasoning = str(active.get("codexChatReasoning") or active.get("codexReasoning") or "medium")
     else:
         model = str(active.get("codexTaskModel") or active.get("codexModel") or "gpt-5.5")
-        reasoning = str(active.get("codexTaskReasoning") or active.get("codexReasoning") or "high")
+        reasoning = str(active.get("codexTaskReasoning") or active.get("codexReasoning") or "xhigh")
     codex_bin = find_command("codex", "AAPS_CODEX_BIN") or "codex"
     command = [
         codex_bin,

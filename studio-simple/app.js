@@ -1085,7 +1085,7 @@
       ["#codex-chat-model", settings.codexChatModel || settings.codexModel || "gpt-5.5"],
       ["#codex-chat-reasoning", settings.codexChatReasoning || settings.codexReasoning || "medium"],
       ["#codex-task-model", settings.codexTaskModel || settings.codexModel || "gpt-5.5"],
-      ["#codex-task-reasoning", settings.codexTaskReasoning || "high"],
+      ["#codex-task-reasoning", settings.codexTaskReasoning || "xhigh"],
       ["#aginti-provider", settings.agintiProvider || "deepseek"],
     ];
     pairs.forEach(([selector, value]) => {
@@ -1100,7 +1100,7 @@
       codexChatModel: $("#codex-chat-model")?.value.trim() || "gpt-5.5",
       codexChatReasoning: $("#codex-chat-reasoning")?.value || "medium",
       codexTaskModel: $("#codex-task-model")?.value.trim() || "gpt-5.5",
-      codexTaskReasoning: $("#codex-task-reasoning")?.value || "high",
+      codexTaskReasoning: $("#codex-task-reasoning")?.value || "xhigh",
       agintiProvider: $("#aginti-provider")?.value || "deepseek",
     };
   }
