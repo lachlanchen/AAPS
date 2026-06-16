@@ -84,7 +84,7 @@
             <h2>Install AAPS from npm</h2>
             <p>
               AAPS is published as a scoped npm package so one install can provide the parser,
-              manifest compiler/planner, CLI runner, and local Studio server. Release publishing is
+              image-aware agent handoff prompts, manifest compiler/planner, CLI runner, and local Studio server. Release publishing is
               configured for GitHub Actions Trusted Publishing, so npm accepts the release
               workflow through OIDC.
             </p>
@@ -92,7 +92,7 @@
               <li>CLI binary: `aaps`.</li>
               <li>Local webapp: `aaps studio --host 127.0.0.1 --port 8797`.</li>
             <li>Parser/manifest: `aaps parse`, `aaps manifest`, `aaps plan`, `aaps check`, and `aaps validate`.</li>
-              <li>Runtime: `aaps run`, `aaps run-block`, readiness checks, and manifest prompts.</li>
+              <li>Runtime: `aaps run`, `aaps run-block`, readiness checks, image handoff packets, and manifest prompts.</li>
               <li>License: Apache-2.0 for research, commercial use, and company-backed development.</li>
               <li>Publisher: GitHub `lachlanchen/AAPS`, workflow `npm-publish.yml`.</li>
             </ul>
@@ -326,6 +326,7 @@ aaps run workflows/main.aaps --project . --json</code></pre>
               <li>Execute `for_each list_files(...)` loops for folder-level image pipelines.</li>
               <li>Record `resolved_workflow.json`, `execution_plan.json`, `run.json`, events, logs, artifacts, repair notes, and reports.</li>
               <li>Use report recap blocks to summarize inputs, method comparisons, agent decisions, handoff prompts, logs, final outputs, and limitations.</li>
+              <li>Feed parser diagnostics back to agents until `.aaps` files parse cleanly before reporting completion.</li>
               <li>Run workflows, dry-runs, or selected blocks from CLI or Studio.</li>
             </ul>
           </div>

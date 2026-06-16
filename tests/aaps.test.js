@@ -147,6 +147,10 @@ assert(blockGuide.includes("Agent Handoff Chain Block"));
 assert(AAPS.REPORT_RECAP_PRINCIPLES.length >= 4);
 assert(AAPS.REPORT_RECAP_PROMPT.includes("complete AAPS execution recap"));
 assert(AAPS.reportParadigmMarkdown().includes("AAPS Report Recap Paradigm"));
+assert(AAPS.AGENT_HANDOFF_PRINCIPLES.length >= 4);
+assert(AAPS.AGENT_HANDOFF_PACKET_SCHEMA.version === "aaps_agent_handoff/0.1");
+assert(AAPS.agentHandoffGuideMarkdown().includes("AAPS Agent Handoff Guide"));
+assert(AAPS.parserFeedbackMarkdown([{ line: 3, message: "Unknown statement." }], { file: "bad.aaps" }).includes("line 3"));
 const guideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "blocks", "--json", "--no-auto-update"], {
   cwd: path.join(__dirname, ".."),
   encoding: "utf8",
@@ -165,6 +169,32 @@ const reportGuidePayload = JSON.parse(reportGuideCli.stdout);
 assert.strictEqual(reportGuidePayload.ok, true);
 assert.strictEqual(reportGuidePayload.topic, "report");
 assert(reportGuidePayload.markdown.includes("Default Agent Prompt"));
+const handoffGuideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "handoff", "--json", "--no-auto-update"], {
+  cwd: path.join(__dirname, ".."),
+  encoding: "utf8",
+});
+assert.strictEqual(handoffGuideCli.status, 0, handoffGuideCli.stderr || handoffGuideCli.stdout);
+const handoffGuidePayload = JSON.parse(handoffGuideCli.stdout);
+assert.strictEqual(handoffGuidePayload.ok, true);
+assert.strictEqual(handoffGuidePayload.topic, "handoff");
+assert(handoffGuidePayload.markdown.includes("Parse Feedback Gate"));
+const promptImageHome = fs.mkdtempSync(path.join(os.tmpdir(), "aaps-prompt-image-"));
+const promptImage = path.join(promptImageHome, "evidence.png");
+fs.writeFileSync(promptImage, Buffer.from("89504e470d0a1a0a", "hex"));
+const promptImageCli = childProcess.spawnSync(
+  process.execPath,
+  ["scripts/aaps.js", "prompt", "Prepare an image-aware handoff.", "--project", promptImageHome, "--backend", "print", "--image", promptImage, "--json", "--no-auto-update"],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+  }
+);
+assert.strictEqual(promptImageCli.status, 0, promptImageCli.stderr || promptImageCli.stdout);
+const promptImagePayload = JSON.parse(promptImageCli.stdout);
+assert.strictEqual(promptImagePayload.ok, true);
+assert.strictEqual(promptImagePayload.images.length, 1);
+assert(fs.readFileSync(promptImagePayload.promptPath, "utf8").includes("Attached Image Evidence"));
+fs.rmSync(promptImageHome, { recursive: true, force: true });
 const manifestAliasSmoke = childProcess.spawnSync(
   process.execPath,
   ["scripts/aaps.js", "manifest", "examples/hello.aaps", "--project", ".", "--mode", "check", "--json", "--no-auto-update"],

@@ -2191,7 +2191,9 @@ AAPS v0.2 supports:
 - For biology segmentation, prefer a clear method route such as Cellpose/multiscale Cellpose when available, and deterministic threshold/morphology fallback when unavailable. Always declare how the compiler/runtime proves the result.
 - For manifest/compile/repair conversations, preserve the `.aaps` contract and repair the failing block/script/tool underneath it. If readiness reports a missing script/tool/dependency/GPU contract, name that failure in the response and either edit the source to make the manifest target clear or route the repair to Codex GPT-5.5 xhigh.
 - When a user asks for a report, create or refine a report recap block that explicitly consumes logs, method candidates, agent decisions, handoff packets, validation records, and final artifacts. Require it to cite paths and truthfully distinguish executed agent calls from prepared prompt-only handoffs.
-- When a workflow agent will call another agent or image generator, create a durable prompt/handoff artifact first and make the verifier block consume the downstream output through a declared schema.
+- When a workflow agent will call another agent or image generator, create a durable image-aware prompt/handoff artifact first. It must carry source image/artifact paths, upstream visual conclusions, QC defects, failure reason, exact downstream prompt, expected artifact schema, integration policy, and verifier checklist.
+- Generated or regenerated outputs from AgInTiFlow, GRS, image generation, or another agent must be incorporated into the main pipeline through declared output paths, an integration manifest, and a verifier report. Do not leave downstream artifacts as orphan files.
+- Parser diagnostics are a hard completion gate. If the edited source would produce parser errors, feed the exact line/message diagnostics back into the agent repair loop and keep editing until the shared AAPS parser is clean, or return a precise blocker.
 - Do not make success claims from chat text alone. A real completion must cite parser/check/run evidence, declared artifacts, or an explicit blocker.
 
 Current source:
@@ -3349,6 +3351,8 @@ Default AAPS agent policy:
 - Do not weaken requirements to hide missing tools, dependencies, hardware, artifacts, or validations.
 - When an agent must hand a task to another agent or image generator, write a durable handoff packet containing source artifacts, QC findings, failure reason, high-quality prompt, expected output schema, and verification criteria.
 - When an agent writes a downstream prompt, make that prompt itself high quality and artifact-backed: include evidence paths, domain priors, constraints, expected schema, safety rules, and a verifier checklist.
+- For adjacent agent blocks with images, the handoff packet must include source image paths/crops/previews, upstream visual conclusions, candidate masks/overlays, downstream generated artifact paths, an integration manifest, and a verifier report.
+- Treat parser diagnostics as repair inputs: quote the line/message, fix the `.aaps` source or manifest, rerun the parser, and do not mark the task complete until diagnostics are empty or a precise blocker is returned.
 - Report generation should recap the whole task from inputs through decisions and final outputs using logs and artifacts, not just summarize a final result.
 - Return concrete files, commands, artifacts, or blockers.
 

@@ -30,10 +30,40 @@
     "Make blocks small enough to test independently, but not so small that the workflow becomes unreadable.",
     "Prefer deterministic scripts/tools for repeatable work and explicit agent blocks for interpretation, repair, method choice, or irregular data.",
     "Represent routing in AAPS structure, not prose: use choose, if/else, for_each, fallback, recover, and review nodes where the decision matters.",
-    "When agents hand work to other agents or image generators, pass a structured handoff packet with source artifacts, QC findings, failure reason, high-quality prompt, expected output schema, and verification criteria.",
+    "When agents hand work to other agents or image generators, pass a structured handoff packet with source images/artifacts, QC findings, upstream conclusions, failure reason, high-quality prompt, expected output schema, verification criteria, and an integration manifest for returned artifacts.",
+    "When parser or manifest diagnostics exist, feed the exact line/message evidence back into the agent and keep repairing until the same parser validates the final `.aaps` file or a precise blocker is recorded.",
     "Compile missing implementation beneath the block contract. Do not weaken required inputs, outputs, GPU/tool/agent requirements, or validations just to pass readiness.",
     "Every block that writes artifacts should also declare how those artifacts are validated and where a human or agent can inspect them.",
   ];
+  const AGENT_HANDOFF_PRINCIPLES = [
+    "Adjacent agent blocks must exchange durable artifacts, not only chat memory: write a handoff packet before invoking the next agent.",
+    "Image-aware handoff packets should include source image paths, crops or previews, upstream visual observations, candidate masks/overlays, QC defects, and the exact downstream prompt.",
+    "The downstream agent or image generator must return declared artifacts plus an integration manifest that maps generated files back into the main AAPS outputs.",
+    "A verifier agent should consume the source evidence, downstream artifacts, and integration manifest before the workflow accepts regenerated or refined results.",
+    "If the downstream agent is unavailable, record a truthful prompt-only or blocked handoff status instead of claiming a regenerated output.",
+    "Parser feedback is part of the agent loop: unresolved syntax or manifest errors must be copied into the next agent instruction and cleared before the task is marked complete.",
+  ];
+  const AGENT_HANDOFF_PACKET_SCHEMA = {
+    version: "aaps_agent_handoff/0.1",
+    upstreamAgent: "agent name or block id",
+    downstreamAgent: "agent name or block id",
+    taskGoal: "human-readable goal",
+    sourceArtifacts: ["project-relative file or folder paths"],
+    sourceImages: ["project-relative image paths, crops, overlays, previews"],
+    upstreamConclusion: {
+      summary: "what the upstream agent observed",
+      qualityDecision: "accepted | needs_refinement | blocked | not_needed",
+      failureReason: "why handoff is needed, if any",
+    },
+    downstreamPromptPath: "artifacts/agent_handoffs/prompt.md",
+    expectedOutputSchema: {
+      generatedArtifacts: ["paths or path templates"],
+      integrationManifest: "json path",
+      verifierReport: "json path",
+    },
+    verificationRubric: ["criteria the verifier must check"],
+    integrationPolicy: "how accepted generated artifacts replace or augment pipeline outputs",
+  };
   const REPORT_RECAP_PRINCIPLES = [
     "A report block is an execution recap, not a loose conclusion: it should reconstruct the task from input goal through intermediate decisions to final artifacts.",
     "Report inputs should include source artifacts, method comparison outputs, QC/agent decisions, run manifests, logs, validation summaries, handoff packets, and final artifact indexes.",
@@ -189,27 +219,36 @@
       title: "Agent Handoff Chain Block",
       purpose: "Transfer a difficult task between agents without losing evidence, prompts, decisions, or expected output structure.",
       useWhen: "A QC agent should escalate to Codex, AgInTiFlow, an image-generation agent, a vision model, or a verifier agent.",
-      contract: ["input evidence folder", "input qc decision json", "output handoff_packet:json", "output agent_prompt:markdown", "output refined_result", "output verifier_report:json"],
+      contract: ["input source_images", "input evidence folder", "input qc decision json", "input upstream conclusion", "output handoff_packet:json", "output downstream_prompt:markdown", "output generated_artifacts:folder", "output integration_manifest:json", "output verifier_report:json"],
       snippet: [
         "agent qc_agent {",
-        "  role \"Inspect artifacts and decide whether deterministic output is good enough.\"",
+        "  role \"Inspect artifacts and images, then decide whether deterministic output is good enough.\"",
         "  model \"gpt-5.5\"",
         "}",
         "agent refinement_agent {",
-        "  role \"Generate or refine output from a structured handoff packet.\"",
+        "  role \"Generate or refine output from a structured image-aware handoff packet.\"",
         "  model \"aginti-image\"",
+        "}",
+        "agent verifier_agent {",
+        "  role \"Verify downstream generated artifacts against source images and the handoff rubric before integration.\"",
+        "  model \"gpt-5.5\"",
         "}",
         "block agent_handoff_chain {",
         "  uses qc_agent",
+        "  input source_images: folder required = \"artifacts/source_images\"",
         "  input evidence_dir: folder required = \"artifacts\"",
         "  input qc_decision: json required = \"artifacts/qc_decision.json\"",
+        "  input upstream_conclusion: json = \"artifacts/upstream_conclusion.json\"",
         "  output handoff_packet: json = \"artifacts/agent_handoff.json\"",
-        "  output agent_prompt: markdown = \"artifacts/agent_prompt.md\"",
-        "  output refined_result: image = \"artifacts/refined_result.png\"",
+        "  output downstream_prompt: markdown = \"artifacts/agent_prompt.md\"",
+        "  output generated_artifacts: folder = \"artifacts/generated_refinement\"",
+        "  output integration_manifest: json = \"artifacts/integration_manifest.json\"",
         "  output verifier_report: json = \"artifacts/verifier_report.json\"",
-        "  prompt \"Build a complete handoff packet: task goal, source artifacts, observed defects, method history, exact image-generation/refinement prompt, expected schema, safety constraints, and verification rubric.\"",
+        "  prompt \"Build a complete image-aware handoff packet: task goal, source image paths or crops, upstream visual conclusions, observed defects, method history, exact image-generation/refinement prompt, expected artifact schema, integration policy, safety constraints, and verification rubric.\"",
         "  validate json \"${output.handoff_packet}\"",
-        "  validate nonempty \"${output.agent_prompt}\"",
+        "  validate nonempty \"${output.downstream_prompt}\"",
+        "  validate json \"${output.integration_manifest}\"",
+        "  validate json \"${output.verifier_report}\"",
         "  if \"refinement_agent_unavailable\" {",
         "    output handoff_status: json = \"artifacts/refinement_handoff_status.json\"",
         "    recover \"Record prompt-only handoff truthfully and ask for agent availability.\"",
@@ -301,6 +340,50 @@
       "## Minimal Contract",
       "",
       "A serious report block should declare inputs for source data, run logs, method comparisons, agent decisions, and handoff packets; outputs for TeX/PDF or Markdown/HTML; an artifact index; and validations for every durable report output.",
+    ].join("\n");
+  }
+
+  function parserFeedbackMarkdown(diagnostics = [], options = {}) {
+    const file = options.file || options.sourceFile || "";
+    const prefix = file ? ` for ${file}` : "";
+    if (!Array.isArray(diagnostics) || diagnostics.length === 0) {
+      return `# AAPS Parser Feedback${prefix}\n\nNo parser diagnostics were reported.`;
+    }
+    const lines = [
+      `# AAPS Parser Feedback${prefix}`,
+      "",
+      "The agent must repair the `.aaps` source and rerun the same parser before claiming completion.",
+      "",
+      "## Diagnostics",
+    ];
+    diagnostics.forEach((item, index) => {
+      const line = item && item.line ? `line ${item.line}` : "line unknown";
+      const column = item && item.column ? `, column ${item.column}` : "";
+      const message = item && item.message ? item.message : String(item || "unknown parser diagnostic");
+      lines.push(`${index + 1}. ${line}${column}: ${message}`);
+    });
+    lines.push("", "## Required Agent Loop", "", "1. Quote the failing diagnostic in the next repair step.", "2. Edit the smallest `.aaps` region that fixes the grammar or manifest issue.", "3. Rerun `aaps parse`, `aaps validate`, and `aaps manifest --mode check` for the same file.", "4. Finish only when diagnostics are empty, or record the precise blocker and affected file.");
+    return lines.join("\n");
+  }
+
+  function agentHandoffGuideMarkdown() {
+    return [
+      "# AAPS Agent Handoff Guide",
+      "",
+      "AAPS treats adjacent agent blocks as typed workflow edges. Codex, AgInTiFlow, image-generation agents, and verifier agents should exchange project artifacts through a durable packet so conclusions, prompts, generated files, and integration decisions survive beyond chat memory.",
+      "",
+      "## Principles",
+      ...AGENT_HANDOFF_PRINCIPLES.map((item, index) => `${index + 1}. ${item}`),
+      "",
+      "## Packet Schema",
+      "",
+      "```json",
+      JSON.stringify(AGENT_HANDOFF_PACKET_SCHEMA, null, 2),
+      "```",
+      "",
+      "## Parse Feedback Gate",
+      "",
+      "A backend agent may generate or edit `.aaps`, but completion is gated by the deterministic parser. Feed parser diagnostics back into the repair prompt and rerun the parser until the final source is parse-clean.",
     ].join("\n");
   }
 
@@ -2642,10 +2725,14 @@
     PROJECT_VERSION,
     PROJECT_FILE_CATEGORIES,
     BLOCK_DESIGN_PRINCIPLES,
+    AGENT_HANDOFF_PRINCIPLES,
+    AGENT_HANDOFF_PACKET_SCHEMA,
     REPORT_RECAP_PRINCIPLES,
     REPORT_RECAP_PROMPT,
     BLOCK_ARCHETYPES,
     blockDesignGuideMarkdown,
+    agentHandoffGuideMarkdown,
+    parserFeedbackMarkdown,
     reportParadigmMarkdown,
     parseAAPS,
     parseAAPSProject,

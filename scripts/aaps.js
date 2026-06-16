@@ -67,7 +67,7 @@ function usage() {
     "  aaps snapshot [--project .] [--label name] [--json]",
     "  aaps checkpoint [--project .] [--label name] [--init-git] [--json]",
     "  aaps versions [--project .] [--limit 120] [--json]",
-    "  aaps guide blocks|report [--json]",
+    "  aaps guide blocks|report|handoff [--json]",
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
@@ -91,6 +91,7 @@ function usage() {
     "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
     "  --run-id <id>     Stable run identifier for reproducible test runs.",
     "  --set <name=value> Override an AAPS input or parameter at runtime; repeatable.",
+    "  --image <file>    Attach image evidence to Codex direct prompts; repeatable.",
     "  --dry-run         Build plan/readiness and skip action side effects.",
     "  --backend <name>  Prompt backend for direct goals. Defaults to codex.",
     "  --codex-session <id> Resume an existing Codex exec session for direct prompts.",
@@ -129,11 +130,11 @@ function parseArgs(argv) {
     const key = item.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) {
-      if (key === "set") options.set = [...(Array.isArray(options.set) ? options.set : []), "true"];
+      if (key === "set" || key === "image") options[key] = [...(Array.isArray(options[key]) ? options[key] : []), "true"];
       else options[key] = true;
     }
     else {
-      if (key === "set") options.set = [...(Array.isArray(options.set) ? options.set : []), next];
+      if (key === "set" || key === "image") options[key] = [...(Array.isArray(options[key]) ? options[key] : []), next];
       else options[key] = next;
       index += 1;
     }
@@ -158,6 +159,29 @@ function safeRelative(base, value, label = "path") {
     throw new Error(`${label} escapes project root: ${value}`);
   }
   return resolved;
+}
+
+function expandHomePath(value) {
+  const text = String(value || "").trim();
+  if (text === "~") return os.homedir();
+  if (text.startsWith("~/")) return path.join(os.homedir(), text.slice(2));
+  return text;
+}
+
+function resolvePromptImages(projectDir, rawImages) {
+  const images = Array.isArray(rawImages) ? rawImages : rawImages ? [rawImages] : [];
+  return images
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => item !== "true")
+    .map((item) => {
+      const expanded = expandHomePath(item);
+      const resolved = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(projectDir, expanded);
+      if (!fs.existsSync(resolved)) throw new Error(`Prompt image not found: ${item}`);
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) throw new Error(`Prompt image is not a file: ${item}`);
+      return resolved;
+    });
 }
 
 function readManifest(projectDir) {
@@ -664,6 +688,21 @@ function buildPromptHandoff(projectDir, goal, options) {
   const aapsCli = path.join(__dirname, "aaps.js");
   const dockerSafeAapsCli = `npx -y @lazyingart/aaps@${packageVersion()}`;
   const projectRelativePromptPath = toProjectPath(path.relative(projectDir, promptPath));
+  const promptImages = resolvePromptImages(projectDir, options.image || options.images);
+  const imageLines = promptImages.length
+    ? [
+        "## Attached Image Evidence",
+        "",
+        "Codex receives the same files through `--image`. Use image-view reasoning to inspect them, record visual conclusions in handoff packets, and pass those conclusions to downstream agent/image-generation blocks.",
+        "",
+        ...promptImages.map((imagePath) => {
+          const relative = path.relative(projectDir, imagePath);
+          const display = !relative.startsWith("..") && !path.isAbsolute(relative) ? toProjectPath(relative) : imagePath;
+          return `- ${display}`;
+        }),
+        "",
+      ]
+    : [];
   const text = [
     "# AAPS Backend Agent Task",
     "",
@@ -711,6 +750,12 @@ function buildPromptHandoff(projectDir, goal, options) {
     "- If parse/validate/compile fails, repair the `.aaps` file and rerun the checks. Do not continue with an invalid workflow.",
     "- If `aaps compile --mode apply` or `aaps check` creates a missing-component report, use the report as the repair target. Repair scripts/tools/registries beneath the contract, then rerun `aaps check`.",
     "- Hardware and environment requirements are part of the contract. For example, a `requires_gpu \"required\"` block must have an implementation that actually requests GPU execution or records an explicit verified fallback; do not silently switch it to CPU.",
+    "- Parser diagnostics are a hard completion gate. If `aaps parse` reports any line/message errors, copy those diagnostics into the next repair step and keep editing/rerunning until the same parser is clean or an exact blocker is recorded.",
+    "",
+    ...imageLines,
+    "## Adjacent Agent Handoff Contract",
+    "",
+    AAPS.agentHandoffGuideMarkdown ? AAPS.agentHandoffGuideMarkdown() : "",
     "",
     "## Default Block Design Guide",
     "",
@@ -723,9 +768,9 @@ function buildPromptHandoff(projectDir, goal, options) {
     "## Prompt-Generation Contract",
     "",
     "- AAPS agents often need to write prompts for downstream agents inside the workflow. Treat those prompts as executable artifacts.",
-    "- A downstream agent prompt must include task goal, source artifact paths, domain priors, observed QC findings, failure reason, method history, expected output schema, color/format constraints, safety constraints, and verifier checklist.",
+    "- A downstream agent prompt must include task goal, source artifact paths, source image paths or crops, domain priors, observed QC findings, failure reason, upstream conclusions, method history, expected output schema, color/format constraints, safety constraints, integration policy, and verifier checklist.",
     "- For image generation or mask refinement, include what must remain unchanged, what must be improved, instance/color conventions, allowed output files, and how the next verifier agent will judge success.",
-    "- Save prompt templates or handoff packets under project-local artifacts even when the downstream agent is not called, and mark the status truthfully as prepared/template/not_needed/blocked.",
+    "- Save prompt templates, handoff packets, generated-artifact manifests, and verifier reports under project-local artifacts even when the downstream agent is not called, and mark the status truthfully as prepared/template/not_needed/blocked.",
     "",
     "## Manifestation Strategy",
     "",
@@ -750,7 +795,7 @@ function buildPromptHandoff(projectDir, goal, options) {
     "",
   ].join("\n");
   fs.writeFileSync(promptPath, text, "utf8");
-  return { promptPath, projectRelativePromptPath, prompt: text, aapsCli, dockerSafeAapsCli };
+  return { promptPath, projectRelativePromptPath, prompt: text, aapsCli, dockerSafeAapsCli, images: promptImages };
 }
 
 function codexPromptArgs(projectDir, outputPath, options = {}) {
@@ -758,6 +803,7 @@ function codexPromptArgs(projectDir, outputPath, options = {}) {
   const reasoning = String(options.reasoning || options.codexReasoning || process.env.AAPS_CODEX_REASONING || "xhigh");
   const resumeSession = String(options.codexSession || process.env.AAPS_CODEX_SESSION || "").trim();
   const resumeLast = Boolean(options.codexResumeLast || process.env.AAPS_CODEX_RESUME_LAST === "1");
+  const promptImages = resolvePromptImages(projectDir, options.image || options.images);
   const args = resumeSession || resumeLast
     ? [
         "exec",
@@ -784,6 +830,9 @@ function codexPromptArgs(projectDir, outputPath, options = {}) {
   if (options.codexBypassSandbox || process.env.AAPS_CODEX_BYPASS_SANDBOX === "1") {
     args.push("--dangerously-bypass-approvals-and-sandbox");
   }
+  promptImages.forEach((imagePath) => {
+    args.push("--image", imagePath);
+  });
   if (resumeLast) args.push("--last");
   else if (resumeSession) args.push(resumeSession);
   args.push("-");
@@ -817,6 +866,7 @@ function commandPromptWithCodex(projectDir, handoff, payload, options) {
   payload.command = [codexCommand.command, ...args];
   payload.backendCommand = { name: "codex", command: codexCommand.command, source: codexCommand.source };
   payload.handoffMode = codexResumeRequested ? "codex_exec_resume_with_saved_handoff" : "stdin_with_saved_handoff";
+  payload.images = Array.isArray(handoff.images) ? handoff.images : [];
   payload.outputPath = outputPath;
   payload.outputFile = toProjectPath(path.relative(projectDir, outputPath));
   const auditStartedAtMs = Date.now();
@@ -877,6 +927,7 @@ function commandPrompt(goal, options) {
     prePromptSnapshot,
     promptFile: handoff.projectRelativePromptPath,
     promptPath: handoff.promptPath,
+    images: handoff.images || [],
     executed: false,
     command: [],
     status: "prompt_prepared",
@@ -1087,6 +1138,18 @@ function commandAudit(fileArg, options) {
 
 function commandGuide(topic, options) {
   const subject = String(topic || "blocks").toLowerCase();
+  if (["handoff", "handoffs", "agent-handoff", "agent_handoff", "agents"].includes(subject)) {
+    const payload = {
+      ok: true,
+      topic: "handoff",
+      principles: AAPS.AGENT_HANDOFF_PRINCIPLES || [],
+      packetSchema: AAPS.AGENT_HANDOFF_PACKET_SCHEMA || {},
+      markdown: AAPS.agentHandoffGuideMarkdown ? AAPS.agentHandoffGuideMarkdown() : "",
+    };
+    if (options.json) print(payload, true);
+    else print(payload.markdown, false);
+    return;
+  }
   if (["report", "reports", "reporting", "recap", "artifact-report"].includes(subject)) {
     const payload = {
       ok: true,
@@ -1100,7 +1163,7 @@ function commandGuide(topic, options) {
     return;
   }
   if (!["block", "blocks", "block-design", "design"].includes(subject)) {
-    throw new Error(`Unknown AAPS guide topic: ${topic}. Supported topics: blocks, report.`);
+    throw new Error(`Unknown AAPS guide topic: ${topic}. Supported topics: blocks, report, handoff.`);
   }
   const payload = {
     ok: true,

@@ -202,7 +202,7 @@ node scripts/aaps-runner.js run --source examples/executable_runtime.aaps --proj
 npm run aaps:run -- --file examples/executable_runtime.aaps
 ```
 
-Direct prompt mode writes a durable backend-agent handoff under `.aaps-work/prompts/`. With the default `aginti` backend, AAPS invokes AgInTiFlow as the implementation agent. With `--backend print` or `--print-prompt`, AAPS only prepares and prints the prompt. This is the current bridge for prompt-level tasks; deterministic `.aaps` actions still run through the local runtime adapters above.
+Direct prompt mode writes a durable backend-agent handoff under `.aaps-work/prompts/`. With the default `aginti` backend, AAPS invokes AgInTiFlow as the implementation agent. With `--backend print` or `--print-prompt`, AAPS only prepares and prints the prompt. With `--backend codex --image <file>`, AAPS passes the image to Codex image-view mode and requires visual conclusions to be recorded in image-aware handoff packets before downstream agent/image-generation blocks run. This is the current bridge for prompt-level tasks; deterministic `.aaps` actions still run through the local runtime adapters above.
 
 The generated handoff is sandbox-aware. It tells the backend to prefer `aaps` when available, use `npx -y @lazyingart/aaps@<version>` as the Docker-safe fallback when package installs/network are approved, and use the source checkout `node scripts/aaps.js` path only when that host path is actually mounted into the active sandbox.
 

@@ -29,8 +29,9 @@ generated outputs.
 
 Prompts written by AAPS are executable artifacts. A downstream prompt should
 include the task goal, source artifact paths, domain priors, observed defects,
-failure reason, method history, expected output schema, color or format
-constraints, safety constraints, and a verifier checklist.
+failure reason, upstream visual conclusions when images are involved, method
+history, expected output schema, color or format constraints, integration
+policy, safety constraints, and a verifier checklist.
 
 ## CLI
 
@@ -38,4 +39,3 @@ constraints, safety constraints, and a verifier checklist.
 aaps guide report
 aaps guide report --json
 ```
-

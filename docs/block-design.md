@@ -23,14 +23,18 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
    `for_each`, `fallback`, `recover`, and `review` nodes where decisions
    matter.
 7. When agents hand work to other agents or image generators, pass a structured
-   handoff packet with source artifacts, QC findings, failure reason,
-   high-quality prompt, expected output schema, and verification criteria.
-8. Manifest/compile missing implementation beneath the block contract. Do not weaken
+   handoff packet with source images/artifacts, QC findings, upstream
+   conclusions, failure reason, high-quality prompt, expected output schema,
+   integration policy, and verification criteria.
+8. When parser or manifest diagnostics exist, feed the exact line/message
+   evidence back into the agent and keep repairing until the same parser is
+   clean, or record a precise blocker.
+9. Manifest/compile missing implementation beneath the block contract. Do not weaken
    required inputs, outputs, GPU/tool/agent requirements, or validations just to
    pass readiness.
-9. Every block that writes artifacts should also declare how those artifacts are
+10. Every block that writes artifacts should also declare how those artifacts are
    validated and where a human or agent can inspect them.
-10. Treat downstream prompts as artifacts. If a block asks Codex, AgInTiFlow, an
+11. Treat downstream prompts as artifacts. If a block asks Codex, AgInTiFlow, an
     image generator, or a verifier agent to continue the work, the prompt should
     include evidence paths, domain priors, QC findings, failure reason, expected
     schema, constraints, and a verifier checklist.
@@ -61,4 +65,6 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
   checkpoints, final artifacts, limitations, and publication outputs.
 
 Run `aaps guide blocks` to print the full guide with example `.aaps` snippets.
+Run `aaps guide handoff` to print the image-aware adjacent-agent handoff packet
+and parser-feedback gate.
 Run `aaps guide report` to print the default report-recap paradigm and prompt.
