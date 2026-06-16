@@ -136,6 +136,21 @@ assert(blockPlan.ir.pipeline.blocks[0].notes.some((note) => note.includes("needs
 const blockRoundTrip = AAPS.parseAAPS(AAPS.serializeAAPS(blockPlan.ir));
 assert.strictEqual(blockRoundTrip.diagnostics.length, 0, JSON.stringify(blockRoundTrip.diagnostics));
 
+assert(AAPS.BLOCK_DESIGN_PRINCIPLES.length >= 6);
+assert(AAPS.BLOCK_ARCHETYPES.some((item) => item.id === "agent_action"));
+assert(AAPS.BLOCK_ARCHETYPES.some((item) => item.id === "report_artifact"));
+const blockGuide = AAPS.blockDesignGuideMarkdown();
+assert(blockGuide.includes("AAPS Block Design Guide"));
+assert(blockGuide.includes("Method, Tool, and Agent Router Block"));
+const guideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "blocks", "--json", "--no-auto-update"], {
+  cwd: path.join(__dirname, ".."),
+  encoding: "utf8",
+});
+assert.strictEqual(guideCli.status, 0, guideCli.stderr || guideCli.stdout);
+const guidePayload = JSON.parse(guideCli.stdout);
+assert.strictEqual(guidePayload.ok, true);
+assert(guidePayload.archetypes.some((item) => item.id === "validation_recovery"));
+
 assert.strictEqual(AAPS.PROJECT_VERSION, "aaps_project/0.1");
 assert.strictEqual(AutoUpdate.isNewerVersion("0.4.29", "0.4.28"), true);
 assert.strictEqual(AutoUpdate.shouldAutoUpdateCommand(["chat"]), true);

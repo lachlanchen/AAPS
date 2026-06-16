@@ -2037,6 +2037,7 @@ def build_agent_context_pack(source: str, message: str, context: dict | None = N
         manifest = {}
     docs = {
         "language_spec_excerpt": read_text_excerpt(ROOT / "docs" / "language-spec.md", 5500),
+        "block_design_excerpt": read_text_excerpt(ROOT / "docs" / "block-design.md", 4200),
         "compiler_excerpt": read_text_excerpt(ROOT / "docs" / "compiler.md", 4200),
         "runtime_excerpt": read_text_excerpt(ROOT / "docs" / "runtime.md", 4200),
     }
@@ -2055,6 +2056,7 @@ def build_agent_context_pack(source: str, message: str, context: dict | None = N
                 "The selected workflow, block, and program are stable AAPS objects. Switching backend provider must not switch the object being edited.",
                 "Edit only the selected/working AAPS source unless the user explicitly asks to create or switch to another file.",
                 "Do not claim a block or program works unless the .aaps source declares outputs and validations that can prove it.",
+                "Default block archetypes are intent/context, input discovery, QC guard, method router, loop/batch, code/script action, agent action, validation/recovery, and report/artifact.",
                 "Every block should include redundant context: biological purpose, data roots, typed inputs, declared outputs, executable action contract, validations, recovery/review notes, and expected artifacts.",
                 "Generated scripts must be self-debuggable: include clear CLI args, dependency errors, output manifest, logs, deterministic small-preview mode, and validation-friendly outputs.",
                 "For segmentation blocks, declare masks, overlays, per-image metrics, summary metrics, figures, reports, and QC review expectations.",

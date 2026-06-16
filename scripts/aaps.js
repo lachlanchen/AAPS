@@ -65,6 +65,7 @@ function usage() {
     "  aaps snapshot [--project .] [--label name] [--json]",
     "  aaps checkpoint [--project .] [--label name] [--init-git] [--json]",
     "  aaps versions [--project .] [--limit 120] [--json]",
+    "  aaps guide blocks [--json]",
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
@@ -706,6 +707,10 @@ function buildPromptHandoff(projectDir, goal, options) {
     "- If `aaps compile --mode apply` or `aaps check` creates a missing-component report, use the report as the repair target. Repair scripts/tools/registries beneath the contract, then rerun `aaps check`.",
     "- Hardware and environment requirements are part of the contract. For example, a `requires_gpu \"required\"` block must have an implementation that actually requests GPU execution or records an explicit verified fallback; do not silently switch it to CPU.",
     "",
+    "## Default Block Design Guide",
+    "",
+    AAPS.blockDesignGuideMarkdown ? AAPS.blockDesignGuideMarkdown({ compact: true }) : "",
+    "",
     "## Scientific Runtime Contract",
     "",
     "- For Python/data/image-analysis tasks, prefer a project-local `.venv` and project-local scripts over global host `pip install`.",
@@ -1035,6 +1040,22 @@ function commandAudit(fileArg, options) {
   else if (payload.ok) print(`AAPS audit verified ${payload.workflowCount} workflow${payload.workflowCount === 1 ? "" : "s"}.`, false);
   else print(JSON.stringify(payload, null, 2), false);
   process.exit(payload.ok ? 0 : 1);
+}
+
+function commandGuide(topic, options) {
+  const subject = String(topic || "blocks").toLowerCase();
+  if (!["block", "blocks", "block-design", "design"].includes(subject)) {
+    throw new Error(`Unknown AAPS guide topic: ${topic}. Supported topic: blocks.`);
+  }
+  const payload = {
+    ok: true,
+    topic: "blocks",
+    principles: AAPS.BLOCK_DESIGN_PRINCIPLES || [],
+    archetypes: AAPS.BLOCK_ARCHETYPES || [],
+    markdown: AAPS.blockDesignGuideMarkdown ? AAPS.blockDesignGuideMarkdown() : "",
+  };
+  if (options.json) print(payload, true);
+  else print(payload.markdown, false);
 }
 
 function snapshotSummary(snapshot) {
@@ -2078,6 +2099,7 @@ async function main() {
     "snapshot",
     "checkpoint",
     "versions",
+    "guide",
     "run",
     "check-block",
     "run-block",
@@ -2135,6 +2157,10 @@ async function main() {
   }
   if (command === "versions") {
     commandVersions(options);
+    return;
+  }
+  if (command === "guide") {
+    commandGuide(file || "blocks", options);
     return;
   }
   if (command === "studio") {

@@ -125,6 +125,12 @@ AAPS keeps a clean boundary between intent and execution:
 
 For biology, this means segmentation is modeled as inspect image -> build priors -> choose Cellpose/threshold/vision-mask -> QC gate -> quantify. See [docs/design-philosophy.md](docs/design-philosophy.md).
 
+## Block Design Guide
+
+AAPS includes default guidance for building reusable blocks without making block design completely free-form. Run `aaps guide blocks` for the full guide and examples.
+
+Default archetypes include intent/context, input discovery, QC guard, method/tool/agent router, loop/batch, code or script action, agent action, validation/recovery, and report/artifact blocks. Custom blocks are encouraged, but they should still declare typed inputs, outputs, executable actions or agent prompts, environment/tool requirements, validations, recovery, artifacts, and review checkpoints. See [docs/block-design.md](docs/block-design.md).
+
 ## Examples
 
 - [examples/organoid_segmentation.aaps](examples/organoid_segmentation.aaps): microscopy QC, method routing, segmentation, quantification, overlays, report, and human review.
