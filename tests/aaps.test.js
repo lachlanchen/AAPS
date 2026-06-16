@@ -139,16 +139,19 @@ assert.strictEqual(blockRoundTrip.diagnostics.length, 0, JSON.stringify(blockRou
 assert(AAPS.BLOCK_DESIGN_PRINCIPLES.length >= 6);
 assert(AAPS.BLOCK_ARCHETYPES.some((item) => item.id === "agent_action"));
 assert(AAPS.BLOCK_ARCHETYPES.some((item) => item.id === "agent_handoff_chain"));
+assert(AAPS.BLOCK_ARCHETYPES.some((item) => item.id === "image_mask_refinement"));
 assert(AAPS.BLOCK_ARCHETYPES.some((item) => item.id === "report_artifact"));
 const blockGuide = AAPS.blockDesignGuideMarkdown();
 assert(blockGuide.includes("AAPS Block Design Guide"));
 assert(blockGuide.includes("Method, Tool, and Agent Router Block"));
 assert(blockGuide.includes("Agent Handoff Chain Block"));
+assert(blockGuide.includes("Image Mask Refinement Block"));
 assert(AAPS.REPORT_RECAP_PRINCIPLES.length >= 4);
 assert(AAPS.REPORT_RECAP_PROMPT.includes("complete AAPS execution recap"));
 assert(AAPS.reportParadigmMarkdown().includes("AAPS Report Recap Paradigm"));
 assert(AAPS.AGENT_HANDOFF_PRINCIPLES.length >= 4);
 assert(AAPS.AGENT_HANDOFF_PACKET_SCHEMA.version === "aaps_agent_handoff/0.1");
+assert.strictEqual(AAPS.AGENT_HANDOFF_PACKET_SCHEMA.visualOutputContract.noEmbeddedText, true);
 assert(AAPS.agentHandoffGuideMarkdown().includes("AAPS Agent Handoff Guide"));
 assert(AAPS.parserFeedbackMarkdown([{ line: 3, message: "Unknown statement." }], { file: "bad.aaps" }).includes("line 3"));
 const guideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "blocks", "--json", "--no-auto-update"], {
@@ -160,6 +163,7 @@ const guidePayload = JSON.parse(guideCli.stdout);
 assert.strictEqual(guidePayload.ok, true);
 assert(guidePayload.archetypes.some((item) => item.id === "validation_recovery"));
 assert(guidePayload.archetypes.some((item) => item.id === "agent_handoff_chain"));
+assert(guidePayload.archetypes.some((item) => item.id === "image_mask_refinement"));
 const reportGuideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "report", "--json", "--no-auto-update"], {
   cwd: path.join(__dirname, ".."),
   encoding: "utf8",
@@ -195,6 +199,37 @@ assert.strictEqual(promptImagePayload.ok, true);
 assert.strictEqual(promptImagePayload.images.length, 1);
 assert(fs.readFileSync(promptImagePayload.promptPath, "utf8").includes("Attached Image Evidence"));
 fs.rmSync(promptImageHome, { recursive: true, force: true });
+
+const createHome = fs.mkdtempSync(path.join(os.tmpdir(), "aaps-create-"));
+const createWorkflowCli = childProcess.spawnSync(
+  process.execPath,
+  ["scripts/aaps.js", "create", "workflow", "Cell Mask Refinement", "--project", createHome, "--goal", "Create a prompt-native mask refinement workflow.", "--json", "--no-auto-update"],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+  }
+);
+assert.strictEqual(createWorkflowCli.status, 0, createWorkflowCli.stderr || createWorkflowCli.stdout);
+const createWorkflowPayload = JSON.parse(createWorkflowCli.stdout);
+assert.strictEqual(createWorkflowPayload.ok, true);
+assert.strictEqual(createWorkflowPayload.file, "workflows/cell_mask_refinement.aaps");
+assert(fs.existsSync(path.join(createHome, "aaps.project.json")));
+assert(fs.existsSync(path.join(createHome, createWorkflowPayload.file)));
+assert.strictEqual(AAPS.parseAAPS(fs.readFileSync(path.join(createHome, createWorkflowPayload.file), "utf8")).diagnostics.length, 0);
+const createdManifest = JSON.parse(fs.readFileSync(path.join(createHome, "aaps.project.json"), "utf8"));
+assert.strictEqual(createdManifest.activeFile, "workflows/cell_mask_refinement.aaps");
+const createBlockCli = childProcess.spawnSync(
+  process.execPath,
+  ["scripts/aaps.js", "create", "block", "QC Guard", "--project", createHome, "--json", "--no-auto-update"],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+  }
+);
+assert.strictEqual(createBlockCli.status, 0, createBlockCli.stderr || createBlockCli.stdout);
+assert.strictEqual(JSON.parse(createBlockCli.stdout).file, "blocks/qc_guard.aaps");
+fs.rmSync(createHome, { recursive: true, force: true });
+
 const manifestAliasSmoke = childProcess.spawnSync(
   process.execPath,
   ["scripts/aaps.js", "manifest", "examples/hello.aaps", "--project", ".", "--mode", "check", "--json", "--no-auto-update"],

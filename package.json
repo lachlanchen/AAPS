@@ -1,6 +1,6 @@
 {
   "name": "@lazyingart/aaps",
-  "version": "0.5.11",
+  "version": "0.5.12",
   "description": "Prompt is all you need: AAPS is a project oriented and prompt-native programming language and visual studio for turning prompts into structured, verifiable pipelines.",
   "type": "commonjs",
   "private": false,

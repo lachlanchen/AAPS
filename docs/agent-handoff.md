@@ -22,6 +22,10 @@ Write a JSON handoff packet before calling the downstream agent:
 - reason the downstream agent is needed
 - method history and rejected candidates
 - exact downstream prompt path
+- reference-image policy: which images are visual references and which masks or
+  overlays are text-only QC context
+- visual-output contract, including color/format rules and whether embedded
+  labels, arrows, captions, legends, or text are forbidden
 - expected output schema and artifact paths
 - integration policy for accepted generated outputs
 - verifier checklist and acceptance threshold
@@ -45,6 +49,13 @@ main workflow outputs so final reports and Studio artifact views can find them.
 If the verifier rejects the generated result, AAPS should feed the verifier's
 concrete visual defects and failed artifact checks back into the next AgInTi
 prompt, regenerate within the declared retry limit, and record every attempt.
+
+For colored instance-mask generation, the default policy is strict: use the
+original source image as the visual reference, describe prior masks/overlays as
+textual QC context unless a verifier asks for extra visual references, and
+request one flat distinct color per visible instance with no embedded text,
+numbers, labels, arrows, captions, legends, table labels, or whole-cluster
+single-object annotation inside the image.
 
 ## Parser Feedback Gate
 

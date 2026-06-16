@@ -25,6 +25,12 @@ If the agent was not called because deterministic outputs passed QC, record the
 prepared prompt/template as `prepared`, `template`, or `not_needed`; do not claim
 generated outputs.
 
+For image-generation or mask-refinement handoffs, report the reference-image
+policy and visual-output contract. Generated image grids should stay clean:
+avoid baked-in labels, arrows, legends, table text, or captions inside the image
+panel unless the task is explicitly an annotation figure. Put explanatory text
+in TeX/Markdown captions, tables, or artifact notes.
+
 ## Prompt Quality
 
 Prompts written by AAPS are executable artifacts. A downstream prompt should

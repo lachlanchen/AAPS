@@ -60,6 +60,7 @@ function usage() {
     "  aaps missing <file> [--project .] [--json]",
     "  aaps generate-block <name> [--project .] [--mode apply] [--json]",
     "  aaps generate-script <name-or-path> [--project .] [--mode apply] [--json]",
+    "  aaps create workflow|block|skill <name> [--project .] [--file path] [--goal text] [--json]",
     "  aaps prepare-setup <file> [--project .] [--json]",
     "  aaps plan <file> [--project .] [--json]",
     "  aaps check <file> [--project .] [--json]",
@@ -122,6 +123,7 @@ function usage() {
     "  --audit-scope <entry|project> Post-backend audit scope. Defaults to entry for prompt backends.",
     "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
     "  --no-webapp       Do not auto-start the local Studio for `aaps chat`.",
+    "  --force           Allow `aaps create` to intentionally overwrite the target .aaps file.",
     "  --json            Print machine-readable JSON where supported.",
   ].join("\n");
 }
@@ -213,6 +215,181 @@ function scanAapsFiles(projectDir) {
   }
   walk(projectDir);
   return files;
+}
+
+function slugName(value, fallback = "workflow") {
+  return String(value || fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 72) || fallback;
+}
+
+function aapsQuote(value) {
+  return `"${String(value ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function ensureProjectManifest(projectDir) {
+  const manifestPath = path.join(projectDir, "aaps.project.json");
+  if (fs.existsSync(manifestPath)) return readManifest(projectDir);
+  const name = path.basename(projectDir) || "AAPS Project";
+  const manifest = {
+    schema: "aaps_project/0.1",
+    name,
+    path: ".",
+    description: "AAPS project manifest.",
+    domain: "general",
+    tags: ["aaps"],
+    defaultMain: "",
+    activeFile: "",
+    created: new Date().toISOString(),
+    updated: new Date().toISOString(),
+    artifactRoot: "artifacts",
+    runDatabase: "runs/aaps-runs.jsonl",
+    paths: {
+      blocks: "blocks",
+      skills: "skills",
+      workflows: "workflows",
+      scripts: "scripts",
+      data: "data",
+      artifacts: "artifacts",
+      runs: "runs",
+      reports: "reports",
+      archive: "archive",
+    },
+    files: {
+      blocks: [],
+      skills: [],
+      modules: [],
+      subworkflows: [],
+      workflows: [],
+      drafts: [],
+      archives: [],
+      references: [],
+    },
+  };
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return manifest;
+}
+
+function manifestListForKind(kind) {
+  const normalized = String(kind || "workflow").toLowerCase();
+  if (normalized === "block" || normalized === "blocks") return "blocks";
+  if (normalized === "skill" || normalized === "skills") return "skills";
+  if (normalized === "module" || normalized === "modules") return "modules";
+  if (normalized === "subworkflow" || normalized === "subworkflows") return "subworkflows";
+  if (normalized === "draft" || normalized === "drafts") return "drafts";
+  return "workflows";
+}
+
+function defaultDirForKind(kind) {
+  const list = manifestListForKind(kind);
+  if (list === "workflows") return "workflows";
+  if (list === "blocks") return "blocks";
+  if (list === "skills") return "skills";
+  if (list === "modules") return "modules";
+  if (list === "subworkflows") return "workflows";
+  if (list === "drafts") return "drafts";
+  return "workflows";
+}
+
+function updateManifestCreatedFile(projectDir, fileName, kind) {
+  const manifestPath = path.join(projectDir, "aaps.project.json");
+  const manifest = ensureProjectManifest(projectDir);
+  manifest.files = manifest.files && typeof manifest.files === "object" ? manifest.files : {};
+  const category = manifestListForKind(kind);
+  manifest.files[category] = Array.isArray(manifest.files[category]) ? manifest.files[category] : [];
+  if (!manifest.files[category].includes(fileName)) manifest.files[category].push(fileName);
+  manifest.files[category].sort();
+  if (category === "workflows") {
+    manifest.activeFile = fileName;
+    if (!manifest.defaultMain) manifest.defaultMain = fileName;
+  }
+  manifest.updated = new Date().toISOString();
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return manifest;
+}
+
+function starterAapsSource(kind, id, title, goal) {
+  const kindName = manifestListForKind(kind) === "blocks" ? "block" : manifestListForKind(kind) === "skills" ? "skill" : "task";
+  const titleText = title || id;
+  const goalText = goal || `Define and manifest ${titleText}.`;
+  if (kindName === "block" || kindName === "skill") {
+    return [
+      `pipeline ${aapsQuote(titleText)} {`,
+      "  version \"0.1\"",
+      "  domain \"general\"",
+      "  tags \"starter, aaps\"",
+      `  goal ${aapsQuote(goalText)}`,
+      "",
+      `  ${kindName} ${id} {`,
+      `    purpose ${aapsQuote(goalText)}`,
+      "    input request: text required",
+      `    output summary: markdown = "reports/${id}_summary.md"`,
+      "    compile_agent \"codex_repair_agent\"",
+      "    compile_prompt \"Manifest this contract by editing existing project files first; create new scripts only if the contract references a missing implementation.\"",
+      "    exec noop",
+      "    validate nonempty \"${output.summary}\"",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+  }
+  return [
+    `pipeline ${aapsQuote(titleText)} {`,
+    "  subtitle \"Prompt Is All You Need\"",
+    "  version \"0.1\"",
+    "  domain \"general\"",
+    "  tags \"starter, aaps\"",
+    "  execution_mode \"dry-run-first\"",
+    `  goal ${aapsQuote(goalText)}`,
+    "  artifact_dir \"artifacts\"",
+    "  database \"runs/aaps-runs.jsonl\"",
+    "",
+    `  task ${id} {`,
+    "    input request: text required",
+    `    output status: markdown = "reports/${id}_status.md"`,
+    "    compile_agent \"codex_repair_agent\"",
+    "    compile_prompt \"Manifest this workflow block by block. Patch existing files when refining; create new scripts only for missing components or explicit new-artifact requests.\"",
+    "    exec noop",
+    "    validate nonempty \"${output.status}\"",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function commandCreate(positional, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const kind = positional[0] || options.kind || "workflow";
+  const rawName = positional.slice(1).join(" ").trim() || options.name || kind;
+  const id = slugName(options.id || rawName, manifestListForKind(kind).replace(/s$/, "") || "workflow");
+  const dir = defaultDirForKind(kind);
+  const requestedFile = options.file ? String(options.file) : `${dir}/${id}.aaps`;
+  const outputPath = safeRelative(projectDir, requestedFile, "create file");
+  const fileName = toProjectPath(path.relative(projectDir, outputPath));
+  if (!fileName.endsWith(".aaps")) throw new Error("aaps create only writes .aaps files.");
+  if (fs.existsSync(outputPath) && !options.force) {
+    throw new Error(`${fileName} already exists. Use --force to overwrite intentionally.`);
+  }
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, starterAapsSource(kind, id, rawName, options.goal || ""), "utf8");
+  const manifest = updateManifestCreatedFile(projectDir, fileName, kind);
+  const payload = {
+    ok: true,
+    kind: manifestListForKind(kind).replace(/s$/, ""),
+    file: fileName,
+    id,
+    project: projectDir,
+    activeFile: manifest.activeFile || "",
+    defaultMain: manifest.defaultMain || "",
+  };
+  if (options.json) print(payload, true);
+  else {
+    printAapsMessage(`created ${payload.kind}: ${fileName}`);
+    if (payload.activeFile === fileName) printStateMessage(`activeFile=${fileName}`);
+  }
+  return payload;
 }
 
 function resolveEntry(projectDir, manifest, fileArg) {
@@ -738,17 +915,19 @@ function buildPromptHandoff(projectDir, goal, options) {
     "2. If no AAPS project exists, create a small project-local AAPS structure instead of writing unrelated files.",
     "3. Preserve the `.aaps` contract as the source of truth. Do not weaken requirements just to make readiness pass.",
     "4. Prefer editing `.aaps` workflows, blocks, scripts, tool registries, and agent registries before ad hoc prose.",
-    "5. Run `aaps validate`, `aaps parse`, `aaps compile ... --mode check`, `aaps check`, and `aaps run ...` when the workflow is executable.",
-    "6. Treat parser, compiler, readiness, and validation output as evidence. If `aaps check` reports a missing script/tool/GPU contract/dependency, repair the implementation that violates the contract and rerun the same check.",
-    "7. For implementation repair or code generation, act as a manifest/compile agent: use deliberate reasoning, change the smallest project-local files needed, and verify by command and declared artifacts. Codex GPT-5.5 xhigh is appropriate for difficult manifestation/repair passes.",
-    "8. If a step is prompt-only, record it as a handoff unless you actually execute it and verify declared outputs.",
-    "9. Save durable reports under `reports/` and durable generated artifacts under project-local folders.",
-    "10. Preserve AAPS provenance: before major rewrites, run `aaps snapshot --project . --label before-<change>` and record generated/modified files in logs.",
-    "11. Do not use sudo or destructive host commands. Ask for a stronger mode when the task requires broader permission.",
-    "12. Finish with exact paths to the workflow, compile/run logs, outputs, and any remaining failed readiness checks.",
+    "5. In chat-driven refinement, edit the existing manifested workflow/scripts/prompts/report builders first. Create a brand-new block, script, prompt, registry entry, or report builder only when the contract references a missing component or the user explicitly asks for a new artifact.",
+    "6. When a file already exists, patch it in place with the smallest project-local change. Do not create duplicate `*_new`, `*_fixed`, or timestamped implementation scripts unless a run-scoped output artifact is required.",
+    "7. Run `aaps validate`, `aaps parse`, `aaps compile ... --mode check`, `aaps check`, and `aaps run ...` when the workflow is executable.",
+    "8. Treat parser, compiler, readiness, and validation output as evidence. If `aaps check` reports a missing script/tool/GPU contract/dependency, repair the implementation that violates the contract and rerun the same check.",
+    "9. For implementation repair or code generation, act as a manifest/compile agent: use deliberate reasoning, change the smallest project-local files needed, and verify by command and declared artifacts. Codex GPT-5.5 xhigh is appropriate for difficult manifestation/repair passes.",
+    "10. If a step is prompt-only, record it as a handoff unless you actually execute it and verify declared outputs.",
+    "11. Save durable reports under `reports/` and durable generated artifacts under project-local folders.",
+    "12. Preserve AAPS provenance: before major rewrites, run `aaps snapshot --project . --label before-<change>` and record generated/modified files in logs.",
+    "13. Do not use sudo or destructive host commands. Ask for a stronger mode when the task requires broader permission.",
+    "14. Finish with exact paths to the workflow, compile/run logs, outputs, and any remaining failed readiness checks.",
     options.allowDestructive
-      ? "13. This run was launched with explicit trusted-host/destructive approval. Use it only for the requested project work, avoid unrelated host changes, and keep secrets out of reports."
-      : "13. If broad host commands are blocked, report the blocker and rerun command instead of looping on variants.",
+      ? "15. This run was launched with explicit trusted-host/destructive approval. Use it only for the requested project work, avoid unrelated host changes, and keep secrets out of reports."
+      : "15. If broad host commands are blocked, report the blocker and rerun command instead of looping on variants.",
     "",
     "## AAPS Syntax Contract",
     "",
@@ -784,6 +963,7 @@ function buildPromptHandoff(projectDir, goal, options) {
     "## Manifestation Strategy",
     "",
     "- Manifest broad workflows block by block: first make the `.aaps` contract parseable, then generate or repair scripts/tools/prompts for one block, run focused checks, and move to the next block.",
+    "- For refinement chat, treat the existing manifestation as the target. Patch existing `.aaps`, scripts, prompts, and report builders instead of creating duplicate implementations; create new implementation files only for missing components or explicit user requests.",
     "- Prefer a reused backend session for long multi-block manifestation when the caller supplied a Codex session (`--codex-session` or `--codex-resume-last`) or a persistent AgInTi session; otherwise keep the one-shot run self-contained.",
     "- Record each block manifestation decision in compile/run artifacts so the next block can reuse context without guessing.",
     "",
@@ -1481,6 +1661,7 @@ function chatHelp() {
     "  /history                Print the synced session history from Studio.",
     "  /status                 Show project manifest, active file, and backend.",
     "  /files                  List project .aaps files.",
+    "  /create <kind> <name>   Create a workflow, block, or skill .aaps file and update the manifest.",
     "  /validate [file]        Validate the project or selected file.",
     "  /parse <file>           Parse a .aaps file.",
     "  /manifest <file> [mode] Manifest/check/apply a .aaps file.",
@@ -1679,6 +1860,7 @@ const SLASH_COMMANDS = [
   "/history",
   "/status",
   "/files",
+  "/create",
   "/validate",
   "/parse",
   "/manifest",
@@ -2139,6 +2321,12 @@ async function startChat(options) {
       printAapsMessage(projectFilesText(projectDir));
       return false;
     }
+    if (line.startsWith("/create")) {
+      const words = splitCliWords(line);
+      if (!words[1] || !words[2]) printAapsMessage("Usage: /create workflow|block|skill <name>");
+      else runCliAndPrint(projectDir, ["create", words[1], ...words.slice(2), "--project", "."]);
+      return false;
+    }
     if (line.startsWith("/validate")) {
       const words = splitCliWords(line);
       runCliAndPrint(projectDir, ["validate", ...(words[1] ? [words[1]] : []), "--project", "."]);
@@ -2234,6 +2422,7 @@ async function main() {
     "missing",
     "generate-block",
     "generate-script",
+    "create",
     "prepare-setup",
     "plan",
     "check",
@@ -2275,6 +2464,10 @@ async function main() {
   if (autoUpdateResult.restarted) process.exit(autoUpdateResult.exitCode ?? 0);
   if (command === "prompt") {
     commandPrompt(positional.join(" "), options);
+    return;
+  }
+  if (command === "create") {
+    commandCreate(positional, options);
     return;
   }
   if (command === "parse") {

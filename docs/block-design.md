@@ -32,12 +32,20 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
 9. Manifest/compile missing implementation beneath the block contract. Do not weaken
    required inputs, outputs, GPU/tool/agent requirements, or validations just to
    pass readiness.
-10. Every block that writes artifacts should also declare how those artifacts are
+10. For chat-driven refinements, edit the existing manifested `.aaps`, scripts,
+    prompts, registries, and report builders. Create a brand-new file only when
+    a block/script/tool is genuinely missing or the user explicitly asks for a
+    new artifact.
+11. Every block that writes artifacts should also declare how those artifacts are
    validated and where a human or agent can inspect them.
-11. Treat downstream prompts as artifacts. If a block asks Codex, AgInTiFlow, an
+12. Treat downstream prompts as artifacts. If a block asks Codex, AgInTiFlow, an
     image generator, or a verifier agent to continue the work, the prompt should
     include evidence paths, domain priors, QC findings, failure reason, expected
     schema, constraints, and a verifier checklist.
+13. For image-generation or mask-refinement blocks, state the reference-image
+    policy and visual-output contract explicitly: no embedded text, labels,
+    arrows, numbers, captions, legends, or decorative repainting unless the
+    task specifically requires annotation.
 
 ## Default Archetypes
 
@@ -58,6 +66,10 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
 - **Agent handoff chain**: carries evidence, QC decisions, high-quality prompts,
   expected schemas, generated/refined outputs, and verifier reports across
   Codex, AgInTiFlow, image-generation agents, or other backend agents.
+- **Image mask refinement**: asks an image-capable agent to produce a clean
+  source-aligned colored instance mask with one flat color per visible instance,
+  explicit reference-image policy, no embedded image text, and verifier-gated
+  integration.
 - **Validation and recovery**: proves outputs exist and are meaningful, then
   retries, falls back, repairs, skips, or asks for review.
 - **Report recap and artifact**: reconstructs the full run from original input,
