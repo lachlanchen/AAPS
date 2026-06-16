@@ -215,6 +215,33 @@ function gpuAvailable(cwd) {
   return false;
 }
 
+function hasRequiredGpuRequirement(requirements) {
+  return [...((requirements && requirements.pipelineGpu) || []), ...((requirements && requirements.gpu) || [])].some((gpuRequirement) => {
+    const value = String(gpuRequirement || "preferred").toLowerCase();
+    return ["required", "require", "true", "cuda", "nvidia"].includes(value);
+  });
+}
+
+function checkGpuScriptContract(scriptPath) {
+  let source = "";
+  try {
+    source = fs.readFileSync(scriptPath, "utf8");
+  } catch (error) {
+    return [];
+  }
+  const checks = [];
+  if (/CellposeModel\s*\([^)]*gpu\s*=\s*False/i.test(source)) {
+    checks.push({
+      kind: "gpu_contract",
+      name: path.basename(scriptPath),
+      path: scriptPath,
+      ok: false,
+      message: "script hard-codes CellposeModel(gpu=False) while the block requires GPU execution",
+    });
+  }
+  return checks;
+}
+
 function pythonPackageExists(pkg, python, cwd) {
   const packageName = String(pkg || "").split(/[<>=!~]/)[0].trim();
   const aliases = {
@@ -973,6 +1000,8 @@ function checkBlockReadiness(step, projectDir, manifest, registries, baseContext
       checks.push({ kind: "output", name: port.name, ok: false, message: error.message });
     }
   });
+  const requirements = step.requirements || {};
+  const requiresGpu = hasRequiredGpuRequirement(requirements);
   (step.actions || []).forEach((action) => {
     if (["python", "python_script", "node_script"].includes(action.type)) {
       const entry = expand(action.entry || "", stepContext);
@@ -980,6 +1009,11 @@ function checkBlockReadiness(step, projectDir, manifest, registries, baseContext
         try {
           const full = safeRelative(projectDir, entry, "script");
           checks.push({ kind: "script", name: entry, path: entry, ok: fs.existsSync(full), message: fs.existsSync(full) ? "script exists" : "script missing" });
+          if (requiresGpu && fs.existsSync(full) && ["python", "python_script"].includes(action.type)) {
+            for (const scriptCheck of checkGpuScriptContract(full)) {
+              checks.push({ ...scriptCheck, name: entry, path: entry });
+            }
+          }
         } catch (error) {
           checks.push({ kind: "script", name: entry, ok: false, message: error.message });
         }
@@ -993,7 +1027,6 @@ function checkBlockReadiness(step, projectDir, manifest, registries, baseContext
       checks.push(checkAgent(action.command || action.entry || step.agent, registries));
     }
   });
-  const requirements = step.requirements || {};
   const python = (step.environment && step.environment.python) || projectPython(manifest, registries);
   if (step.actions.some((action) => ["python", "python_script", "python_inline"].includes(action.type)) || (requirements.commands || []).includes("python")) {
     checks.push({ kind: "command", name: python, ok: commandExists(python, projectDir), message: commandExists(python, projectDir) ? "python found" : "python interpreter missing" });
@@ -1077,6 +1110,9 @@ function suggestionForCheck(check, projectDir, manifest, registries) {
     return check.required
       ? "Install/configure NVIDIA GPU support for this project, or change the block to `requires_gpu \"preferred\"` with a CPU fallback."
       : "GPU was preferred but not detected; AAPS can continue on CPU or route to a GPU worker later.";
+  }
+  if (check.kind === "gpu_contract") {
+    return `Ask the compile agent to update ${check.path || check.name} so the GPU-required block actually enables GPU execution or records an explicit fallback.`;
   }
   return check.message || `Resolve ${check.kind} ${check.name || ""}`.trim();
 }
