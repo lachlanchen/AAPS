@@ -152,6 +152,8 @@ assert(AAPS.reportParadigmMarkdown().includes("AAPS Report Recap Paradigm"));
 assert(AAPS.AGENT_HANDOFF_PRINCIPLES.length >= 4);
 assert(AAPS.AGENT_HANDOFF_PACKET_SCHEMA.version === "aaps_agent_handoff/0.1");
 assert.strictEqual(AAPS.AGENT_HANDOFF_PACKET_SCHEMA.visualOutputContract.noEmbeddedText, true);
+assert.strictEqual(AAPS.AGENT_HANDOFF_PACKET_SCHEMA.visualOutputContract.maskOnly, true);
+assert.strictEqual(AAPS.AGENT_HANDOFF_PACKET_SCHEMA.visualOutputContract.noMicroscopyUnderlay, true);
 assert(AAPS.agentHandoffGuideMarkdown().includes("AAPS Agent Handoff Guide"));
 assert(AAPS.parserFeedbackMarkdown([{ line: 3, message: "Unknown statement." }], { file: "bad.aaps" }).includes("line 3"));
 const guideCli = childProcess.spawnSync(process.execPath, ["scripts/aaps.js", "guide", "blocks", "--json", "--no-auto-update"], {

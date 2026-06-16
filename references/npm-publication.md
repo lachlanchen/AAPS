@@ -32,6 +32,7 @@ The workflow runs tests, validates the project, checks the package tarball, and 
 
 ## Public Release Log
 
+- `0.5.13` on 2026-06-16: published by GitHub Actions Trusted Publishing from `main`. This release tightens image-mask handoff guidance so mask-generation blocks request mask-only flat-color outputs on plain backgrounds rather than microscopy underlays unless an overlay is explicitly requested.
 - `0.5.12` on 2026-06-16: published by GitHub Actions Trusted Publishing from `main`. This release adds deterministic `aaps create`, stronger block-design guidance for chat-driven refinements, and stricter image-mask handoff/report prompts.
 
 ## Security Notes

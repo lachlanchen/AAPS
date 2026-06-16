@@ -55,7 +55,9 @@ original source image as the visual reference, describe prior masks/overlays as
 textual QC context unless a verifier asks for extra visual references, and
 request one flat distinct color per visible instance with no embedded text,
 numbers, labels, arrows, captions, legends, table labels, or whole-cluster
-single-object annotation inside the image.
+single-object annotation inside the image. If the requested artifact is a mask
+rather than an overlay, use a plain black, white, or transparent background and
+do not keep grayscale microscopy texture under the colors.
 
 ## Parser Feedback Gate
 

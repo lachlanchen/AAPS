@@ -68,8 +68,9 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
   Codex, AgInTiFlow, image-generation agents, or other backend agents.
 - **Image mask refinement**: asks an image-capable agent to produce a clean
   source-aligned colored instance mask with one flat color per visible instance,
-  explicit reference-image policy, no embedded image text, and verifier-gated
-  integration.
+  explicit reference-image policy, a plain mask background instead of a
+  microscopy underlay unless the block asks for an overlay, no embedded image
+  text, and verifier-gated integration.
 - **Validation and recovery**: proves outputs exist and are meaningful, then
   retries, falls back, repairs, skips, or asks for review.
 - **Report recap and artifact**: reconstructs the full run from original input,
