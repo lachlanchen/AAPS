@@ -140,7 +140,7 @@ The tab supports:
 - saving the active file through the local server
 - compiling the active workflow in check/suggest/apply modes
 - seeing missing component reports, generated files, setup prompts, and Codex prompts
-- copying a tmux command for running the active workflow in a project session
+- launching a managed tmux run for the active workflow and polling the same run health from Studio or `aaps status`
 - creating, duplicating, and archiving `.aaps` files
 - running or dry-running the active workflow
 - checking readiness, running, or dry-running the selected block from the block inspector

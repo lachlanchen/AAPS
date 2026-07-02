@@ -180,6 +180,24 @@ The watchdog is conservative. It does not kill processes or edit files by
 itself. It creates evidence for a repair agent to inspect block logs, events,
 artifacts, and process state, then make the smallest safe project-local fix.
 
+## Managed tmux Runs
+
+Use `run-tmux` for long tasks that should continue outside the foreground CLI:
+
+```bash
+aaps run-tmux workflows/main.aaps --project . --run-id long-run --json
+aaps status long-run --project . --json
+tmux attach -t aaps-project-long-run
+```
+
+`run-tmux` creates the run directory before launching tmux, writes
+`tmux_launch.json`, seeds `watchdog/status.json`, and then starts the same
+runtime command used by `aaps run`. If a named tmux session already exists,
+pass `--tmux-reuse` to start a new window inside that session. `aaps status`
+reads `run.json`, watchdog heartbeats, alerts, tmux launch metadata, stdout and
+stderr paths, and recent events, so CLI and Studio can report task health while
+the final report is still being generated.
+
 ## Run Outputs
 
 Each run writes:
@@ -197,6 +215,7 @@ runtime/aaps-runs/<run-id>/
   pause_state.json
   report.md
   events.jsonl
+  tmux_launch.json
   runtime_watchdog.json
   block_logs/
   artifacts/

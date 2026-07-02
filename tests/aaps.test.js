@@ -1167,6 +1167,84 @@ assert.strictEqual(cliShortVersion.status, 0, cliShortVersion.stderr || cliShort
 assert.strictEqual(cliShortVersion.stdout.trim(), require("../package.json").version);
 assert.strictEqual(cliShortVersion.stderr, "");
 
+const tmuxProject = path.join(__dirname, "..", ".aaps-work", "tests", "tmux-project");
+const fakeTmuxDir = path.join(__dirname, "..", ".aaps-work", "tests", "fake-tmux");
+const fakeTmux = path.join(fakeTmuxDir, "tmux");
+const fakeTmuxLog = path.join(fakeTmuxDir, "tmux.jsonl");
+fs.rmSync(tmuxProject, { recursive: true, force: true });
+fs.rmSync(fakeTmuxDir, { recursive: true, force: true });
+fs.mkdirSync(path.join(tmuxProject, "workflows"), { recursive: true });
+fs.mkdirSync(fakeTmuxDir, { recursive: true });
+fs.writeFileSync(
+  path.join(tmuxProject, "aaps.project.json"),
+  JSON.stringify({ name: "tmux project", activeFile: "workflows/main.aaps" }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(tmuxProject, "workflows", "main.aaps"),
+  'pipeline "tmux project" {\n  task main {\n    prompt "Run inside managed tmux."\n  }\n}\n',
+  "utf8"
+);
+fs.writeFileSync(
+  fakeTmux,
+  `#!/usr/bin/env node
+const fs = require("fs");
+const log = process.env.AAPS_FAKE_TMUX_LOG;
+if (log) fs.appendFileSync(log, JSON.stringify(process.argv.slice(2)) + "\\n");
+if (process.argv[2] === "has-session") process.exit(process.env.AAPS_FAKE_TMUX_HAS_SESSION === "1" ? 0 : 1);
+process.exit(0);
+`,
+  "utf8"
+);
+fs.chmodSync(fakeTmux, 0o755);
+const fakeTmuxEnv = { ...process.env, AAPS_TMUX_BIN: fakeTmux, AAPS_FAKE_TMUX_LOG: fakeTmuxLog };
+const tmuxRun = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "run-tmux",
+    "workflows/main.aaps",
+    "--project",
+    tmuxProject,
+    "--run-root",
+    "runtime/test-tmux-runs",
+    "--run-id",
+    "test-tmux-run",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), env: fakeTmuxEnv, encoding: "utf8" }
+);
+assert.strictEqual(tmuxRun.status, 0, tmuxRun.stderr || tmuxRun.stdout);
+const tmuxPayload = JSON.parse(tmuxRun.stdout);
+assert.strictEqual(tmuxPayload.ok, true);
+assert.strictEqual(tmuxPayload.status, "launched");
+assert.strictEqual(tmuxPayload.session.includes("test-tmux-run"), true);
+const tmuxRunDir = path.join(tmuxProject, "runtime", "test-tmux-runs", "test-tmux-run");
+assert(fs.existsSync(path.join(tmuxRunDir, "tmux_launch.json")));
+assert(fs.existsSync(path.join(tmuxRunDir, "watchdog", "status.json")));
+const tmuxLogLines = fs.readFileSync(fakeTmuxLog, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+assert.strictEqual(tmuxLogLines.some((args) => args[0] === "new-session"), true);
+const tmuxStatus = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "status",
+    "test-tmux-run",
+    "--project",
+    tmuxProject,
+    "--run-root",
+    "runtime/test-tmux-runs",
+    "--json",
+  ],
+  { cwd: path.join(__dirname, ".."), env: fakeTmuxEnv, encoding: "utf8" }
+);
+assert.strictEqual(tmuxStatus.status, 0, tmuxStatus.stderr || tmuxStatus.stdout);
+const tmuxStatusPayload = JSON.parse(tmuxStatus.stdout);
+assert.strictEqual(tmuxStatusPayload.found, true);
+assert.strictEqual(tmuxStatusPayload.status, "tmux_launched");
+assert.strictEqual(tmuxStatusPayload.health, "running");
+assert.strictEqual(tmuxStatusPayload.tmux.session.includes("test-tmux-run"), true);
+
 const webappProject = path.join(__dirname, "..", ".aaps-work", "tests", "webapp-project");
 fs.rmSync(webappProject, { recursive: true, force: true });
 fs.mkdirSync(path.join(webappProject, "workflows"), { recursive: true });

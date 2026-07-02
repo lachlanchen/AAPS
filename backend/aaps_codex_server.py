@@ -1926,14 +1926,117 @@ def write_run_record(run_id: str, payload: dict) -> None:
     (folder / "api-run.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def write_file_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def read_run_record(run_id: str) -> dict | None:
     path = run_dir(run_id) / "api-run.json"
     if not path.exists():
         summary = run_dir(run_id) / "run.json"
         if summary.exists():
-            return json.loads(summary.read_text(encoding="utf-8"))
+            return enrich_run_record(run_id, json.loads(summary.read_text(encoding="utf-8")))
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return enrich_run_record(run_id, json.loads(path.read_text(encoding="utf-8")))
+
+
+def read_jsonl_tail(path: Path, limit: int = 20) -> list[dict]:
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return []
+    items: list[dict] = []
+    for line in lines[-limit:]:
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError:
+            items.append({"raw": line})
+    return items
+
+
+def enrich_run_record(run_id: str, payload: dict) -> dict:
+    folder = run_dir(run_id)
+    record = dict(payload or {})
+    summary = read_json_file(folder / "run.json")
+    watchdog = read_json_file(folder / "watchdog" / "status.json")
+    runtime_watchdog = read_json_file(folder / "runtime_watchdog.json")
+    launch = read_json_file(folder / "tmux_launch.json")
+    alerts = read_jsonl_tail(folder / "watchdog" / "alerts.jsonl", 20)
+    events = read_jsonl_tail(folder / "events.jsonl", 20)
+    exit_path = folder / "tmux-exitcode"
+    exit_code = None
+    if exit_path.exists():
+        try:
+            exit_code = int(exit_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            exit_code = None
+    heartbeat_age_ms = None
+    status_path = folder / "watchdog" / "status.json"
+    if status_path.exists():
+        try:
+            heartbeat_age_ms = max(0, int((time.time() - status_path.stat().st_mtime) * 1000))
+        except OSError:
+            heartbeat_age_ms = None
+    if summary and not record.get("result"):
+        record["result"] = summary
+    result = record.get("result") if isinstance(record.get("result"), dict) else summary
+    result_status = result.get("status") if isinstance(result, dict) else ""
+    if summary:
+        succeeded = bool(summary.get("ok")) or str(summary.get("status") or "").lower() in {"succeeded", "paused", "waiting_for_human_review"}
+        summary_status = str(summary.get("status") or "").lower()
+        if summary_status in {"paused", "waiting_for_human_review"}:
+            record["status"] = summary_status
+        elif succeeded:
+            record["status"] = "succeeded"
+        else:
+            record["status"] = summary_status or "failed"
+    status = str(record.get("status") or result_status or watchdog.get("state") or launch.get("status") or "unknown")
+    terminal = bool(summary) or (folder / "watchdog" / "done").exists()
+    stale_ms = int(os.environ.get("AAPS_STATUS_STALE_MS", "120000"))
+    stale = bool(not terminal and heartbeat_age_ms is not None and heartbeat_age_ms > stale_ms)
+    failed = status in {"failed", "blocked_compile_check", "failed_missing_block", "tmux_launch_failed", "missing_tmux"} or (exit_code not in (None, 0))
+    health = "starting"
+    if isinstance(result, dict) and (result.get("ok") or status in {"succeeded", "success"}):
+        health = "healthy"
+    elif failed:
+        health = "failed"
+    elif stale or alerts:
+        health = "stale"
+    elif terminal:
+        health = "finished"
+    elif watchdog:
+        health = "running"
+    record.update(
+        {
+            "runDir": str(folder),
+            "health": health,
+            "heartbeatAgeMs": heartbeat_age_ms,
+            "staleMs": stale_ms,
+            "stale": stale,
+            "exitCode": exit_code,
+            "watchdog": watchdog,
+            "runtimeWatchdog": runtime_watchdog,
+            "tmuxLaunch": launch,
+            "alerts": alerts,
+            "events": events,
+        }
+    )
+    if launch:
+        session = str(launch.get("session") or "")
+        tmux = shutil.which(os.environ.get("AAPS_TMUX_BIN") or "tmux")
+        alive = None
+        if tmux and session:
+            alive = subprocess.run([tmux, "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode == 0
+        record["tmux"] = {
+            "session": session,
+            "mode": launch.get("mode") or "",
+            "attachCommand": launch.get("attachCommand") or "",
+            "statusCommand": launch.get("statusCommand") or "",
+            "available": bool(tmux),
+            "alive": alive,
+        }
+    return record
 
 
 def write_compile_record(compile_id: str, payload: dict) -> None:
@@ -3752,6 +3855,9 @@ def start_aaps_run(body: dict) -> dict:
     pause_on_human_review = bool(body.get("pauseOnHumanReview") or body.get("pause_on_human_review"))
     approve_human_review = bool(body.get("approveHumanReview") or body.get("approve_human_review") or body.get("humanReviewApproved"))
     input_overrides = parse_runtime_input_overrides(body)
+    use_tmux = bool(body.get("tmux") or body.get("useTmux") or body.get("tmuxRun"))
+    requested_tmux_session = str(body.get("tmuxSession") or body.get("tmux_session") or "").strip()
+    reuse_tmux = bool(body.get("tmuxReuse") or body.get("tmux_reuse") or body.get("reuseTmux"))
     source = str(body.get("source") or "")
     file_name = str(body.get("file") or "").strip()
     source_path = ""
@@ -3785,13 +3891,15 @@ def start_aaps_run(body: dict) -> dict:
         "pauseOnHumanReview": pause_on_human_review,
         "approveHumanReview": approve_human_review,
         "inputOverrides": input_overrides,
+        "tmux": use_tmux,
+        "tmuxSession": requested_tmux_session,
+        "tmuxReuse": reuse_tmux,
         "result": None,
         "error": "",
     }
     write_run_record(run_id, record)
 
-    def worker() -> None:
-        current = read_run_record(run_id) or record
+    def build_runner_command() -> list[str]:
         command = [
             "node",
             str(ROOT / "scripts" / "aaps-runner.js"),
@@ -3832,6 +3940,98 @@ def start_aaps_run(body: dict) -> dict:
             command.append("--approve-human-review")
         for key, value in input_overrides.items():
             command.extend(["--set", f"{key}={value}"])
+        return command
+
+    if use_tmux:
+        current = read_run_record(run_id) or record
+        command = build_runner_command()
+        tmux_bin = shutil.which(os.environ.get("AAPS_TMUX_BIN") or "tmux")
+        session = re.sub(r"[^A-Za-z0-9_.-]+", "-", requested_tmux_session or f"aaps-{slug(project_label(project_dir), 'project')}-{run_id[:8]}").strip("-")[:80] or f"aaps-{run_id[:8]}"
+        stdout_path = folder / "tmux-stdout.log"
+        stderr_path = folder / "tmux-stderr.log"
+        exit_path = folder / "tmux-exitcode"
+        launch_path = folder / "tmux_launch.json"
+        watchdog_dir = folder / "watchdog"
+        watchdog_dir.mkdir(parents=True, exist_ok=True)
+        (folder / "block_logs").mkdir(parents=True, exist_ok=True)
+        (folder / "repair_prompts").mkdir(parents=True, exist_ok=True)
+        launched_at = now_iso()
+        base_launch = {
+            "version": "aaps_tmux_launch/0.1",
+            "runId": run_id,
+            "runDir": str(folder),
+            "runRoot": str(RUN_DIR),
+            "file": file_name,
+            "project": project_label(project_dir),
+            "session": session,
+            "stdoutPath": str(stdout_path),
+            "stderrPath": str(stderr_path),
+            "exitPath": str(exit_path),
+            "attachCommand": f"tmux attach -t {session}",
+            "statusCommand": f"aaps status {run_id} --project {shlex.quote(str(project_dir))} --run-root {shlex.quote(str(RUN_DIR))}",
+            "launchedAt": launched_at,
+        }
+        if not tmux_bin:
+            failed = {
+                **current,
+                "status": "missing_tmux",
+                "updated_at": now_iso(),
+                "error": "tmux was not found. Install tmux or set AAPS_TMUX_BIN.",
+                "tmuxLaunch": {**base_launch, "ok": False, "status": "missing_tmux"},
+            }
+            write_file_json(launch_path, failed["tmuxLaunch"])
+            write_run_record(run_id, failed)
+            return failed
+        shell_command = (
+            f"cd {shlex.quote(str(PROJECT_ROOT))} && "
+            f"AAPS_NO_WEB_AUTO_START=1 {' '.join(shlex.quote(part) for part in command)} "
+            f"> {shlex.quote(str(stdout_path))} 2> {shlex.quote(str(stderr_path))}; "
+            f"code=$?; printf '%s\\n' \"$code\" > {shlex.quote(str(exit_path))}; exit $code"
+        )
+        existing = subprocess.run([tmux_bin, "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode == 0
+        if existing and not reuse_tmux:
+            failed = {
+                **current,
+                "status": "tmux_session_exists",
+                "updated_at": now_iso(),
+                "error": f"tmux session already exists: {session}",
+                "tmuxLaunch": {**base_launch, "ok": False, "status": "tmux_session_exists"},
+            }
+            write_file_json(launch_path, failed["tmuxLaunch"])
+            write_run_record(run_id, failed)
+            return failed
+        tmux_args = [tmux_bin, "new-window", "-t", session, "-n", run_id[:24], shell_command] if existing else [tmux_bin, "new-session", "-d", "-s", session, shell_command]
+        launch = {**base_launch, "ok": True, "status": "launched", "mode": "new-window" if existing else "new-session", "command": shell_command}
+        write_file_json(launch_path, launch)
+        write_file_json(
+            watchdog_dir / "status.json",
+            {
+                "version": "aaps_watchdog_status/0.1",
+                "time": launched_at,
+                "pid": os.getpid(),
+                "runId": run_id,
+                "state": "tmux_launched",
+                "file": file_name,
+                "project": project_label(project_dir),
+                "block": block,
+                "runDir": str(folder),
+                "tmux": {"session": session, "mode": launch["mode"]},
+            },
+        )
+        process = subprocess.run(tmux_args, cwd=PROJECT_ROOT, text=True, capture_output=True, check=False)
+        if process.returncode != 0:
+            failed_launch = {**launch, "ok": False, "status": "tmux_launch_failed", "error": process.stderr.strip() or process.stdout.strip()}
+            current.update({"status": "tmux_launch_failed", "updated_at": now_iso(), "error": failed_launch["error"], "tmuxLaunch": failed_launch})
+            write_file_json(launch_path, failed_launch)
+            write_run_record(run_id, current)
+            return current
+        current.update({"status": "running", "updated_at": now_iso(), "tmux": True, "tmuxSession": session, "tmuxLaunch": launch})
+        write_run_record(run_id, current)
+        return read_run_record(run_id) or current
+
+    def worker() -> None:
+        current = read_run_record(run_id) or record
+        command = build_runner_command()
         try:
             process = subprocess.run(
                 command,

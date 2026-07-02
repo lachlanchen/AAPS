@@ -203,7 +203,7 @@ The package is published as `@lazyingart/aaps`. Future releases use GitHub Actio
 Studio tabs:
 
 - **Bottom Chat Dock**: available on every tab. It routes messages through the selected backend agent and keeps the transcript behind the History button.
-- **Project**: first tab. Create a starter topic workspace, edit `aaps.project.json`, browse `.aaps` and script files, configure Codex/DeepSeek/AgInTiFlow backend settings, run manifest checks, copy a tmux command, and dry-run or run the active workflow.
+- **Project**: first tab. Create a starter topic workspace, edit `aaps.project.json`, browse `.aaps` and script files, configure Codex/DeepSeek/AgInTiFlow backend settings, run manifest checks, launch a managed tmux run, and dry-run or run the active workflow.
 - **Blocks**: create reusable blocks, select a block, edit typed ports/actions/validations, and use block chat to generate Python or shell actions with preview artifacts.
 - **Programs**: edit full `.aaps`, view parser diagnostics, inspect the graph, and review the JSON IR.
 
@@ -267,6 +267,8 @@ node scripts/aaps.js check workflows/executable_folder_segmentation.aaps --proje
 node scripts/aaps.js run examples/executable_runtime.aaps --project . --json
 node scripts/aaps.js run-block workflows/executable_organoid_demo.aaps --project examples/projects/organoid-analysis --block qc_image --json
 node scripts/aaps.js run workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --json
+node scripts/aaps.js run-tmux workflows/executable_folder_segmentation.aaps --project examples/projects/organoid-analysis --run-id folder-demo --json
+node scripts/aaps.js status folder-demo --project examples/projects/organoid-analysis --json
 node scripts/aaps.js validate --project examples/projects/organoid-analysis --json
 node scripts/aaps.js run workflows/executable_static_check.aaps --project examples/projects/app-development --json
 ```
@@ -286,7 +288,7 @@ aaps run workflows/main.aaps --project . --pause-after segment_image
 
 Resume now checks artifact freshness before skipping completed steps. A skipped block must still have its declared outputs/artifacts, and those outputs must be newer than the current workflow source, project manifest/registries, script entries, required files, and path-like inputs. If a script, input, source file, or registry changes, AAPS records a dependency-aware invalidation and reruns the affected step instead of silently preserving stale artifacts.
 
-Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, `artifact_freshness.json`, `human_review_queue.json`, `pause_state.json`, an agent manifest plan (`agent_compile_plan.json`), stdout/stderr logs, repair/setup prompts, watchdog status/alerts, artifacts, and `report.md` under the run directory. Human-review actions can pause a run and resume only after explicit approval. Studio exposes the same resume mode, no-override, pause, continue, and review-approval controls in the Runtime panel. When a `repair true` block fails, AAPS writes dormant-agent Markdown/JSON repair packets with rerun commands and failure evidence. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
+Runs write `run.json`, `events.jsonl`, `execution_plan.json`, `block_readiness.json`, `tool_resolution.json`, `artifact_freshness.json`, `human_review_queue.json`, `pause_state.json`, an agent manifest plan (`agent_compile_plan.json`), stdout/stderr logs, repair/setup prompts, watchdog status/alerts, artifacts, and `report.md` under the run directory. `run-tmux` starts the same runner in a detached tmux session and writes `tmux_launch.json` immediately, so `aaps status <run-id>` and Studio can report heartbeat health before the final summary exists. Human-review actions can pause a run and resume only after explicit approval. Studio exposes the same resume mode, no-override, pause, continue, review-approval, tmux launch, and health controls in the Runtime panel. When a `repair true` block fails, AAPS writes dormant-agent Markdown/JSON repair packets with rerun commands and failure evidence. Readiness checks classify missing inputs, scripts, commands, Python packages, tools, agents, generated runtime artifacts, and loop-deferred values before execution. See [docs/runtime.md](docs/runtime.md).
 
 ## Codex Wrapper
 

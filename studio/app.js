@@ -425,11 +425,14 @@ async function loadProjectChoices() {
   return currentProjects;
 }
 
+function shellSnippetQuote(value) {
+  return `'${String(value || "").replace(/'/g, "'\"'\"'")}'`;
+}
+
 function tmuxCommand(manifest) {
   const project = projectPathEl.value || ".";
-  const session = `aaps-${(AAPS.slug(manifest.name || "project").slice(0, 24) || "project")}`;
   const workflow = manifest.activeFile || manifest.defaultMain || "workflows/main.aaps";
-  return `tmux new-session -d -s ${session} 'cd ${project} && aaps run ${workflow} --project . --json'`;
+  return `aaps run-tmux ${shellSnippetQuote(workflow)} --project ${shellSnippetQuote(project)} --json`;
 }
 
 function renderProject(payload = currentProjectPayload) {
@@ -572,7 +575,11 @@ function renderRuntime(record) {
   const result = record.result || record;
   lastRuntimeResult = result;
   if (runtimeResumeRunEl && result.runId) runtimeResumeRunEl.value = result.runId;
-  runStatusEl.textContent = record.status || result.status || "unknown";
+  const status = record.status || result.status || "unknown";
+  const health = record.health || result.health || "";
+  const watchdog = record.watchdog || result.watchdog || {};
+  const tmux = record.tmux || result.tmux || null;
+  runStatusEl.textContent = health ? `${status} · ${health}` : status;
   const plan = result.plan || {};
   const failed = (result.results || []).filter((item) => item.status === "failed").length;
   const skipped = (result.results || []).filter((item) => item.status === "skipped_completed").length;
@@ -593,6 +600,8 @@ function renderRuntime(record) {
       <div class="project-kpi"><strong>${humanReviews}</strong>review</div>
       <div class="project-kpi"><strong>${readyBlocks}/${(readiness.blocks || []).length || 0}</strong>ready</div>
       <div class="project-kpi"><strong>${compileRequests}</strong>manifest prompts</div>
+      ${health ? `<div class="project-kpi"><strong>${escapeHtml(health)}</strong>health</div>` : ""}
+      ${typeof record.heartbeatAgeMs === "number" ? `<div class="project-kpi"><strong>${Math.round(record.heartbeatAgeMs / 1000)}s</strong>heartbeat</div>` : ""}
     </div>
     ${
       pause.paused
@@ -609,9 +618,19 @@ function renderRuntime(record) {
         ? `<div><strong>Freshness invalidation:</strong> ${invalidated} completed step(s) reran because outputs were missing/stale or dependencies changed.</div>`
         : ""
     }
-    <div>${escapeHtml(result.runDir || "")}</div>
+    ${
+      tmux?.session
+        ? `<div><strong>tmux:</strong> ${escapeHtml(tmux.session)} ${tmux.alive === false ? "(not alive)" : ""} ${tmux.attachCommand ? `· <code>${escapeHtml(tmux.attachCommand)}</code>` : ""}</div>`
+        : ""
+    }
+    ${
+      watchdog?.activeStep || watchdog?.activeAction
+        ? `<div><strong>Active:</strong> ${escapeHtml(watchdog.activeStep || "")} ${escapeHtml(watchdog.activeAction || "")}</div>`
+        : ""
+    }
+    <div>${escapeHtml(result.runDir || record.runDir || "")}</div>
   `;
-  runLogEl.textContent = JSON.stringify(result, null, 2);
+  runLogEl.textContent = JSON.stringify(record, null, 2);
   renderSelectedReadiness(result);
 }
 
@@ -3604,7 +3623,7 @@ async function startRuntimeRun(dryRun, blockId = "", runtimeOptions = {}) {
     throw new Error(manifest.error);
   }
   const file = manifest.activeFile || manifest.defaultMain || "pipeline.aaps";
-  runStatusEl.textContent = dryRun ? "dry run starting" : "run starting";
+  runStatusEl.textContent = runtimeOptions.tmux ? "tmux run launching" : dryRun ? "dry run starting" : "run starting";
   runSummaryEl.innerHTML = '<div>Submitting AAPS runtime job...</div>';
   runLogEl.textContent = "";
   const response = await fetch("/api/aaps/run", {
@@ -4353,6 +4372,12 @@ document.getElementById("dry-run-active-file-btn").addEventListener("click", () 
 document.getElementById("run-active-file-btn").addEventListener("click", () => {
   startRuntimeRun(false).catch((error) => {
     addMessage("assistant", `Could not run active file: ${error.message}`);
+  });
+});
+
+document.getElementById("tmux-run-active-file-btn").addEventListener("click", () => {
+  startRuntimeRun(false, "", { tmux: true }).catch((error) => {
+    addMessage("assistant", `Could not launch tmux run: ${error.message}`);
   });
 });
 

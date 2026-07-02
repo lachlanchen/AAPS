@@ -72,6 +72,8 @@ function usage() {
     "  aaps check-block <file> --block <id> [--project .] [--json]",
     "  aaps run <file> [--project .] [--json]",
     "  aaps run-block <file> --block <id> [--project .] [--json]",
+    "  aaps run-tmux <file> [--project .] [--run-id id] [--tmux-session name] [--json]",
+    "  aaps status <run-id> [--project .] [--run-root dir] [--json]",
     "  aaps prompt \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
     "  aaps \"goal\" [--project .] [--backend codex|aginti|print] [--json]",
     "  aaps validate [file] [--project .] [--json]",
@@ -91,6 +93,9 @@ function usage() {
     "  --ui <mode>       Studio UI mode: classic on 8797 or simple on 8798 by default.",
     "  --run-root <dir>  Runtime output directory for `run` and `run-block`.",
     "  --run-id <id>     Stable run identifier for reproducible test runs.",
+    "  --tmux-session <name> tmux session used by `run-tmux`. Defaults to a unique AAPS session.",
+    "  --tmux-reuse      If --tmux-session exists, start the run in a new tmux window.",
+    "  --stale-ms <ms>   Health threshold for `aaps status`. Defaults to 120000.",
     "  --resume-run <id> Resume from an existing run id and reuse its run directory when --run-id is omitted.",
     "  --continue-run <id> Continue a paused run id using skip-completed resume semantics.",
     "  --skip-completed  Skip steps already succeeded/recovered in the resumed run.",
@@ -419,6 +424,20 @@ function print(value, asJson) {
   else console.log(value);
 }
 
+function readJsonFile(file, fallback = null) {
+  try {
+    if (!fs.existsSync(file)) return fallback;
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function writeJsonFile(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
 function timestampSlug(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");
 }
@@ -648,7 +667,7 @@ function resolveCommand(command, cwd, envVar = "") {
   const explicit = override || command;
   if (explicit.includes(path.sep) || (process.platform === "win32" && explicit.includes("\\"))) {
     const full = path.resolve(explicit.replace(/^~/, os.homedir()));
-    if (isExecutableFile(full)) return { command: full, source: envVar || "explicit", pathEnv: process.env.PATH || "" };
+    if (isExecutableFile(full)) return { ok: true, command: full, source: envVar || "explicit", pathEnv: process.env.PATH || "" };
   }
   if (override && !override.includes(path.sep)) {
     const resolvedOverride = resolveCommand(override, cwd, "");
@@ -1235,9 +1254,17 @@ function commandPrompt(goal, options) {
   process.exit(payload.ok ? 0 : payload.exitCode || 1);
 }
 
-function runRunner(command, file, options) {
+function runtimeRunRoot(projectDir, options = {}) {
+  return options.runRoot ? path.resolve(projectDir, options.runRoot) : path.join(projectDir, "runtime", "runs");
+}
+
+function runnerFileForProject(projectDir, file) {
+  return path.isAbsolute(file) ? toProjectPath(path.relative(projectDir, file)) : file;
+}
+
+function buildRunnerArgs(command, file, options = {}) {
   const projectDir = path.resolve(options.project || ".");
-  const runnerFile = path.isAbsolute(file) ? toProjectPath(path.relative(projectDir, file)) : file;
+  const runnerFile = runnerFileForProject(projectDir, file);
   const args = [
     path.join(__dirname, "aaps-runner.js"),
     command,
@@ -1264,6 +1291,12 @@ function runRunner(command, file, options) {
   });
   if (options.dryRun) args.push("--dry-run");
   if (options.json) args.push("--json");
+  return args;
+}
+
+function runRunner(command, file, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const args = buildRunnerArgs(command, file, options);
   const result = childProcess.spawnSync(process.execPath, args, {
     cwd: projectDir,
     encoding: "utf8",
@@ -1274,6 +1307,300 @@ function runRunner(command, file, options) {
   if (result.stderr) process.stderr.write(result.stderr);
   if (result.error) process.stderr.write(`${result.error.message}\n`);
   process.exitCode = result.status ?? 1;
+}
+
+function safeTmuxName(value, fallback = "aaps-run") {
+  return String(value || fallback)
+    .replace(/[^A-Za-z0-9_.-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || fallback;
+}
+
+function tmuxHasSession(tmux, projectDir, sessionName) {
+  const result = childProcess.spawnSync(tmux.command, ["has-session", "-t", sessionName], {
+    cwd: projectDir,
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "ignore"],
+    env: { ...process.env, PATH: tmux.pathEnv || process.env.PATH || "" },
+  });
+  return result.status === 0;
+}
+
+function commandRunTmux(file, options) {
+  const projectDir = path.resolve(options.project || ".");
+  const manifest = readManifest(projectDir) || {};
+  const runnerFile = runnerFileForProject(projectDir, file);
+  if (!fs.existsSync(path.resolve(projectDir, runnerFile))) {
+    throw new Error(`AAPS workflow not found for tmux run: ${runnerFile}`);
+  }
+  const runRoot = runtimeRunRoot(projectDir, options);
+  const runId = safeTmuxName(options.runId || `tmux-${timestampSlug()}`, "tmux-run");
+  const runDir = path.join(runRoot, runId);
+  fs.mkdirSync(path.join(runDir, "watchdog"), { recursive: true });
+  fs.mkdirSync(path.join(runDir, "block_logs"), { recursive: true });
+  fs.mkdirSync(path.join(runDir, "repair_prompts"), { recursive: true });
+  const tmux = resolveCommand("tmux", projectDir, "AAPS_TMUX_BIN");
+  if (!tmux.ok) {
+    const payload = {
+      ok: false,
+      status: "missing_tmux",
+      runId,
+      runDir,
+      file: runnerFile,
+      project: projectDir,
+      error: "tmux was not found. Install tmux or set AAPS_TMUX_BIN.",
+      searched: tmux.searched || [],
+    };
+    writeJsonFile(path.join(runDir, "tmux_launch.json"), payload);
+    if (options.json) print(payload, true);
+    else console.error(payload.error);
+    process.exitCode = 1;
+    return payload;
+  }
+  const sessionName = safeTmuxName(
+    options.tmuxSession || `aaps-${slugName(manifest.name || path.basename(projectDir), "project")}-${runId}`,
+    "aaps-run"
+  );
+  const runnerOptions = {
+    ...options,
+    project: ".",
+    runRoot,
+    runId,
+    json: true,
+  };
+  const runnerArgs = buildRunnerArgs("run", runnerFile, runnerOptions);
+  const stdoutPath = path.join(runDir, "tmux-stdout.log");
+  const stderrPath = path.join(runDir, "tmux-stderr.log");
+  const exitPath = path.join(runDir, "tmux-exitcode");
+  const runnerCommand = [
+    "AAPS_NO_WEB_AUTO_START=1",
+    shellQuote(process.execPath),
+    ...runnerArgs.map((arg) => shellQuote(arg)),
+    ">",
+    shellQuote(stdoutPath),
+    "2>",
+    shellQuote(stderrPath),
+    ";",
+    "code=$?",
+    ";",
+    "printf '%s\\n' \"$code\" >",
+    shellQuote(exitPath),
+    ";",
+    "exit $code",
+  ].join(" ");
+  const shellCommand = `cd ${shellQuote(projectDir)} && ${runnerCommand}`;
+  const existingSession = tmuxHasSession(tmux, projectDir, sessionName);
+  if (existingSession && !(options.tmuxReuse || options.reuseTmux)) {
+    const payload = {
+      ok: false,
+      status: "tmux_session_exists",
+      runId,
+      runDir,
+      file: runnerFile,
+      project: projectDir,
+      session: sessionName,
+      error: `tmux session already exists: ${sessionName}. Use --tmux-reuse or choose another --tmux-session.`,
+    };
+    writeJsonFile(path.join(runDir, "tmux_launch.json"), payload);
+    if (options.json) print(payload, true);
+    else console.error(payload.error);
+    process.exitCode = 1;
+    return payload;
+  }
+  const tmuxArgs = existingSession
+    ? ["new-window", "-t", sessionName, "-n", safeTmuxName(runId, "run"), shellCommand]
+    : ["new-session", "-d", "-s", sessionName, shellCommand];
+  const launchedAt = new Date().toISOString();
+  const statusPayload = {
+    version: "aaps_watchdog_status/0.1",
+    time: launchedAt,
+    pid: process.pid,
+    runId,
+    state: "tmux_launched",
+    file: runnerFile,
+    project: projectDir,
+    block: options.block || "",
+    runDir,
+    tmux: { session: sessionName, mode: existingSession ? "new-window" : "new-session" },
+  };
+  writeJsonFile(path.join(runDir, "watchdog", "status.json"), statusPayload);
+  const launchPayload = {
+    version: "aaps_tmux_launch/0.1",
+    ok: true,
+    status: "launched",
+    launchedAt,
+    runId,
+    runDir,
+    runRoot,
+    file: runnerFile,
+    project: projectDir,
+    session: sessionName,
+    mode: existingSession ? "new-window" : "new-session",
+    command: shellCommand,
+    stdoutPath,
+    stderrPath,
+    exitPath,
+    attachCommand: `tmux attach -t ${sessionName}`,
+    statusCommand: `aaps status ${runId} --project ${shellQuote(projectDir)} --run-root ${shellQuote(runRoot)}`,
+  };
+  writeJsonFile(path.join(runDir, "tmux_launch.json"), launchPayload);
+  const result = childProcess.spawnSync(tmux.command, tmuxArgs, {
+    cwd: projectDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, PATH: tmux.pathEnv || process.env.PATH || "" },
+  });
+  if ((result.status ?? 1) !== 0) {
+    const failed = {
+      ...launchPayload,
+      ok: false,
+      status: "tmux_launch_failed",
+      error: String(result.stderr || result.stdout || result.error?.message || "tmux launch failed").trim(),
+    };
+    writeJsonFile(path.join(runDir, "tmux_launch.json"), failed);
+    if (options.json) print(failed, true);
+    else console.error(failed.error);
+    process.exitCode = result.status ?? 1;
+    return failed;
+  }
+  if (options.json) print(launchPayload, true);
+  else {
+    console.log(`AAPS tmux run ${runId} launched in session ${sessionName}.`);
+    console.log(launchPayload.statusCommand);
+    console.log(launchPayload.attachCommand);
+  }
+  return launchPayload;
+}
+
+function tailJsonl(file, limit = 20) {
+  try {
+    if (!fs.existsSync(file)) return [];
+    return fs.readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-limit)
+      .map((line) => {
+        try { return JSON.parse(line); }
+        catch (_error) { return { raw: line }; }
+      });
+  } catch (_error) {
+    return [];
+  }
+}
+
+function runtimeCandidateRoots(projectDir, options = {}) {
+  const roots = [];
+  if (options.runRoot) roots.push(path.resolve(projectDir, options.runRoot));
+  roots.push(path.join(projectDir, "runtime", "runs"));
+  roots.push(path.join(projectDir, ".aaps-work", "studio-aaps-runs"));
+  const manifest = readManifest(projectDir);
+  if (manifest && manifest.paths && manifest.paths.runs) roots.push(path.resolve(projectDir, manifest.paths.runs));
+  if (manifest && manifest.artifactRoot) roots.push(path.resolve(projectDir, manifest.artifactRoot, "runs"));
+  roots.push(path.join(projectDir, "runs"));
+  roots.push(path.join(projectDir, "outputs", "aaps-runs"));
+  roots.push(path.join(projectDir, "outputs", "runs"));
+  return unique(roots.map((item) => path.resolve(item)));
+}
+
+function findRunDir(projectDir, runId, options = {}) {
+  const explicit = String(options.runDir || "").trim();
+  if (explicit) {
+    const resolved = path.resolve(projectDir, explicit);
+    return fs.existsSync(resolved) ? resolved : "";
+  }
+  for (const root of runtimeCandidateRoots(projectDir, options)) {
+    const candidate = path.join(root, runId);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "";
+}
+
+function buildRunStatus(runId, options = {}) {
+  const projectDir = path.resolve(options.project || ".");
+  const staleMs = Math.max(1000, Number(options.staleMs || process.env.AAPS_STATUS_STALE_MS || 120000));
+  const runDir = findRunDir(projectDir, runId, options);
+  if (!runDir) {
+    return { ok: false, found: false, runId, status: "missing", health: "missing", project: projectDir, searched: runtimeCandidateRoots(projectDir, options) };
+  }
+  const run = readJsonFile(path.join(runDir, "run.json"), null);
+  const watchdog = readJsonFile(path.join(runDir, "watchdog", "status.json"), null);
+  const runtimeWatchdog = readJsonFile(path.join(runDir, "runtime_watchdog.json"), null);
+  const launch = readJsonFile(path.join(runDir, "tmux_launch.json"), null);
+  const exitCodeFile = path.join(runDir, "tmux-exitcode");
+  const exitCode = fs.existsSync(exitCodeFile) ? Number(String(fs.readFileSync(exitCodeFile, "utf8")).trim()) : null;
+  const donePath = path.join(runDir, "watchdog", "done");
+  const alerts = tailJsonl(path.join(runDir, "watchdog", "alerts.jsonl"), 20);
+  const events = tailJsonl(path.join(runDir, "events.jsonl"), 20);
+  let heartbeatAgeMs = null;
+  try {
+    heartbeatAgeMs = Math.max(0, Math.round(Date.now() - fs.statSync(path.join(runDir, "watchdog", "status.json")).mtimeMs));
+  } catch (_error) {
+    heartbeatAgeMs = null;
+  }
+  const terminal = Boolean(run) || fs.existsSync(donePath);
+  const stale = !terminal && heartbeatAgeMs !== null && heartbeatAgeMs > staleMs;
+  const status = run?.status || watchdog?.state || launch?.status || "unknown";
+  const failed = ["failed", "blocked_compile_check", "failed_missing_block", "tmux_launch_failed", "missing_tmux"].includes(String(status));
+  let health = "starting";
+  if (run?.ok || ["succeeded", "success"].includes(String(status))) health = "healthy";
+  else if (failed || (exitCode !== null && exitCode !== 0)) health = "failed";
+  else if (stale || alerts.length) health = "stale";
+  else if (terminal) health = "finished";
+  else if (watchdog) health = "running";
+  const payload = {
+    ok: true,
+    found: true,
+    runId,
+    status,
+    health,
+    project: projectDir,
+    runDir,
+    heartbeatAgeMs,
+    staleMs,
+    stale,
+    exitCode,
+    tmux: launch
+      ? {
+          session: launch.session || "",
+          mode: launch.mode || "",
+          attachCommand: launch.attachCommand || "",
+          statusCommand: launch.statusCommand || "",
+        }
+      : null,
+    watchdog,
+    runtimeWatchdog,
+    launch,
+    run,
+    alerts,
+    events,
+  };
+  const session = payload.tmux?.session || "";
+  if (session) {
+    const tmux = resolveCommand("tmux", projectDir, "AAPS_TMUX_BIN");
+    payload.tmux.available = Boolean(tmux.ok);
+    payload.tmux.alive = tmux.ok ? tmuxHasSession(tmux, projectDir, session) : null;
+  }
+  return payload;
+}
+
+function commandRunStatus(runId, options = {}) {
+  const payload = buildRunStatus(runId, options);
+  if (options.json) print(payload, true);
+  else if (!payload.found) {
+    console.error(`AAPS run not found: ${runId}`);
+    console.error(`Searched: ${payload.searched.join(", ")}`);
+  } else {
+    console.log(`AAPS run ${payload.runId}: ${payload.status} (${payload.health})`);
+    console.log(payload.runDir);
+    if (payload.heartbeatAgeMs !== null) console.log(`heartbeat age: ${payload.heartbeatAgeMs} ms`);
+    if (payload.tmux?.session) {
+      console.log(`tmux: ${payload.tmux.session}${payload.tmux.alive === false ? " (not alive)" : ""}`);
+      console.log(payload.tmux.attachCommand);
+    }
+    if (payload.alerts.length) console.log(`watchdog alerts: ${payload.alerts.length}`);
+  }
+  process.exitCode = payload.found ? 0 : 1;
+  return payload;
 }
 
 function runCompiler(command, positional, options) {
@@ -2457,6 +2784,11 @@ async function main() {
     "run",
     "check-block",
     "run-block",
+    "run-tmux",
+    "tmux-run",
+    "status",
+    "run-status",
+    "health",
     "prompt",
   ]);
   if (command === "help" || command === "--help" || command === "-h") {
@@ -2561,6 +2893,16 @@ async function main() {
     if (!file) throw new Error("aaps run-block requires a .aaps file.");
     if (!options.block) throw new Error("aaps run-block requires --block <id>.");
     runRunner("run", file, options);
+    return;
+  }
+  if (command === "run-tmux" || command === "tmux-run") {
+    if (!file) throw new Error(`aaps ${command} requires a .aaps file.`);
+    commandRunTmux(file, options);
+    return;
+  }
+  if (command === "status" || command === "run-status" || command === "health") {
+    if (!file) throw new Error(`aaps ${command} requires a run id.`);
+    commandRunStatus(file, options);
     return;
   }
   if (!knownCommands.has(command)) {
