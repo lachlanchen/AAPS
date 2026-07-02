@@ -2128,6 +2128,7 @@ Return JSON matching the schema with:
 
 Rules:
 - Preserve valid AAPS syntax; AAPS is not YAML.
+- Multiline prompt/code blocks may use `\"\"\"`, `'''`, or triple backticks. If inline Python/JavaScript contains `\"\"\"`, use `code '''` or `code ````, then ensure the shared parser is clean.
 - Keep prompts first-class, but require explicit inputs, outputs, verification, and artifacts for useful work.
 - Prefer named agents, skills, tasks, stages, actions, methods, guards, if/else branches, and for_each loops.
 - Treat the `.aaps` source as the contract. Do not remove requirements, validation, artifacts, hardware needs, or typed ports just to make an implementation easier.
@@ -2137,7 +2138,9 @@ Rules:
 - Programs should call or reference reusable blocks, and any required block must be discoverable and editable as a project block file.
 - Blocks must be compile-ready: include enough biological/project context, executable action requirements, validations, recovery/review expectations, and declared artifacts for a later compiler or backend agent to implement and self-debug the scripts.
 - When generating or requesting scripts, require a small-preview/test mode, explicit CLI arguments, an output manifest, logs, and validation-friendly CSV/JSON/figure/report outputs.
+- For smoke tests and first manifestation passes, prefer standard-library code and already declared project dependencies. Do not add pandas, OpenCV, Cellpose, or other packages unless the block contract explains why they are necessary and produces a setup prompt.
 - For manifest/compile or repair edits, make the missing component explicit and require a follow-up `aaps validate`, `aaps parse`, `aaps check`, and executable run when safe. Difficult implementation repair should route to Codex GPT-5.5 xhigh or an equivalent careful code agent.
+- If the failure is in AAPS source parsing, parser diagnostics, manifest/compile readiness, runtime execution, or generated manifestation scripts, repair through AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair before any task-level success claim.
 - Chat-driven refinement targets the existing manifestation. Patch the current `.aaps`, scripts, prompts, registries, and report builders instead of creating duplicate `*_new` or timestamped implementation files, unless a required component is missing or the user asks for a new artifact.
 - Report blocks are complete recaps, not loose conclusions: they should consume source inputs, method comparisons, QC/agent decisions, handoff packets, run logs, validation summaries, checkpoints, and final artifacts, then write a durable TeX/PDF/Markdown/HTML plus an artifact index.
 - Agent blocks that write prompts for downstream agents must create high-quality prompt artifacts with task goal, evidence paths, QC defects, failure reason, method history, expected schema, constraints, and verifier checklist.
@@ -2178,6 +2181,7 @@ AAPS v0.2 supports:
 - `pipeline`, `agent`, `skill`, `task`, `stage`, `method`, `action`, `guard`, `choose`, `if`, `else`, `for_each`
 - typed `input` and `output` ports
 - `prompt`, `run`, `exec`, `arg`, `verify`, `call`, `param`, `metric`, and `policy`
+- multiline `prompt`/`code` blocks delimited by `\"\"\"`, `'''`, or triple backticks; choose a delimiter that does not appear in the content
 - executable validation with `validate exists`, `validate nonempty`, and `validate json`
 - runtime recovery with `retry`, `fallback`, `repair true`, `recover`, and `review`
 - project-root relative `include` statements
@@ -2192,8 +2196,10 @@ AAPS v0.2 supports:
 - Writing/novel workflows are first-class AAPS programs: use story brief -> outline/character bible -> selected chapter draft -> continuity/style review -> manuscript export. Keep writing context isolated from agent/system context, and make each chat refinement bounded unless the user explicitly asks for a new AAPS/workflow or override.
 - If the current source is clearly biology and the user asks for a novel/writing pipeline, or vice versa, do not silently overwrite. Ask whether to create a new AAPS/workflow or explicitly override/switch domain.
 - For backend-agent generated blocks/scripts, include self-debug instructions: run a small representative preview, inspect logs, verify declared outputs, and refine until masks/metrics/artifacts are meaningful.
+- For smoke tests and first manifestation passes, prefer standard-library code and already declared project dependencies. Do not add pandas, OpenCV, Cellpose, or other packages unless the block contract explains why they are necessary and produces a setup prompt.
 - For biology segmentation, prefer a clear method route such as Cellpose/multiscale Cellpose when available, and deterministic threshold/morphology fallback when unavailable. Always declare how the compiler/runtime proves the result.
 - For manifest/compile/repair conversations, preserve the `.aaps` contract and repair the failing block/script/tool underneath it. If readiness reports a missing script/tool/dependency/GPU contract, name that failure in the response and either edit the source to make the manifest target clear or route the repair to Codex GPT-5.5 xhigh.
+- If the failure is in AAPS source parsing, parser diagnostics, manifest/compile readiness, runtime execution, or generated manifestation scripts, repair through AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair before any task-level success claim.
 - For chat refinement of an already manifested task, patch the current `.aaps`, scripts, prompts, registries, and report builders. Do not create duplicate implementation files unless a component is missing or the user explicitly asks for a new artifact.
 - When a user asks for a report, create or refine a report recap block that explicitly consumes logs, method candidates, agent decisions, handoff packets, validation records, and final artifacts. Require it to cite paths and truthfully distinguish executed agent calls from prepared prompt-only handoffs.
 - When a workflow agent will call another agent or image generator, create a durable image-aware prompt/handoff artifact first. It must carry source image/artifact paths, upstream visual conclusions, QC defects, failure reason, exact downstream prompt, expected artifact schema, integration policy, and verifier checklist.
@@ -3361,6 +3367,7 @@ Default AAPS agent policy:
 - For image mask generation, use the original/source image as the visual reference by default and treat prior masks/overlays as text-only QC context unless extra references are explicitly requested. Require a clean colored instance mask on a plain black/white/transparent background with no grayscale microscopy underlay, no embedded text, labels, arrows, captions, legends, table/grid labels, or whole-cluster single-object annotation.
 - For chat-driven refinements, patch the existing manifested scripts/prompts/report builders rather than creating duplicate implementation files unless something is genuinely missing.
 - Treat parser diagnostics as repair inputs: quote the line/message, fix the `.aaps` source or manifest, rerun the parser, and do not mark the task complete until diagnostics are empty or a precise blocker is returned.
+- If the failure is in AAPS source parsing, parser diagnostics, manifest/compile readiness, runtime execution, or generated manifestation scripts, repair through AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair before any task-level success claim.
 - Report generation should recap the whole task from inputs through decisions and final outputs using logs and artifacts, not just summarize a final result.
 - Return concrete files, commands, artifacts, or blockers.
 

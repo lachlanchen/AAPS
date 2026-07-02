@@ -25,14 +25,17 @@
   }
   const BLOCK_DESIGN_PRINCIPLES = [
     "Respect AAPS grammar first: use pipeline, agent, block, skill, task, stage, method, action, guard, choose, if, else, for_each, typed input/output, exec, validate, retry, fallback, repair, recover, review, and artifact declarations.",
+    "For multiline prompt or code blocks, use `prompt \"\"\"`, `code \"\"\"`, `code '''`, or `code ````, and choose a delimiter that does not appear inside the content.",
     "Treat every reusable block as a contract: purpose, typed inputs, typed outputs, parameters, environment, tools, agents, scripts, executable actions, validations, recovery policy, artifacts, and review expectations.",
     "Keep prompt context redundant on purpose: include domain assumptions, data shape, quality criteria, method choices, expected files, failure modes, and what evidence proves success.",
     "Make blocks small enough to test independently, but not so small that the workflow becomes unreadable.",
+    "For smoke tests and first manifestations, prefer the Python standard library and already declared project packages; introduce new packages only when the contract explains why they are necessary and how setup will be approved.",
     "Prefer deterministic scripts/tools for repeatable work and explicit agent blocks for interpretation, repair, method choice, or irregular data.",
     "Represent routing in AAPS structure, not prose: use choose, if/else, for_each, fallback, recover, and review nodes where the decision matters.",
     "When agents hand work to other agents or image generators, pass a structured handoff packet with source images/artifacts, QC findings, upstream conclusions, failure reason, high-quality prompt, expected output schema, verification criteria, and an integration manifest for returned artifacts.",
     "For image-generation or mask-refinement blocks, state the reference-image policy and visual-output contract explicitly: no embedded text, labels, arrows, numbers, captions, legends, or decorative repainting unless the task specifically requires annotation.",
     "When parser or manifest diagnostics exist, feed the exact line/message evidence back into the agent and keep repairing until the same parser validates the final `.aaps` file or a precise blocker is recorded.",
+    "When failure is in AAPS source parsing, parser diagnostics, manifest/compile readiness, runtime execution, or generated manifestation scripts, the AAPS agent path must repair through AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair before task-level success claims.",
     "Compile missing implementation beneath the block contract. Do not weaken required inputs, outputs, GPU/tool/agent requirements, or validations just to pass readiness.",
     "For chat-driven refinements, edit the existing manifested `.aaps`, scripts, prompts, registries, and report builders unless the contract references a genuinely missing component or the user explicitly asks for a new file.",
     "Every block that writes artifacts should also declare how those artifacts are validated and where a human or agent can inspect them.",
@@ -47,6 +50,7 @@
     "If the verifier rejects the generated result, feed its concrete visual defects and artifact checks back into the downstream prompt and regenerate until accepted, retried to the declared limit, or blocked.",
     "If the downstream agent is unavailable, record a truthful prompt-only or blocked handoff status instead of claiming a regenerated output.",
     "Parser feedback is part of the agent loop: unresolved syntax or manifest errors must be copied into the next agent instruction and cleared before the task is marked complete.",
+    "Source/parser/manifest/readiness/runtime/generated-script failures require the AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair loop before task-level success claims.",
   ];
   const AGENT_HANDOFF_PACKET_SCHEMA = {
     version: "aaps_agent_handoff/0.1",
@@ -745,7 +749,7 @@
     lines.forEach((rawLine, index) => {
       const lineNumber = index + 1;
       if (blockText) {
-        const end = rawLine.indexOf('"""');
+        const end = rawLine.indexOf(blockText.delimiter);
         if (end >= 0) {
           blockText.target[blockText.key] = blockText.parts
             .concat(rawLine.slice(0, end))
@@ -827,12 +831,14 @@
       const target = currentTarget();
       const scope = stack[stack.length - 1];
 
-      match = line.match(/^(prompt|description|note|code)\s+"""(.*)$/i);
+      match = line.match(/^(prompt|description|note|code)\s+("""|'''|```)(.*)$/i);
       if (match) {
         const key = match[1].toLowerCase() === "description" ? "prompt" : match[1].toLowerCase();
-        const end = match[2].indexOf('"""');
-        if (end >= 0) target[key] = match[2].slice(0, end).trim();
-        else blockText = { target, key, parts: [match[2]] };
+        const delimiter = match[2];
+        const content = match[3] || "";
+        const end = content.indexOf(delimiter);
+        if (end >= 0) target[key] = content.slice(0, end).trim();
+        else blockText = { target, key, delimiter, parts: [content] };
         return;
       }
 
@@ -1159,7 +1165,7 @@
     if (!sawPipeline) {
       diagnostic(1, "Missing pipeline declaration.");
     }
-    if (blockText) diagnostic(lines.length, `Unclosed triple-quoted ${blockText.key} block.`);
+    if (blockText) diagnostic(lines.length, `Unclosed ${blockText.delimiter}-delimited ${blockText.key} block.`);
     if (stack.length) diagnostic(lines.length, `Unclosed block: ${stack[stack.length - 1].kind}.`);
     return ir;
   }
@@ -1183,6 +1189,22 @@
       });
     }
     return lines;
+  }
+
+  function multilineDelimiter(value) {
+    const text = String(value ?? "");
+    for (const delimiter of ['"""', "'''", "```"]) {
+      if (!text.includes(delimiter)) return delimiter;
+    }
+    return '"""';
+  }
+
+  function pushMultiline(lines, indent, key, value) {
+    if (!value) return;
+    const delimiter = multilineDelimiter(value);
+    lines.push(`${indent}${key} ${delimiter}`);
+    lines.push(...String(value).split("\n").map((part) => `${indent}${part}`));
+    lines.push(`${indent}${delimiter}`);
   }
 
   function blockHeader(node, indent) {
@@ -1245,16 +1267,8 @@
     Object.entries(node.metrics || {}).forEach(([key, value]) => lines.push(`${childIndent}metric ${key} = ${quote(value)}`));
     Object.entries(node.policies || {}).forEach(([key, value]) => lines.push(`${childIndent}policy ${key} = ${quote(value)}`));
     (node.calls || []).forEach((call) => lines.push(`${childIndent}call ${call.skill}${call.as ? ` as ${call.as}` : ""}`));
-    if (node.prompt) {
-      lines.push(`${childIndent}prompt """`);
-      lines.push(...String(node.prompt).split("\n").map((part) => `${childIndent}${part}`));
-      lines.push(`${childIndent}"""`);
-    }
-    if (node.code) {
-      lines.push(`${childIndent}code """`);
-      lines.push(...String(node.code).split("\n").map((part) => `${childIndent}${part}`));
-      lines.push(`${childIndent}"""`);
-    }
+    pushMultiline(lines, childIndent, "prompt", node.prompt);
+    pushMultiline(lines, childIndent, "code", node.code);
     (node.run || []).forEach((command) => lines.push(`${childIndent}run ${quote(command)}`));
     (node.validations || []).forEach((check) => lines.push(`${childIndent}validate ${quote(check)}`));
     (node.verify || []).forEach((check) => lines.push(`${childIndent}verify ${quote(check)}`));
@@ -1308,11 +1322,7 @@
     if (pipeline.executionMode) lines.push(`  execution_mode ${quote(pipeline.executionMode)}`);
     Object.entries(pipeline.safety || {}).forEach(([key, value]) => lines.push(`  safety ${key} = ${quote(value)}`));
     if (pipeline.goal) lines.push(`  goal ${quote(pipeline.goal)}`);
-    if (pipeline.prompt) {
-      lines.push('  prompt """');
-      lines.push(...String(pipeline.prompt).split("\n").map((part) => `  ${part}`));
-      lines.push('  """');
-    }
+    pushMultiline(lines, "  ", "prompt", pipeline.prompt);
     lines.push(...serializePorts(pipeline, "  "));
     (pipeline.artifacts || []).forEach((artifact) => lines.push(`  artifact ${artifact.name}: ${artifact.type || "artifact"}${artifact.value ? ` = ${quote(artifact.value)}` : ""}${artifact.validation ? ` validate ${quote(artifact.validation)}` : ""}`));
     Object.entries(pipeline.params || {}).forEach(([key, value]) => lines.push(`  param ${key} = ${quote(value)}`));

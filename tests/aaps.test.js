@@ -47,6 +47,7 @@ function findManifests(dir) {
 }
 
 const ir = AAPS.parseAAPS(AAPS.sample);
+const sourceFailureLoopText = "chat/session -> parse -> manifest -> check -> run -> QC -> repair";
 
 assert.strictEqual(ir.version, "aaps_ir/0.2");
 assert.strictEqual(ir.pipeline.name, "Ship AAPS Studio");
@@ -61,6 +62,10 @@ assert.strictEqual(ir.pipeline.skills[0].children[2].validations.length, 1);
 assert.strictEqual(ir.pipeline.skills[0].children[2].recovery.length, 1);
 assert.strictEqual(ir.pipeline.tasks[0].calls[0].skill, "bounded_change");
 assert.strictEqual(ir.diagnostics.length, 0, JSON.stringify(ir.diagnostics));
+assert(AAPS.BLOCK_DESIGN_PRINCIPLES.some((item) => item.includes(sourceFailureLoopText)));
+assert(AAPS.AGENT_HANDOFF_PRINCIPLES.some((item) => item.includes(sourceFailureLoopText)));
+assert(AAPS.blockDesignGuideMarkdown().includes(sourceFailureLoopText));
+assert(AAPS.agentHandoffGuideMarkdown().includes(sourceFailureLoopText));
 
 const biology = AAPS.parseAAPS(AAPS.samples.biology);
 assert.strictEqual(biology.pipeline.domain, "biology");
@@ -361,6 +366,28 @@ assert.strictEqual(parsedProject.pipeline.blocks[0].imported, true);
 const importedPlan = AAPS.buildExecutionPlan(parsedProject);
 assert(importedPlan.steps.some((step) => step.id === "write_json" && step.actions[0].type === "python_inline"));
 
+const alternateCodeDelimiter = AAPS.parseAAPS(`pipeline "Alternate Code Delimiter" {
+  task write_brief {
+    exec python_inline
+    code '''
+brief = """# App80 brief
+This Python triple-quoted string must stay inside the AAPS code block.
+"""
+print(brief)
+'''
+  }
+}
+`);
+assert.strictEqual(alternateCodeDelimiter.diagnostics.length, 0, JSON.stringify(alternateCodeDelimiter.diagnostics));
+assert(alternateCodeDelimiter.pipeline.tasks[0].code.includes('brief = """# App80 brief'));
+const alternateSerialized = AAPS.serializeAAPS(alternateCodeDelimiter);
+assert(alternateSerialized.includes("code '''"), alternateSerialized);
+assert.strictEqual(
+  AAPS.parseAAPS(alternateSerialized).diagnostics.length,
+  0,
+  JSON.stringify(AAPS.parseAAPS(alternateSerialized).diagnostics)
+);
+
 const missingImport = AAPS.parseAAPSProject(
   {
     "workflows/main.aaps": `pipeline "Missing Import" {
@@ -426,6 +453,36 @@ assert(gpuPlan.steps.some((step) => step.requirements.gpu.includes("required")))
 const gpuReadiness = Runner.buildReadiness(gpuPlan, path.join(__dirname, ".."), null, { tools: {}, agents: {}, environment: {}, files: {} }, {});
 assert(gpuReadiness.blocks[0].checks.some((check) => check.kind === "gpu"));
 
+const pipelineAliasProject = path.join(__dirname, "..", ".aaps-work", "tests", "pipeline-alias-project");
+fs.rmSync(pipelineAliasProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(pipelineAliasProject, "data"), { recursive: true });
+const pipelineAliasWorkflow = AAPS.parseAAPS(`pipeline "Pipeline Alias Readiness" {
+  input data_root: folder required = "data"
+  output manifest: json = "outputs/manifest.json"
+
+  task call_discover {
+    call discover_data
+    call consume_manifest
+  }
+
+  skill discover_data {
+    input data_root: folder required = "${"${pipeline.input.data_root}"}"
+    output manifest: json = "${"${pipeline.output.manifest}"}"
+    exec noop
+  }
+
+  skill consume_manifest {
+    input manifest: json required = "${"${pipeline.output.manifest}"}"
+    exec noop
+  }
+}
+`);
+assert.deepStrictEqual(pipelineAliasWorkflow.diagnostics, []);
+const pipelineAliasPlan = AAPS.buildExecutionPlan(pipelineAliasWorkflow);
+const pipelineAliasContext = Runner.contextFrom(pipelineAliasWorkflow, null, "alias-test", pipelineAliasProject, path.join(pipelineAliasProject, "runs", "alias-test"), {});
+const pipelineAliasReadiness = Runner.buildReadiness(pipelineAliasPlan, pipelineAliasProject, null, { tools: {}, agents: {}, environment: {}, files: {} }, pipelineAliasContext);
+assert.strictEqual(pipelineAliasReadiness.ok, true, JSON.stringify(pipelineAliasReadiness.blocks, null, 2));
+
 const gpuContractProject = path.join(__dirname, "..", ".aaps-work", "tests", "gpu-contract-project");
 fs.rmSync(gpuContractProject, { recursive: true, force: true });
 fs.mkdirSync(path.join(gpuContractProject, "scripts"), { recursive: true });
@@ -474,6 +531,53 @@ assert(gpuContractCompile.modifiedFiles.some((record) => record.kind === "script
 const repairedGpuScript = fs.readFileSync(path.join(gpuContractProject, "scripts", "cellpose_false.py"), "utf8");
 assert(!repairedGpuScript.includes("gpu=False"));
 assert(repairedGpuScript.includes("gpu_used"));
+
+const app80TemplateProject = path.join(__dirname, "..", ".aaps-work", "tests", "app80-template-project");
+fs.rmSync(app80TemplateProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(app80TemplateProject, "workflows"), { recursive: true });
+fs.writeFileSync(
+  path.join(app80TemplateProject, "aaps.project.json"),
+  JSON.stringify({ schema: "aaps_project/0.1", name: "app80-template-project", paths: { runs: "runs" } }, null, 2),
+  "utf8"
+);
+fs.writeFileSync(
+  path.join(app80TemplateProject, "workflows", "main.aaps"),
+  `pipeline "App80 Smoke Template Regression" {
+  task segment {
+    requires_files "scripts/app80_top_down_tdv_20260702_segment_smoke.py"
+    exec python_script "scripts/app80_top_down_tdv_20260702_segment_smoke.py"
+  }
+  task quantify {
+    requires_files "scripts/app80_top_down_tdv_20260702_quantify_smoke.py"
+    exec python_script "scripts/app80_top_down_tdv_20260702_quantify_smoke.py"
+  }
+  task visualize {
+    requires_files "scripts/app80_top_down_tdv_20260702_visualize_smoke.py"
+    exec python_script "scripts/app80_top_down_tdv_20260702_visualize_smoke.py"
+  }
+  task report {
+    requires_files "scripts/app80_top_down_tdv_20260702_report_smoke.py"
+    exec python_script "scripts/app80_top_down_tdv_20260702_report_smoke.py"
+  }
+}
+`,
+  "utf8"
+);
+const app80TemplateCompile = Compiler.compile({ project: app80TemplateProject, file: "workflows/main.aaps", mode: "apply" });
+assert.strictEqual(app80TemplateCompile.validation.every((record) => record.ok), true, JSON.stringify(app80TemplateCompile.validation, null, 2));
+const generatedApp80Scripts = {
+  segment: fs.readFileSync(path.join(app80TemplateProject, "scripts", "app80_top_down_tdv_20260702_segment_smoke.py"), "utf8"),
+  quantify: fs.readFileSync(path.join(app80TemplateProject, "scripts", "app80_top_down_tdv_20260702_quantify_smoke.py"), "utf8"),
+  visualize: fs.readFileSync(path.join(app80TemplateProject, "scripts", "app80_top_down_tdv_20260702_visualize_smoke.py"), "utf8"),
+  report: fs.readFileSync(path.join(app80TemplateProject, "scripts", "app80_top_down_tdv_20260702_report_smoke.py"), "utf8"),
+};
+assert(generatedApp80Scripts.segment.includes("smoke-subset segmentation"));
+assert(generatedApp80Scripts.quantify.includes("smoke-subset quantification"));
+assert(generatedApp80Scripts.visualize.includes("visual QC"));
+assert(generatedApp80Scripts.report.includes("report writer"));
+assert(!generatedApp80Scripts.quantify.includes("segmentation preview script"));
+assert(!generatedApp80Scripts.visualize.includes("segmentation preview script"));
+assert(!generatedApp80Scripts.report.includes("segmentation preview script"));
 
 const folderWorkflow = parseFile(path.join(__dirname, "..", "examples", "projects", "organoid-analysis", "workflows", "executable_folder_segmentation.aaps"));
 assert.strictEqual(folderWorkflow.diagnostics.length, 0, JSON.stringify(folderWorkflow.diagnostics));
@@ -2334,6 +2438,57 @@ assert.strictEqual(manifestOnlyPayload.status, "succeeded_verified");
 assert.strictEqual(manifestOnlyPayload.postRunAudit.workflowCount, 1);
 assert.strictEqual(manifestOnlyPayload.postRunAudit.workflows[0].file, "workflows/backend_generated.aaps");
 assert(fs.readFileSync(manifestOnlyArgsFile, "utf8").includes(manifestOnlyPayload.promptFile));
+
+const sourceMaintenanceProject = path.join(__dirname, "..", ".aaps-work", "tests", "prompt-source-maintenance-project");
+fs.rmSync(sourceMaintenanceProject, { recursive: true, force: true });
+fs.mkdirSync(path.join(sourceMaintenanceProject, "fake-bin"), { recursive: true });
+const sourceMaintenanceArgsFile = path.join(sourceMaintenanceProject, "fake-aginti-args.txt");
+fs.writeFileSync(
+  path.join(sourceMaintenanceProject, "fake-bin", "aginti"),
+  `#!/bin/sh
+printf '%s\\n' "$@" > "$AAPS_FAKE_AGINTI_ARGS"
+mkdir -p scripts
+printf 'source maintenance repaired\\n' > scripts/source-maintenance-result.txt
+exit 0
+`,
+  { encoding: "utf8", mode: 0o755 }
+);
+const promptSourceMaintenance = childProcess.spawnSync(
+  "node",
+  [
+    "scripts/aaps.js",
+    "prompt",
+    "Repair source-maintenance audit logic without requiring workflow outputs.",
+    "--project",
+    ".aaps-work/tests/prompt-source-maintenance-project",
+    "--backend",
+    "aginti",
+    "--sandbox-mode",
+    "host",
+    "--audit-scope",
+    "none",
+    "--json",
+  ],
+  {
+    cwd: path.join(__dirname, ".."),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${path.join(sourceMaintenanceProject, "fake-bin")}${path.delimiter}${process.env.PATH || ""}`,
+      AAPS_FAKE_AGINTI_ARGS: sourceMaintenanceArgsFile,
+    },
+  }
+);
+assert.strictEqual(promptSourceMaintenance.status, 0, promptSourceMaintenance.stderr || promptSourceMaintenance.stdout);
+const sourceMaintenancePayload = JSON.parse(promptSourceMaintenance.stdout);
+assert.strictEqual(sourceMaintenancePayload.ok, true);
+assert.strictEqual(sourceMaintenancePayload.status, "succeeded_verified");
+assert.strictEqual(sourceMaintenancePayload.postRunAudit.ok, true);
+assert.strictEqual(sourceMaintenancePayload.postRunAudit.status, "skipped");
+assert.strictEqual(sourceMaintenancePayload.postRunAudit.scope, "none");
+assert.strictEqual(sourceMaintenancePayload.postRunAudit.workflowCount, 0);
+assert(fs.existsSync(path.join(sourceMaintenanceProject, "scripts", "source-maintenance-result.txt")));
+assert(fs.readFileSync(sourceMaintenanceArgsFile, "utf8").includes(sourceMaintenancePayload.promptFile));
 
 const promptProjectWideAudit = childProcess.spawnSync(
   "node",

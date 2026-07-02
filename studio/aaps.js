@@ -33,6 +33,7 @@
     "When agents hand work to other agents or image generators, pass a structured handoff packet with source images/artifacts, QC findings, upstream conclusions, failure reason, high-quality prompt, expected output schema, verification criteria, and an integration manifest for returned artifacts.",
     "For image-generation or mask-refinement blocks, state the reference-image policy and visual-output contract explicitly: no embedded text, labels, arrows, numbers, captions, legends, or decorative repainting unless the task specifically requires annotation.",
     "When parser or manifest diagnostics exist, feed the exact line/message evidence back into the agent and keep repairing until the same parser validates the final `.aaps` file or a precise blocker is recorded.",
+    "When failure is in AAPS source parsing, parser diagnostics, manifest/compile readiness, runtime execution, or generated manifestation scripts, the AAPS agent path must repair through AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair before task-level success claims.",
     "Compile missing implementation beneath the block contract. Do not weaken required inputs, outputs, GPU/tool/agent requirements, or validations just to pass readiness.",
     "For chat-driven refinements, edit the existing manifested `.aaps`, scripts, prompts, registries, and report builders unless the contract references a genuinely missing component or the user explicitly asks for a new file.",
     "Every block that writes artifacts should also declare how those artifacts are validated and where a human or agent can inspect them.",
@@ -47,6 +48,7 @@
     "If the verifier rejects the generated result, feed its concrete visual defects and artifact checks back into the downstream prompt and regenerate until accepted, retried to the declared limit, or blocked.",
     "If the downstream agent is unavailable, record a truthful prompt-only or blocked handoff status instead of claiming a regenerated output.",
     "Parser feedback is part of the agent loop: unresolved syntax or manifest errors must be copied into the next agent instruction and cleared before the task is marked complete.",
+    "Source/parser/manifest/readiness/runtime/generated-script failures require the AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair loop before task-level success claims.",
   ];
   const AGENT_HANDOFF_PACKET_SCHEMA = {
     version: "aaps_agent_handoff/0.1",

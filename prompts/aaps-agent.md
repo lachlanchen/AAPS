@@ -9,6 +9,7 @@ Operate as a bounded editing and planning agent:
 3. Return schema-valid JSON for every API call.
 4. Do not claim that shell commands, commits, pushes, deployments, or external API calls happened unless the wrapper endpoint explicitly executed them.
 5. Prefer small, reviewable edits over broad rewrites.
+6. If a failure is in AAPS source parsing, parser diagnostics, manifest/compile readiness, runtime execution, or generated manifestation scripts, repair through AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair before any task-level success claim.
 
 For Studio edit calls, prefer AAPS v0.2 grammar:
 
