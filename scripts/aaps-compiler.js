@@ -89,26 +89,58 @@ function contextText(value) {
   }
 }
 
+function compactKindContext(name, context) {
+  return `${String(name || "")} ${contextText(context)}`.toLowerCase();
+}
+
+function compactRoleContext(name, context = {}) {
+  const raw = context.raw || {};
+  const step = context.step || raw.step || {};
+  const parentBlock = raw.parentBlock || {};
+  return [
+    name,
+    context.name,
+    context.expected,
+    context.block,
+    context.path,
+    step.id,
+    step.path,
+    parentBlock.id,
+    parentBlock.path,
+  ].map((part) => String(part || "")).join(" ").toLowerCase();
+}
+
+function hasApp80SmokeContext(text) {
+  return /app80|app80_top_down_tdv|top_down_tdv/.test(text) && /smoke|smoke[-_ ]subset/.test(text);
+}
+
 function inferKind(name, context = {}) {
-  const text = `${String(name || "")} ${contextText(context)}`.toLowerCase();
-  if (/app80_top_down_tdv_20260702_segment_smoke|segment_smoke|smoke_segmentation/.test(text)) {
-    return "app80_smoke_segment";
+  const text = compactKindContext(name, context);
+  const roleText = compactRoleContext(name, context);
+  if (hasApp80SmokeContext(text)) {
+    if (/app80_top_down_tdv_20260702_segment_smoke|segment_smoke|smoke_segmentation|segment/.test(roleText)) {
+      return "app80_smoke_segment";
+    }
+    if (/app80_top_down_tdv_20260702_quantify_smoke|quantify_smoke|smoke_metrics|quantif|metrics/.test(roleText)) {
+      return "app80_smoke_quantify";
+    }
+    if (/app80_top_down_tdv_20260702_visualize_smoke|visuali[sz]e_smoke|visual_qc|contact_sheet|visuali[sz]e|qc/.test(roleText)) {
+      return "app80_smoke_visualize";
+    }
+    if (/app80_top_down_tdv_20260702_report_smoke|report_smoke|smoke_report|verifier_json|report|verifier/.test(roleText)) {
+      return "app80_smoke_report";
+    }
+    if (/smoke_segmentation/.test(text)) return "app80_smoke_segment";
+    if (/smoke_metrics/.test(text)) return "app80_smoke_quantify";
+    if (/visual_qc|contact_sheet/.test(text)) return "app80_smoke_visualize";
+    if (/smoke_report|verifier_json/.test(text)) return "app80_smoke_report";
   }
-  if (/app80_top_down_tdv_20260702_quantify_smoke|quantify_smoke|smoke_metrics/.test(text)) {
-    return "app80_smoke_quantify";
-  }
-  if (/app80_top_down_tdv_20260702_visualize_smoke|visuali[sz]e_smoke|visual_qc|contact_sheet/.test(text)) {
-    return "app80_smoke_visualize";
-  }
-  if (/app80_top_down_tdv_20260702_report_smoke|report_smoke|smoke_report|verifier_json/.test(text)) {
-    return "app80_smoke_report";
+  if (/cellpose|microscop|organoid|brightfield|tiff?|\.tiff?\b|image_glob|mask_count|overlay_count|foreground_fraction|threshold_morphology/.test(text)) {
+    return "tiff_segmentation";
   }
   if (/visuali[sz]e|contact_sheet|figure_dir|qc_contact_sheet|plot/.test(text)) return "visualize";
   if (/report|verifier|manuscript/.test(text)) return "report";
   if (/quantif|measure|metric|object_table|metrics_csv|metrics_json/.test(text)) return "quantify";
-  if (/cellpose|microscop|organoid|brightfield|tiff?|\.tiff?\b|image_glob|mask_count|overlay_count|foreground_fraction|threshold_morphology/.test(text)) {
-    return "tiff_segmentation";
-  }
   if (/segment|threshold|mask/.test(text)) return "segment";
   if (/qc|quality|inspect/.test(text)) return "qc";
   if (/quantif|measure|metric|object/.test(text)) return "quantify";
