@@ -74,6 +74,11 @@ aaps manifest workflows/main.aaps --project . --mode check --json
 Finish only when diagnostics are empty, or record the precise blocker and
 affected file.
 
+When the failure is in AAPS source parsing, parser diagnostics,
+manifest/compile readiness, runtime execution, or generated manifestation
+scripts, the agent path must continue through AAPS chat/session -> parse ->
+manifest -> check -> run -> QC -> repair before any task-level success claim.
+
 ## CLI
 
 ```bash

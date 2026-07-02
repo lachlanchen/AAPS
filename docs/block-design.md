@@ -29,20 +29,24 @@ validation, recovery, and artifacts. They are not free-form prompt notes.
 8. When parser or manifest diagnostics exist, feed the exact line/message
    evidence back into the agent and keep repairing until the same parser is
    clean, or record a precise blocker.
-9. Manifest/compile missing implementation beneath the block contract. Do not weaken
+9. When a failure is in AAPS source parsing, parser diagnostics,
+   manifest/compile readiness, runtime execution, or generated manifestation
+   scripts, repair through AAPS chat/session -> parse -> manifest -> check ->
+   run -> QC -> repair before any task-level success claim.
+10. Manifest/compile missing implementation beneath the block contract. Do not weaken
    required inputs, outputs, GPU/tool/agent requirements, or validations just to
    pass readiness.
-10. For chat-driven refinements, edit the existing manifested `.aaps`, scripts,
+11. For chat-driven refinements, edit the existing manifested `.aaps`, scripts,
     prompts, registries, and report builders. Create a brand-new file only when
     a block/script/tool is genuinely missing or the user explicitly asks for a
     new artifact.
-11. Every block that writes artifacts should also declare how those artifacts are
+12. Every block that writes artifacts should also declare how those artifacts are
    validated and where a human or agent can inspect them.
-12. Treat downstream prompts as artifacts. If a block asks Codex, AgInTiFlow, an
+13. Treat downstream prompts as artifacts. If a block asks Codex, AgInTiFlow, an
     image generator, or a verifier agent to continue the work, the prompt should
     include evidence paths, domain priors, QC findings, failure reason, expected
     schema, constraints, and a verifier checklist.
-13. For image-generation or mask-refinement blocks, state the reference-image
+14. For image-generation or mask-refinement blocks, state the reference-image
     policy and visual-output contract explicitly: no embedded text, labels,
     arrows, numbers, captions, legends, or decorative repainting unless the
     task specifically requires annotation.
