@@ -120,7 +120,7 @@ function usage() {
     "  --approve-package-installs Approve package installs for the AgInTi backend run.",
     "  --allow-destructive Pass trusted host/destructive approval to AgInTi backend.",
     "  --print-prompt    Save and print the generated backend prompt without running it.",
-    "  --audit-scope <entry|project> Post-backend audit scope. Defaults to entry for prompt backends.",
+    "  --audit-scope <entry|project|none> Post-backend audit scope. Defaults to entry for prompt backends.",
     "  --mock-codex      Start Studio with AAPS_MOCK_CODEX=1.",
     "  --no-webapp       Do not auto-start the local Studio for `aaps chat`.",
     "  --force           Allow `aaps create` to intentionally overwrite the target .aaps file.",
@@ -724,6 +724,14 @@ function normalizePromptBackend(value) {
   return backend || "codex";
 }
 
+function normalizeAuditScope(value, fallback = "entry") {
+  const scope = String(value || fallback || "").trim().toLowerCase();
+  if (["none", "source", "source-maintenance", "source_maintenance", "off", "skip", "disabled"].includes(scope)) return "none";
+  if (scope === "project") return "project";
+  if (scope === "entry") return "entry";
+  return fallback || "";
+}
+
 function normalizeStudioUi(value) {
   return String(value || process.env.AAPS_STUDIO_UI || "classic").trim().toLowerCase() === "simple" ? "simple" : "classic";
 }
@@ -819,10 +827,22 @@ function runAapsSelf(projectDir, args) {
 }
 
 function auditAapsBackendResult(projectDir, fileArg = "", options = {}) {
+  const scope = normalizeAuditScope(options.scope, "");
+  if (scope === "none") {
+    return {
+      ok: true,
+      status: "skipped",
+      scope,
+      reason: "audit_scope_none",
+      workflowCount: 0,
+      workflows: [],
+    };
+  }
   const workflows = collectWorkflowCandidates(projectDir, fileArg, options);
   const audit = {
     ok: false,
     status: workflows.length ? "checked" : "no_workflows",
+    scope: scope || "project",
     workflowCount: workflows.length,
     workflows: [],
   };
@@ -1074,7 +1094,7 @@ function commandPromptWithCodex(projectDir, handoff, payload, options) {
   payload.exitCode = result.status ?? 1;
   payload.signal = result.signal || "";
   payload.postRunAudit = auditAapsBackendResult(projectDir, options.auditFile || "", {
-    scope: String(options.auditScope || "entry").toLowerCase() === "project" ? "project" : "entry",
+    scope: normalizeAuditScope(options.auditScope, "entry"),
     sinceMs: auditStartedAtMs,
   });
   payload.postPromptGitCheckpoint = Versioning.createGitCheckpoint(projectDir, {
@@ -1194,7 +1214,7 @@ function commandPrompt(goal, options) {
   payload.exitCode = result.status ?? 1;
   payload.signal = result.signal || "";
   payload.postRunAudit = auditAapsBackendResult(projectDir, options.auditFile || "", {
-    scope: String(options.auditScope || "entry").toLowerCase() === "project" ? "project" : "entry",
+    scope: normalizeAuditScope(options.auditScope, "entry"),
     sinceMs: auditStartedAtMs,
   });
   payload.postPromptGitCheckpoint = Versioning.createGitCheckpoint(projectDir, {
@@ -1330,7 +1350,8 @@ function commandValidate(fileArg, options) {
 
 function commandAudit(fileArg, options) {
   const projectDir = path.resolve(options.project || ".");
-  const payload = auditAapsBackendResult(projectDir, fileArg || "");
+  const auditOptions = options.auditScope ? { scope: normalizeAuditScope(options.auditScope, "project") } : {};
+  const payload = auditAapsBackendResult(projectDir, fileArg || "", auditOptions);
   payload.project = projectDir;
   if (options.json) print(payload, true);
   else if (payload.ok) print(`AAPS audit verified ${payload.workflowCount} workflow${payload.workflowCount === 1 ? "" : "s"}.`, false);
