@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AAPS Studio Chat Router Response",
   "type": "object",
-  "required": ["mode", "route", "message", "source", "diagnostics"],
+  "required": ["mode", "route", "message", "source", "files", "diagnostics"],
   "additionalProperties": false,
   "properties": {
     "mode": {
@@ -17,6 +17,29 @@
     },
     "source": {
       "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "description": "Optional project-relative text files to materialize as part of an explicit chat edit.",
+      "items": {
+        "type": "object",
+        "required": ["path", "content", "kind", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
     },
     "diagnostics": {
       "type": "array",

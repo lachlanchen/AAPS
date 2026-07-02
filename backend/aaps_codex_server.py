@@ -2278,6 +2278,7 @@ Return JSON matching the schema:
 - route: short route label such as "explain", "edit_source", "create_skill", "create_task", "clarify"
 - message: user-facing concise response
 - source: complete updated .aaps source when mode is "edit"; otherwise the unchanged source
+- files: list of safe project-relative text edits, each with path, content, kind, and reason, when the user explicitly asks to materialize or repair block/script/registry files; otherwise return []
 - diagnostics: parser or design issues, or []
 
 AAPS v0.2 supports:
@@ -2304,6 +2305,8 @@ AAPS v0.2 supports:
 - For manifest/compile/repair conversations, preserve the `.aaps` contract and repair the failing block/script/tool underneath it. If readiness reports a missing script/tool/dependency/GPU contract, name that failure in the response and either edit the source to make the manifest target clear or route the repair to Codex GPT-5.5 xhigh.
 - If the failure is in AAPS source parsing, parser diagnostics, manifest/compile readiness, runtime execution, or generated manifestation scripts, repair through AAPS chat/session -> parse -> manifest -> check -> run -> QC -> repair before any task-level success claim.
 - For chat refinement of an already manifested task, patch the current `.aaps`, scripts, prompts, registries, and report builders. Do not create duplicate implementation files unless a component is missing or the user explicitly asks for a new artifact.
+- When returning multi-file repairs, use `files: [{{"path":"blocks/name.aaps","content":"...","kind":"block","reason":"repair missing block contract"}}, {{"path":"scripts/name.py","content":"...","kind":"script","reason":"repair executable action"}}]`. Only use project-relative text paths and return complete file contents, not diffs.
+- If your route is `materialize_files`, `repair_manifestation`, `create_script`, or your message says files were created/materialized, the response is invalid unless `files` contains the complete content of each file to write.
 - When a user asks for a report, create or refine a report recap block that explicitly consumes logs, method candidates, agent decisions, handoff packets, validation records, and final artifacts. Require it to cite paths and truthfully distinguish executed agent calls from prepared prompt-only handoffs.
 - When a workflow agent will call another agent or image generator, create a durable image-aware prompt/handoff artifact first. It must carry source image/artifact paths, upstream visual conclusions, QC defects, failure reason, exact downstream prompt, expected artifact schema, integration policy, and verifier checklist.
 - For image-mask handoffs, define which image is the visual reference. Default to the original/source image as the only visual reference; describe Cellpose/threshold masks or overlays as text-only QC context unless a verifier requests extra visual references. For colored instance masks, use a plain black/white/transparent background instead of a microscopy underlay unless the artifact is explicitly an overlay, and forbid embedded text, labels, arrows, numbers, captions, legends, table/grid labels, and whole-cluster single-object annotation.
@@ -3713,14 +3716,16 @@ Backend task:
                 "route": "aginti_backend",
                 "message": (process.stdout or process.stderr or "").strip()[-4000:],
                 "source": "",
+                "files": [],
                 "diagnostics": ["AgInTiFlow backend did not produce a parseable JSON output file."],
             }
-        elif schema == "aaps_chat" and not all(key in result for key in ["mode", "route", "message", "source", "diagnostics"]):
+        elif schema == "aaps_chat" and not all(key in result for key in ["mode", "route", "message", "source", "files", "diagnostics"]):
             result = {
                 "mode": "reply",
                 "route": "aginti_backend",
                 "message": str(result.get("message") or result.get("summary") or (process.stdout or process.stderr or "").strip()[-4000:]),
                 "source": "",
+                "files": [],
                 "diagnostics": ["AgInTiFlow backend returned JSON that did not match the AAPS chat schema."],
             }
         if process.returncode != 0:
@@ -4183,6 +4188,60 @@ def persist_agent_chat_edit(project_dir: Path, body: dict, result: dict, previou
     return result
 
 
+def persist_agent_chat_files(project_dir: Path, result: dict, provider: str, job_id: str) -> dict:
+    if not isinstance(result, dict):
+        return result
+    raw_files = result.get("files")
+    if not raw_files:
+        route = str(result.get("route") or "").strip().lower()
+        message = str(result.get("message") or "").strip().lower()
+        if route in {"materialize_files", "repair_manifestation", "create_script"} or any(
+            phrase in message for phrase in ["materialized", "created files", "wrote files", "script is written"]
+        ):
+            result.setdefault("warnings", []).append(
+                "agent claimed file materialization but returned no files array; no companion files were written"
+            )
+        return result
+    if isinstance(raw_files, dict):
+        items = [{"path": key, "content": value} for key, value in raw_files.items()]
+    elif isinstance(raw_files, list):
+        items = raw_files
+    else:
+        result.setdefault("warnings", []).append("ignored files payload because it was not a list or object")
+        return result
+
+    written = []
+    warnings = result.setdefault("warnings", [])
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            warnings.append(f"ignored files[{index}] because it was not an object")
+            continue
+        file_name = str(item.get("path") or item.get("file") or item.get("name") or "").strip()
+        content = item.get("content")
+        if content is None:
+            content = item.get("source")
+        if not file_name or not isinstance(content, str):
+            warnings.append(f"ignored files[{index}] because path/content were missing")
+            continue
+        try:
+            file_path = relative_to_project(project_dir, file_name)
+            ensure_text_file(file_path)
+            snapshot = write_project_text(project_dir, file_path, content, f"agent_chat_file:{provider}:{job_id}")
+            record = {
+                "file": file_path.relative_to(project_dir).as_posix(),
+                "snapshot": snapshot,
+                "kind": str(item.get("kind") or ""),
+                "reason": str(item.get("reason") or ""),
+            }
+            written.append(record)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"failed to write {file_name}: {exc}")
+    if written:
+        result["writtenFiles"] = written
+        result["versionedFiles"] = True
+    return result
+
+
 class AAPSHandler(SimpleHTTPRequestHandler):
     server_version = "AAPSStudio/0.1"
 
@@ -4466,6 +4525,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                     "route": "mock",
                     "message": "Mock router accepted the message; source left unchanged.",
                     "source": source,
+                    "files": [],
                     "diagnostics": [],
                     "sessionId": str(body.get("sessionId") or context.get("sessionId") or ""),
                 }
@@ -4510,6 +4570,12 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         body,
                         result,
                         source,
+                        str(read_settings().get("agentProvider") or "codex"),
+                        job_id,
+                    )
+                    persist_agent_chat_files(
+                        project_dir,
+                        result,
                         str(read_settings().get("agentProvider") or "codex"),
                         job_id,
                     )

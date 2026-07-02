@@ -48,6 +48,11 @@ function findManifests(dir) {
 
 const ir = AAPS.parseAAPS(AAPS.sample);
 const sourceFailureLoopText = "chat/session -> parse -> manifest -> check -> run -> QC -> repair";
+const chatSchema = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "schemas", "aaps_chat.schema.json"), "utf8"));
+
+assert(chatSchema.required.includes("files"));
+assert.deepStrictEqual(chatSchema.properties.files.items.required, ["path", "content", "kind", "reason"]);
+assert.strictEqual(chatSchema.properties.files.items.additionalProperties, false);
 
 assert.strictEqual(ir.version, "aaps_ir/0.2");
 assert.strictEqual(ir.pipeline.name, "Ship AAPS Studio");
