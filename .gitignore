@@ -37,3 +37,6 @@ coverage/
 !.aginti/.env.example
 .aginti-sessions/
 .sessions/
+.npmrc
+npm-debug.log*
+*.tgz

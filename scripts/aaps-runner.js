@@ -662,10 +662,15 @@ function contextFrom(ir, manifest, runId, projectDir, runDir, registries = {}) {
   (pipeline.inputPorts || []).forEach((port) => {
     context[port.name] = port.value || "";
     context[`input.${port.name}`] = port.value || "";
+    context[`pipeline.input.${port.name}`] = port.value || "";
   });
   (pipeline.outputPorts || []).forEach((port) => {
     context[port.name] = port.value || "";
     context[`output.${port.name}`] = port.value || "";
+    context[`pipeline.output.${port.name}`] = port.value || "";
+  });
+  Object.entries(pipeline.params || {}).forEach(([key, value]) => {
+    context[`pipeline.param.${key}`] = value || "";
   });
   Object.entries(process.env).forEach(([key, value]) => {
     context[`env.${key}`] = value;
@@ -1215,6 +1220,10 @@ function checkBlockReadiness(step, projectDir, manifest, registries, baseContext
   (step.inputs || []).forEach((port) => {
     const raw = port.value || stepContext[port.name] || "";
     const missing = unresolvedVariables(raw, stepContext);
+    if (raw && /\$\{\s*(pipeline\.)?output\.[A-Za-z_][\w.-]*\s*\}/.test(String(raw))) {
+      checks.push(deferredCheck("input", port.name, raw, missing));
+      return;
+    }
     if (raw && isDeferredRuntimeValue(raw, missing)) {
       checks.push(deferredCheck("input", port.name, raw, missing));
       return;

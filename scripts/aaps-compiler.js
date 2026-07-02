@@ -91,6 +91,21 @@ function contextText(value) {
 
 function inferKind(name, context = {}) {
   const text = `${String(name || "")} ${contextText(context)}`.toLowerCase();
+  if (/app80_top_down_tdv_20260702_segment_smoke|segment_smoke|smoke_segmentation/.test(text)) {
+    return "app80_smoke_segment";
+  }
+  if (/app80_top_down_tdv_20260702_quantify_smoke|quantify_smoke|smoke_metrics/.test(text)) {
+    return "app80_smoke_quantify";
+  }
+  if (/app80_top_down_tdv_20260702_visualize_smoke|visuali[sz]e_smoke|visual_qc|contact_sheet/.test(text)) {
+    return "app80_smoke_visualize";
+  }
+  if (/app80_top_down_tdv_20260702_report_smoke|report_smoke|smoke_report|verifier_json/.test(text)) {
+    return "app80_smoke_report";
+  }
+  if (/visuali[sz]e|contact_sheet|figure_dir|qc_contact_sheet|plot/.test(text)) return "visualize";
+  if (/report|verifier|manuscript/.test(text)) return "report";
+  if (/quantif|measure|metric|object_table|metrics_csv|metrics_json/.test(text)) return "quantify";
   if (/cellpose|microscop|organoid|brightfield|tiff?|\.tiff?\b|image_glob|mask_count|overlay_count|foreground_fraction|threshold_morphology/.test(text)) {
     return "tiff_segmentation";
   }
@@ -103,7 +118,656 @@ function inferKind(name, context = {}) {
   return "generic";
 }
 
+function app80SmokeSegmentScript() {
+  return `#!/usr/bin/env python3
+"""AAPS manifested APP80 smoke-subset segmentation script.
+
+This script is generated from the .aaps block contract. It processes only the
+images listed in the smoke subset manifest, records whether Cellpose was
+available, falls back to deterministic threshold/morphology, and writes masks,
+overlays, QC JSON, a segmentation manifest, and a plain log.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import traceback
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import tifffile
+from scipy import ndimage as ndi
+from skimage import exposure, filters, measure, morphology, segmentation
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def safe_stem(path: Path) -> str:
+    text = "_".join(path.with_suffix("").parts[-4:])
+    text = re.sub(r"[^A-Za-z0-9._-]+", "_", text)
+    return text.strip("._-") or "image"
+
+
+def read_gray(path: Path) -> np.ndarray:
+    image = np.asarray(tifffile.imread(path))
+    image = np.squeeze(image)
+    if image.ndim == 3:
+        if image.shape[-1] in (3, 4):
+            image = image[..., :3].mean(axis=-1)
+        else:
+            image = image.mean(axis=0)
+    if image.ndim != 2:
+        raise ValueError(f"expected a 2D image after channel reduction, got {image.shape}")
+    image = image.astype("float32", copy=False)
+    finite = np.isfinite(image)
+    if not finite.all():
+        image = np.where(finite, image, float(np.nanmedian(image[finite])))
+    low, high = np.percentile(image, [1, 99])
+    if not math.isfinite(float(high - low)) or high <= low:
+        low, high = float(np.min(image)), float(np.max(image))
+    if high <= low:
+        return np.zeros_like(image, dtype="float32")
+    norm = np.clip((image - low) / (high - low), 0, 1)
+    return exposure.equalize_adapthist(norm, clip_limit=0.01).astype("float32")
+
+
+def clean_mask(mask: np.ndarray) -> np.ndarray:
+    min_size = max(64, int(mask.size * 0.00008))
+    mask = ndi.binary_fill_holes(mask.astype(bool))
+    mask = morphology.remove_small_objects(mask, min_size=min_size)
+    mask = morphology.remove_small_holes(mask, area_threshold=max(256, min_size * 2))
+    mask = morphology.binary_closing(mask, morphology.disk(4))
+    mask = morphology.binary_opening(mask, morphology.disk(2))
+    labels = measure.label(mask)
+    keep = np.zeros_like(mask, dtype=bool)
+    max_area = max(min_size * 20, int(mask.size * 0.30))
+    height, width = mask.shape
+    for region in measure.regionprops(labels):
+        area = int(region.area)
+        if area < min_size or area > max_area:
+            continue
+        min_row, min_col, max_row, max_col = region.bbox
+        box_h = max_row - min_row
+        box_w = max_col - min_col
+        aspect = max(box_h, box_w) / max(1, min(box_h, box_w))
+        touches_border = min_row <= 1 or min_col <= 1 or max_row >= height - 1 or max_col >= width - 1
+        if touches_border and area > int(mask.size * 0.08):
+            continue
+        if aspect > 9.0:
+            continue
+        keep[labels == region.label] = True
+    return keep
+
+
+def choose_threshold_mask(gray: np.ndarray):
+    candidates = []
+    otsu = filters.threshold_otsu(gray)
+    candidates.append(("dark_otsu", gray < otsu))
+    candidates.append(("bright_otsu", gray > otsu))
+    block = max(63, min(251, int(min(gray.shape) // 12) | 1))
+    local = filters.threshold_local(gray, block_size=block, offset=0)
+    candidates.append(("dark_local", gray < local))
+    candidates.append(("bright_local", gray > local))
+    best = None
+    for name, raw in candidates:
+        mask = clean_mask(raw)
+        labels = measure.label(mask)
+        props = list(measure.regionprops(labels))
+        frac = float(mask.mean())
+        score = -100.0 if frac <= 0 or frac >= 0.95 else (1.0 - abs(frac - 0.18)) + min(len(props), 80) * 0.015
+        if frac < 0.002 or frac > 0.80:
+            score -= 2.0
+        if best is None or score > best[0]:
+            best = (score, name, mask, labels, props, frac)
+    if best is None:
+        mask = np.zeros_like(gray, dtype=bool)
+        return "failed_no_candidate", mask, measure.label(mask), [], 0.0
+    return best[1], best[2], best[3], best[4], best[5]
+
+
+def save_mask(mask: np.ndarray, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plt.imsave(path, mask.astype("uint8") * 255, cmap="gray")
+
+
+def save_overlay(gray: np.ndarray, mask: np.ndarray, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rgb = np.dstack([gray, gray, gray])
+    rgb[mask, 0] = np.maximum(rgb[mask, 0], 0.95)
+    rgb[mask, 1] *= 0.45
+    rgb[mask, 2] *= 0.45
+    boundaries = segmentation.find_boundaries(mask, mode="outer")
+    rgb[boundaries] = [1.0, 0.95, 0.05]
+    plt.imsave(path, np.clip(rgb, 0, 1))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--smoke-subset-manifest", required=True)
+    parser.add_argument("--design-brief", default="")
+    parser.add_argument("--output-manifest", required=True)
+    parser.add_argument("--output-qc", required=True)
+    parser.add_argument("--output-log", required=True)
+    parser.add_argument("--mask-dir", required=True)
+    parser.add_argument("--overlay-dir", required=True)
+    parser.add_argument("--max-images", type=int, default=10)
+    args, _unknown = parser.parse_known_args()
+
+    smoke = load_json(Path(args.smoke_subset_manifest))
+    files = smoke.get("files", [])[: max(1, int(args.max_images))]
+    mask_dir = Path(args.mask_dir)
+    overlay_dir = Path(args.overlay_dir)
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    overlay_dir.mkdir(parents=True, exist_ok=True)
+    records = []
+    qc = []
+    log_lines = [
+        f"smoke_subset_manifest={args.smoke_subset_manifest}",
+        f"requested_count={len(files)}",
+    ]
+    try:
+        import cellpose  # noqa: F401
+        cellpose_available = True
+        cellpose_note = "cellpose package import succeeded; deterministic threshold fallback used for this first smoke manifestation"
+    except Exception as exc:
+        cellpose_available = False
+        cellpose_note = f"cellpose unavailable, using threshold fallback: {type(exc).__name__}: {exc}"
+    log_lines.append(cellpose_note)
+    for index, item in enumerate(files, start=1):
+        image_path = Path(item.get("path") or item.get("image_path") or item.get("relative_path") or "")
+        if not image_path.exists():
+            record = {"index": index, "image_path": str(image_path), "ok": False, "qc_flag": "fail", "qc_notes": "image path missing"}
+            records.append(record)
+            qc.append(record)
+            log_lines.append(f"{index}. missing image: {image_path}")
+            continue
+        try:
+            gray = read_gray(image_path)
+            method, mask, labels, props, foreground_fraction = choose_threshold_mask(gray)
+            stem = safe_stem(image_path)
+            mask_path = mask_dir / f"{stem}.mask.png"
+            overlay_path = overlay_dir / f"{stem}.overlay.png"
+            save_mask(mask, mask_path)
+            save_overlay(gray, mask, overlay_path)
+            areas = [int(region.area) for region in props]
+            qc_notes = []
+            if not areas:
+                qc_notes.append("empty mask")
+            if foreground_fraction > 0.75:
+                qc_notes.append("foreground fraction unusually high")
+            qc_flag = "warn" if qc_notes else "pass"
+            record = {
+                "index": index,
+                "image_path": str(image_path),
+                "relative_path": item.get("relative_path", ""),
+                "concentration": item.get("concentration", ""),
+                "date_folder": item.get("date_folder", ""),
+                "magnification": item.get("magnification", ""),
+                "method": f"threshold_morphology:{method}",
+                "cellpose_available": cellpose_available,
+                "fallback_reason": cellpose_note,
+                "mask_path": str(mask_path),
+                "overlay_path": str(overlay_path),
+                "object_count": len(areas),
+                "foreground_area": int(mask.sum()),
+                "foreground_fraction": round(float(foreground_fraction), 6),
+                "mean_object_area": round(float(np.mean(areas)) if areas else 0.0, 3),
+                "median_object_area": round(float(np.median(areas)) if areas else 0.0, 3),
+                "qc_flag": qc_flag,
+                "qc_notes": "; ".join(qc_notes),
+                "ok": True,
+            }
+            records.append(record)
+            qc.append(record)
+            log_lines.append(f"{index}. {image_path} -> objects={len(areas)} fraction={foreground_fraction:.6f} qc={qc_flag}")
+        except Exception as exc:
+            record = {
+                "index": index,
+                "image_path": str(image_path),
+                "ok": False,
+                "qc_flag": "fail",
+                "qc_notes": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            }
+            records.append(record)
+            qc.append(record)
+            log_lines.append(f"{index}. failed {image_path}: {type(exc).__name__}: {exc}")
+
+    manifest = {
+        "schema": "app80_smoke_segmentation_manifest/0.1",
+        "ok": any(record.get("ok") for record in records),
+        "bounded_to_smoke_subset": True,
+        "processed_count": len(records),
+        "successful_count": sum(1 for record in records if record.get("ok")),
+        "cellpose_available": cellpose_available,
+        "method_policy": "prefer cellpose when production-ready; deterministic threshold/morphology fallback for first smoke manifestation",
+        "records": records,
+    }
+    Path(args.output_manifest).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output_manifest).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    Path(args.output_qc).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output_qc).write_text(json.dumps({"schema": "app80_smoke_per_image_qc/0.1", "records": qc}, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    Path(args.output_log).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.output_log).write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
+    print(json.dumps({"ok": manifest["ok"], "processed_count": len(records), "output_manifest": args.output_manifest}))
+    return 0 if manifest["ok"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`;
+}
+
+function app80SmokeQuantifyScript() {
+  return `#!/usr/bin/env python3
+"""AAPS manifested APP80 smoke-subset quantification script."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from pathlib import Path
+
+import matplotlib.image as mpimg
+import numpy as np
+from skimage import measure
+
+
+FIELDS = [
+    "index",
+    "image_path",
+    "concentration",
+    "date_folder",
+    "magnification",
+    "method",
+    "object_count",
+    "foreground_area",
+    "foreground_fraction",
+    "mean_object_area",
+    "median_object_area",
+    "largest_object_area",
+    "fusion_proxy_large_component_fraction",
+    "qc_flag",
+    "limitations",
+]
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_mask(path: Path) -> np.ndarray:
+    arr = np.asarray(mpimg.imread(path))
+    if arr.ndim == 3:
+        arr = arr[..., :3].mean(axis=-1)
+    return arr > 0.25
+
+
+def write_csv(path: Path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in FIELDS})
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--smoke-subset-manifest", required=True)
+    parser.add_argument("--segmentation-manifest", required=True)
+    parser.add_argument("--per-image-qc", default="")
+    parser.add_argument("--metrics-json", required=True)
+    parser.add_argument("--metrics-csv", required=True)
+    parser.add_argument("--log-path", required=True)
+    parser.add_argument("--max-images", type=int, default=10)
+    args, _unknown = parser.parse_known_args()
+
+    _smoke = load_json(Path(args.smoke_subset_manifest))
+    segmentation = load_json(Path(args.segmentation_manifest))
+    records = segmentation.get("records", [])[: max(1, int(args.max_images))]
+    rows = []
+    log_lines = [f"segmentation_manifest={args.segmentation_manifest}", f"record_count={len(records)}"]
+    for record in records:
+        row = {
+            "index": record.get("index", ""),
+            "image_path": record.get("image_path", ""),
+            "concentration": record.get("concentration", ""),
+            "date_folder": record.get("date_folder", ""),
+            "magnification": record.get("magnification", ""),
+            "method": record.get("method", ""),
+            "qc_flag": record.get("qc_flag", ""),
+            "limitations": "",
+        }
+        mask_path = Path(record.get("mask_path", ""))
+        try:
+            if not record.get("ok") or not mask_path.exists():
+                raise ValueError("missing or failed segmentation mask")
+            mask = read_mask(mask_path)
+            labels = measure.label(mask)
+            props = list(measure.regionprops(labels))
+            areas = [float(region.area) for region in props]
+            foreground = float(mask.sum())
+            total = float(mask.size) if mask.size else 1.0
+            largest = max(areas) if areas else 0.0
+            row.update({
+                "object_count": len(areas),
+                "foreground_area": int(foreground),
+                "foreground_fraction": round(foreground / total, 6),
+                "mean_object_area": round(float(np.mean(areas)) if areas else 0.0, 3),
+                "median_object_area": round(float(np.median(areas)) if areas else 0.0, 3),
+                "largest_object_area": round(largest, 3),
+                "fusion_proxy_large_component_fraction": round(largest / foreground, 6) if foreground else 0.0,
+            })
+            if not areas:
+                row["limitations"] = "empty mask; fusion proxy not meaningful"
+            elif str(row.get("magnification")).lower() == "4x":
+                row["limitations"] = "4x image: broad growth/context metric, not fine fusion morphology"
+            else:
+                row["limitations"] = "smoke subset metric; requires visual QC before full APP80 use"
+            log_lines.append(f"{row['index']}. objects={row['object_count']} foreground={row['foreground_area']} fraction={row['foreground_fraction']}")
+        except Exception as exc:
+            row.update({
+                "object_count": 0,
+                "foreground_area": 0,
+                "foreground_fraction": 0,
+                "mean_object_area": 0,
+                "median_object_area": 0,
+                "largest_object_area": 0,
+                "fusion_proxy_large_component_fraction": 0,
+                "qc_flag": "fail",
+                "limitations": f"{type(exc).__name__}: {exc}",
+            })
+            log_lines.append(f"{row['index']}. failed: {type(exc).__name__}: {exc}")
+        rows.append(row)
+
+    by_concentration = {}
+    for row in rows:
+        key = row.get("concentration") or "unknown"
+        bucket = by_concentration.setdefault(key, {"image_count": 0, "object_count": 0, "foreground_area": 0.0, "mean_foreground_fraction_sum": 0.0})
+        bucket["image_count"] += 1
+        bucket["object_count"] += int(row.get("object_count") or 0)
+        bucket["foreground_area"] += float(row.get("foreground_area") or 0)
+        bucket["mean_foreground_fraction_sum"] += float(row.get("foreground_fraction") or 0)
+    for bucket in by_concentration.values():
+        n = max(1, bucket["image_count"])
+        bucket["mean_foreground_fraction"] = round(bucket.pop("mean_foreground_fraction_sum") / n, 6)
+        bucket["foreground_area"] = round(bucket["foreground_area"], 3)
+
+    summary = {
+        "schema": "app80_smoke_metrics/0.1",
+        "ok": any(int(row.get("object_count") or 0) > 0 for row in rows),
+        "bounded_to_smoke_subset": True,
+        "row_count": len(rows),
+        "rows": rows,
+        "by_concentration": by_concentration,
+        "limitations": [
+            "Smoke subset only; not a full APP80 analysis.",
+            "Fusion metrics are exploratory proxies from generated masks.",
+            "4x and 10x are kept as separate metadata strata.",
+        ],
+    }
+    write_csv(Path(args.metrics_csv), rows)
+    Path(args.metrics_json).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.metrics_json).write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    Path(args.log_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.log_path).write_text("\\n".join(log_lines) + "\\n", encoding="utf-8")
+    print(json.dumps({"ok": summary["ok"], "row_count": len(rows), "metrics_json": args.metrics_json}))
+    return 0 if summary["ok"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`;
+}
+
+function app80SmokeVisualizeScript() {
+  return `#!/usr/bin/env python3
+"""AAPS manifested APP80 smoke-subset visual QC script."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def load_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_image(path: Path):
+    arr = np.asarray(mpimg.imread(path))
+    if arr.ndim == 2:
+        return arr
+    return arr[..., :3]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--smoke-subset-manifest", required=True)
+    parser.add_argument("--segmentation-manifest", required=True)
+    parser.add_argument("--metrics-json", required=True)
+    parser.add_argument("--visual-manifest", required=True)
+    parser.add_argument("--qc-contact-sheet", required=True)
+    parser.add_argument("--figure-dir", required=True)
+    parser.add_argument("--max-images", type=int, default=10)
+    args, _unknown = parser.parse_known_args()
+
+    segmentation = load_json(Path(args.segmentation_manifest))
+    metrics = load_json(Path(args.metrics_json))
+    records = segmentation.get("records", [])[: max(1, int(args.max_images))]
+    figure_dir = Path(args.figure_dir)
+    figure_dir.mkdir(parents=True, exist_ok=True)
+    visual_records = []
+    rows = max(1, len(records))
+    fig, axes = plt.subplots(rows, 3, figsize=(11, max(2.2, rows * 2.0)))
+    if rows == 1:
+        axes = np.asarray([axes])
+    for index, record in enumerate(records):
+        image_path = Path(record.get("image_path", ""))
+        mask_path = Path(record.get("mask_path", ""))
+        overlay_path = Path(record.get("overlay_path", ""))
+        panel_path = figure_dir / f"{index + 1:02d}_qc_panel.png"
+        status = "ok"
+        error = ""
+        try:
+            original = read_image(image_path)
+            mask = read_image(mask_path)
+            overlay = read_image(overlay_path)
+            panel_fig, panel_axes = plt.subplots(1, 3, figsize=(9, 3))
+            for ax, image, title in zip(panel_axes, [original, mask, overlay], ["source", "mask", "overlay"]):
+                ax.imshow(image, cmap="gray" if np.asarray(image).ndim == 2 else None)
+                ax.set_title(title, fontsize=8)
+                ax.axis("off")
+            panel_fig.tight_layout()
+            panel_fig.savefig(panel_path, dpi=160)
+            plt.close(panel_fig)
+            for ax, image, title in zip(axes[index], [original, mask, overlay], ["source", "mask", "overlay"]):
+                ax.imshow(image, cmap="gray" if np.asarray(image).ndim == 2 else None)
+                ax.set_title(f"{index + 1} {title}", fontsize=7)
+                ax.axis("off")
+        except Exception as exc:
+            status = "fail"
+            error = f"{type(exc).__name__}: {exc}"
+            for ax in axes[index]:
+                ax.text(0.5, 0.5, error, ha="center", va="center", wrap=True, fontsize=7)
+                ax.axis("off")
+        visual_records.append({
+            "index": record.get("index", index + 1),
+            "image_path": str(image_path),
+            "mask_path": str(mask_path),
+            "overlay_path": str(overlay_path),
+            "panel_path": str(panel_path) if panel_path.exists() else "",
+            "status": status,
+            "error": error,
+        })
+    fig.suptitle("APP80 smoke subset visual QC", fontsize=11)
+    fig.tight_layout()
+    Path(args.qc_contact_sheet).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(args.qc_contact_sheet, dpi=160)
+    plt.close(fig)
+    manifest = {
+        "schema": "app80_smoke_visual_manifest/0.1",
+        "ok": any(record["status"] == "ok" for record in visual_records),
+        "bounded_to_smoke_subset": True,
+        "qc_contact_sheet": args.qc_contact_sheet,
+        "figure_dir": str(figure_dir),
+        "metrics_json": args.metrics_json,
+        "metrics_row_count": metrics.get("row_count", 0),
+        "records": visual_records,
+    }
+    Path(args.visual_manifest).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.visual_manifest).write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    print(json.dumps({"ok": manifest["ok"], "visual_manifest": args.visual_manifest, "qc_contact_sheet": args.qc_contact_sheet}))
+    return 0 if manifest["ok"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`;
+}
+
+function app80SmokeReportScript() {
+  return `#!/usr/bin/env python3
+"""AAPS manifested APP80 smoke-layer report writer."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+def load_json(path: Path, required: bool = True):
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(str(path))
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_text(path: Path, required: bool = False):
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(str(path))
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--discovery-run-report", default="")
+    parser.add_argument("--design-brief", default="")
+    parser.add_argument("--smoke-subset-manifest", required=True)
+    parser.add_argument("--segmentation-manifest", required=True)
+    parser.add_argument("--per-image-qc", required=True)
+    parser.add_argument("--metrics-json", required=True)
+    parser.add_argument("--visual-manifest", required=True)
+    parser.add_argument("--smoke-report", required=True)
+    parser.add_argument("--verifier-json", required=True)
+    parser.add_argument("--discovery-run-id", default="")
+    args, _unknown = parser.parse_known_args()
+
+    required_paths = {
+        "smoke_subset_manifest": Path(args.smoke_subset_manifest),
+        "segmentation_manifest": Path(args.segmentation_manifest),
+        "per_image_qc": Path(args.per_image_qc),
+        "metrics_json": Path(args.metrics_json),
+        "visual_manifest": Path(args.visual_manifest),
+    }
+    missing = [str(path) for path in required_paths.values() if not path.exists()]
+    smoke = load_json(required_paths["smoke_subset_manifest"], required=False) or {}
+    segmentation = load_json(required_paths["segmentation_manifest"], required=False) or {}
+    qc = load_json(required_paths["per_image_qc"], required=False) or {}
+    metrics = load_json(required_paths["metrics_json"], required=False) or {}
+    visual = load_json(required_paths["visual_manifest"], required=False) or {}
+    design_brief = read_text(Path(args.design_brief), required=False)
+    executed_ok = not missing and bool(segmentation.get("ok")) and bool(metrics.get("ok")) and bool(visual.get("ok"))
+    verifier = {
+        "schema": "app80_smoke_verifier/0.1",
+        "ok": executed_ok,
+        "bounded_to_smoke_subset": True,
+        "discovery_run_id": args.discovery_run_id,
+        "missing_paths": missing,
+        "smoke_subset_count": smoke.get("count", len(smoke.get("files", []))),
+        "segmentation_successful_count": segmentation.get("successful_count", 0),
+        "metrics_row_count": metrics.get("row_count", 0),
+        "visual_record_count": len(visual.get("records", [])),
+        "qc_record_count": len(qc.get("records", [])),
+        "artifact_paths": {name: str(path) for name, path in required_paths.items()},
+        "limitations": [
+            "This report covers only the bounded APP80 smoke subset.",
+            "It is evidence that AAPS authored, manifested, and executed the next layer; it is not a full APP80 conclusion.",
+            "No mature Zhengyu final script or old App80 AAPS block was copied into this report.",
+        ],
+    }
+    lines = [
+        "# APP80 Top-Down AAPS Smoke Report",
+        "",
+        "## Scope",
+        "This report summarizes the bounded APP80 smoke-test layer generated and run through AAPS. It does not claim full APP80 completion.",
+        "",
+        "## Inputs and Boundaries",
+        f"- Smoke subset manifest: {args.smoke_subset_manifest}",
+        f"- Smoke subset count: {verifier['smoke_subset_count']}",
+        f"- Discovery run id: {args.discovery_run_id}",
+        "- Forbidden material: mature Zhengyu final APP80 implementation and old App80 AAPS source as the answer.",
+        "",
+        "## Experiment Design Brief",
+        design_brief[:1600] if design_brief else "Design brief was not available.",
+        "",
+        "## Execution Evidence",
+        f"- Segmentation manifest: {args.segmentation_manifest}",
+        f"- Successful segmentation records: {verifier['segmentation_successful_count']}",
+        f"- Per-image QC JSON: {args.per_image_qc}",
+        f"- Metrics JSON: {args.metrics_json}",
+        f"- Metrics rows: {verifier['metrics_row_count']}",
+        f"- Visual manifest: {args.visual_manifest}",
+        f"- QC contact sheet: {visual.get('qc_contact_sheet', '')}",
+        "",
+        "## Verifier Status",
+        f"- OK: {executed_ok}",
+    ]
+    if missing:
+        lines.extend(["", "## Missing Required Paths", *[f"- {item}" for item in missing]])
+    limitations = metrics.get("limitations", []) + verifier["limitations"]
+    lines.extend(["", "## Limitations", *[f"- {item}" for item in limitations]])
+    Path(args.smoke_report).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.smoke_report).write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    Path(args.verifier_json).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.verifier_json).write_text(json.dumps(verifier, indent=2, ensure_ascii=False) + "\\n", encoding="utf-8")
+    print(json.dumps({"ok": executed_ok, "smoke_report": args.smoke_report, "verifier_json": args.verifier_json}))
+    return 0 if executed_ok else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`;
+}
+
 function pythonScriptFor(kind) {
+  if (kind === "app80_smoke_segment") return app80SmokeSegmentScript();
+  if (kind === "app80_smoke_quantify") return app80SmokeQuantifyScript();
+  if (kind === "app80_smoke_visualize") return app80SmokeVisualizeScript();
+  if (kind === "app80_smoke_report") return app80SmokeReportScript();
   if (kind === "segment") {
     return `#!/usr/bin/env python3
 """AAPS generated threshold segmentation script.
