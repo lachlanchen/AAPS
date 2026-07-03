@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(os.environ.get("AAPS_STUDIO_PROJECT") or ROOT).expanduser().resolve()
+ALLOW_EXTERNAL_PROJECTS = os.environ.get("AAPS_ALLOW_EXTERNAL_PROJECTS", "1").strip().lower() not in {"0", "false", "no", "off"}
 STUDIO_DIR = ROOT / "studio"
 STUDIO_SIMPLE_DIR = ROOT / "studio-simple"
 if PROJECT_ROOT == ROOT:
@@ -101,6 +102,7 @@ DEFAULT_SETTINGS = {
     "codexChatReasoning": "medium",
     "codexTaskModel": "gpt-5.5",
     "codexTaskReasoning": "xhigh",
+    "codexSandbox": "danger-full-access",
     "codexTimeout": 240,
     "deepseekBaseUrl": "https://api.deepseek.com",
     "deepseekModel": "deepseek-v4-pro",
@@ -250,6 +252,7 @@ def read_settings() -> dict:
         "codexChatReasoning": os.environ.get("AAPS_CODEX_CHAT_REASONING"),
         "codexTaskModel": os.environ.get("AAPS_CODEX_TASK_MODEL"),
         "codexTaskReasoning": os.environ.get("AAPS_CODEX_TASK_REASONING"),
+        "codexSandbox": os.environ.get("AAPS_CODEX_SANDBOX") or os.environ.get("AAPS_CODEX_SANDBOX_MODE"),
         "deepseekBaseUrl": os.environ.get("AAPS_DEEPSEEK_BASE_URL"),
         "deepseekModel": os.environ.get("AAPS_DEEPSEEK_MODEL"),
         "agintiProvider": os.environ.get("AAPS_AGINTI_PROVIDER"),
@@ -275,6 +278,8 @@ def read_settings() -> dict:
             settings[key] = fallback
     if settings.get("agintiSafety") not in {"safe", "normal", "danger"}:
         settings["agintiSafety"] = "normal"
+    if settings.get("codexSandbox") not in {"read-only", "workspace-write", "danger-full-access"}:
+        settings["codexSandbox"] = "danger-full-access"
     return settings
 
 
@@ -297,6 +302,7 @@ def write_settings(payload: dict) -> dict:
         "codexChatReasoning",
         "codexTaskModel",
         "codexTaskReasoning",
+        "codexSandbox",
         "deepseekBaseUrl",
         "deepseekModel",
         "agintiProvider",
@@ -317,6 +323,8 @@ def write_settings(payload: dict) -> dict:
         settings["agentContextPack"] = bool(payload.get("agentContextPack"))
     if settings.get("agintiSafety") not in {"safe", "normal", "danger"}:
         settings["agintiSafety"] = "normal"
+    if settings.get("codexSandbox") not in {"read-only", "workspace-write", "danger-full-access"}:
+        settings["codexSandbox"] = DEFAULT_SETTINGS["codexSandbox"]
     for key in ["codexTimeout", "deepseekTimeout", "agintiTimeout"]:
         if key in payload:
             try:
@@ -368,7 +376,16 @@ def safe_repo_path(value: str | None = ".") -> Path:
     if text.startswith("~") or ".." in candidate.parts:
         raise ValueError(f"path must stay inside the AAPS Studio project: {text}")
     resolved = candidate.resolve() if candidate.is_absolute() else (PROJECT_ROOT / candidate).resolve()
-    resolved.relative_to(PROJECT_ROOT)
+    try:
+        resolved.relative_to(PROJECT_ROOT)
+    except ValueError:
+        if not ALLOW_EXTERNAL_PROJECTS:
+            raise ValueError(f"path must stay inside the AAPS Studio project: {text}") from None
+        home = Path.home().resolve()
+        try:
+            resolved.relative_to(home)
+        except ValueError:
+            raise ValueError(f"external project path must stay inside the current user's home directory: {text}") from None
     return resolved
 
 
@@ -491,6 +508,22 @@ def project_relative_or_absolute(project_dir: Path, path_value: Path) -> str:
             return str(path_value)
 
 
+def project_studio_history_dir(project_dir: Path) -> Path:
+    return project_dir / ".aaps-work" / "studio-history"
+
+
+def project_studio_artifact_dir(project_dir: Path) -> Path:
+    return project_dir / ".aaps-work" / "studio-artifacts"
+
+
+def project_studio_version_dir(project_dir: Path) -> Path:
+    return project_dir / ".aaps-work" / "studio-versions"
+
+
+def project_studio_qc_dir(project_dir: Path) -> Path:
+    return project_dir / ".aaps-work" / "qc"
+
+
 def session_db_path(project_dir: Path) -> Path:
     return project_dir / ".aaps-work" / "aaps-sessions.sqlite"
 
@@ -525,12 +558,13 @@ def connect_session_db(project_dir: Path) -> sqlite3.Connection:
     return db
 
 
-def session_history_path(session_id: str) -> Path:
-    return studio_scope_path(STUDIO_HISTORY_DIR, "session", safe_session_id(session_id))
+def session_history_path(session_id: str, project_dir: Path | None = None) -> Path:
+    root = project_studio_history_dir(project_dir) if project_dir else STUDIO_HISTORY_DIR
+    return studio_scope_path(root, "session", safe_session_id(session_id))
 
 
-def session_history_count(session_id: str) -> int:
-    path_value = session_history_path(session_id)
+def session_history_count(session_id: str, project_dir: Path | None = None) -> int:
+    path_value = session_history_path(session_id, project_dir)
     if not path_value.exists():
         return 0
     return sum(1 for line in path_value.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -538,7 +572,7 @@ def session_history_count(session_id: str) -> int:
 
 def session_row_to_dict(project_dir: Path, row: sqlite3.Row | dict) -> dict:
     item = dict(row)
-    item["historyCount"] = session_history_count(str(item.get("session_id") or item.get("sessionId") or ""))
+    item["historyCount"] = session_history_count(str(item.get("session_id") or item.get("sessionId") or ""), project_dir)
     return {
         "sessionId": item.get("session_id") or item.get("sessionId") or "default",
         "name": item.get("name") or item.get("session_id") or "default",
@@ -551,7 +585,7 @@ def session_row_to_dict(project_dir: Path, row: sqlite3.Row | dict) -> dict:
         "agentSessionId": item.get("agent_session_id") or "",
         "status": item.get("status") or "active",
         "source": item.get("source") or "",
-        "historyPath": item.get("history_path") or project_relative_or_absolute(project_dir, session_history_path(str(item.get("session_id") or "default"))),
+        "historyPath": item.get("history_path") or project_relative_or_absolute(project_dir, session_history_path(str(item.get("session_id") or "default"), project_dir)),
         "lastMessage": item.get("last_message") or "",
         "createdAt": item.get("created_at") or "",
         "updatedAt": item.get("updated_at") or "",
@@ -564,7 +598,7 @@ def upsert_aaps_session(project_dir: Path, payload: dict | None = None) -> dict:
     settings = read_settings()
     session_id = safe_session_id(str(body.get("sessionId") or body.get("session_id") or "default"))
     now = now_iso()
-    history_path = session_history_path(session_id)
+    history_path = session_history_path(session_id, project_dir)
     history_rel = project_relative_or_absolute(project_dir, history_path)
     name = str(body.get("name") or body.get("title") or session_id).strip()[:160] or session_id
     backend = str(body.get("backend") or settings.get("agentProvider") or "").strip()
@@ -624,7 +658,7 @@ def upsert_aaps_session(project_dir: Path, payload: dict | None = None) -> dict:
 
 
 def history_session_rows(project_dir: Path) -> list[dict]:
-    folder = STUDIO_HISTORY_DIR / "session"
+    folder = project_studio_history_dir(project_dir) / "session"
     if not folder.exists():
         return []
     rows = []
@@ -648,7 +682,7 @@ def history_session_rows(project_dir: Path) -> list[dict]:
                 "lastMessage": "",
                 "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_ctime)),
                 "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stat.st_mtime)),
-                "historyCount": session_history_count(session_id),
+                "historyCount": session_history_count(session_id, project_dir),
             }
         )
     return rows
@@ -688,8 +722,8 @@ def write_studio_chat_event(project_dir: Path, scope: str, scope_id: str, messag
         "response": json_safe(response),
         "metadata": metadata or {},
     }
-    history_path = append_jsonl(studio_scope_path(STUDIO_HISTORY_DIR, scope, scope_id), event)
-    artifact_path = STUDIO_ARTIFACT_DIR / slug(scope, "scope") / slug(scope_id, "item") / f"{stamp()}-{uuid.uuid4().hex[:8]}.json"
+    history_path = append_jsonl(studio_scope_path(project_studio_history_dir(project_dir), scope, scope_id), event)
+    artifact_path = project_studio_artifact_dir(project_dir) / slug(scope, "scope") / slug(scope_id, "item") / f"{stamp()}-{uuid.uuid4().hex[:8]}.json"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text(json.dumps(event, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return history_path.relative_to(project_dir).as_posix(), artifact_path.relative_to(project_dir).as_posix()
@@ -710,11 +744,12 @@ def snapshot_file(project_dir: Path, file_path: Path, action: str) -> str:
     if not file_path.exists() or not file_path.is_file():
         return ""
     rel = file_path.relative_to(project_dir).as_posix()
-    snapshot = STUDIO_VERSION_DIR / rel / f"{stamp()}-{uuid.uuid4().hex[:8]}.bak"
+    version_dir = project_studio_version_dir(project_dir)
+    snapshot = version_dir / rel / f"{stamp()}-{uuid.uuid4().hex[:8]}.bak"
     snapshot.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(file_path, snapshot)
     append_jsonl(
-        STUDIO_VERSION_DIR / "index.jsonl",
+        version_dir / "index.jsonl",
         {
             "time": now_iso(),
             "action": action,
@@ -1459,6 +1494,7 @@ def artifact_roots(project_dir: Path) -> list[Path]:
         ".aaps-work/qc",
         ".aaps-work/studio-aaps-runs",
         ".aaps-work/studio-aaps-compiles",
+        ".aaps-work/studio-versions",
         ".aaps-work/versions",
     ]:
         try:
@@ -1504,7 +1540,7 @@ def qc_review_paths(project_dir: Path, run_path: str) -> tuple[Path, Path, str]:
     run_rel = run_dir.relative_to(project_dir).as_posix()
     review_path = run_dir / "qc_review.json"
     digest = hashlib.sha1(run_rel.encode("utf-8")).hexdigest()[:10]
-    qc_index_path = STUDIO_QC_DIR / f"{slug(run_rel, 'run')}-{digest}.json"
+    qc_index_path = project_studio_qc_dir(project_dir) / f"{slug(run_rel, 'run')}-{digest}.json"
     return run_dir, review_path, qc_index_path
 
 
@@ -1696,7 +1732,7 @@ def write_qc_review(project_dir: Path, payload: dict) -> dict:
     qc_index_path.parent.mkdir(parents=True, exist_ok=True)
     qc_index_path.write_text(json.dumps(next_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     append_jsonl(
-        STUDIO_QC_DIR / "index.jsonl",
+        project_studio_qc_dir(project_dir) / "index.jsonl",
         {
             "time": record["time"],
             "runPath": next_payload["runPath"],
@@ -1768,7 +1804,8 @@ def write_project_artifact_file(handler: SimpleHTTPRequestHandler, project_dir: 
 
 
 def list_version_snapshots(project_dir: Path, limit: int = 120) -> dict:
-    index_path = STUDIO_VERSION_DIR / "index.jsonl"
+    version_dir = project_studio_version_dir(project_dir)
+    index_path = version_dir / "index.jsonl"
     records: list[dict] = []
     if index_path.exists():
         for raw in index_path.read_text(encoding="utf-8").splitlines():
@@ -1783,7 +1820,7 @@ def list_version_snapshots(project_dir: Path, limit: int = 120) -> dict:
                 continue
             try:
                 snapshot_path = relative_to_project(project_dir, snapshot)
-                snapshot_path.resolve().relative_to(STUDIO_VERSION_DIR.resolve())
+                snapshot_path.resolve().relative_to(version_dir.resolve())
                 stat = snapshot_path.stat()
             except (OSError, ValueError):
                 continue
@@ -1809,11 +1846,12 @@ def list_version_snapshots(project_dir: Path, limit: int = 120) -> dict:
 
 
 def restore_version_snapshot(project_dir: Path, snapshot: str) -> dict:
+    version_dir = project_studio_version_dir(project_dir)
     snapshot_path = relative_to_project(project_dir, snapshot)
-    snapshot_path.resolve().relative_to(STUDIO_VERSION_DIR.resolve())
+    snapshot_path.resolve().relative_to(version_dir.resolve())
     if not snapshot_path.exists() or not snapshot_path.is_file():
         raise FileNotFoundError(f"snapshot not found: {snapshot}")
-    rel_to_versions = snapshot_path.relative_to(STUDIO_VERSION_DIR)
+    rel_to_versions = snapshot_path.relative_to(version_dir)
     if len(rel_to_versions.parts) < 2:
         raise ValueError(f"invalid snapshot path: {snapshot}")
     original_rel = Path(*rel_to_versions.parts[:-1])
@@ -1822,7 +1860,7 @@ def restore_version_snapshot(project_dir: Path, snapshot: str) -> dict:
     original_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(snapshot_path, original_path)
     append_jsonl(
-        STUDIO_VERSION_DIR / "index.jsonl",
+        version_dir / "index.jsonl",
         {
             "time": now_iso(),
             "action": "project_version_restore",
@@ -2074,6 +2112,9 @@ def codex_command(schema: str, output_path: Path, settings: dict | None = None, 
         "--output-last-message",
         str(output_path),
     ]
+    sandbox_mode = str(active.get("codexSandbox") or DEFAULT_SETTINGS["codexSandbox"])
+    if sandbox_mode in {"read-only", "workspace-write", "danger-full-access"}:
+        command.extend(["--sandbox", sandbox_mode])
     schema_path = SCHEMAS.get(schema)
     if schema_path and schema_path.exists():
         command.extend(["--output-schema", str(schema_path)])
@@ -2094,7 +2135,7 @@ def read_text_excerpt(path: Path, max_chars: int = 4000) -> str:
 
 
 def recent_studio_history(project_dir: Path, scope: str, scope_id: str, limit: int = 12) -> list[dict]:
-    history_file = studio_scope_path(STUDIO_HISTORY_DIR, scope, scope_id)
+    history_file = studio_scope_path(project_studio_history_dir(project_dir), scope, scope_id)
     if not history_file.exists():
         return []
     rows: list[dict] = []
@@ -3258,7 +3299,7 @@ def run_block_preview(project_dir: Path, block_id: str, action: dict, body: dict
         "stderrPreview": (process.stderr or "")[-4000:],
         "canvasItems": canvas_items,
     }
-    canvas_path = STUDIO_ARTIFACT_DIR / "block" / block_id / f"{stamp()}-preview-canvas.json"
+    canvas_path = project_studio_artifact_dir(project_dir) / "block" / block_id / f"{stamp()}-preview-canvas.json"
     canvas_path.parent.mkdir(parents=True, exist_ok=True)
     canvas_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     manifest["canvasPath"] = canvas_path.relative_to(project_dir).as_posix()
@@ -3770,22 +3811,66 @@ def run_codex(job_id: str, prompt: str, schema: str = "response", force_real: bo
         output_path.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"status": "succeeded", "result": output}
 
+    def failure_payload(message: str, diagnostics: list[str] | None = None) -> dict:
+        if schema == "aaps_chat":
+            return {
+                "mode": "reply",
+                "route": "backend_failure",
+                "message": message,
+                "source": "",
+                "files": [],
+                "diagnostics": diagnostics or [message],
+            }
+        if schema == "aaps_edit":
+            return {"source": "", "summary": message, "diagnostics": diagnostics or [message]}
+        return {"ok": False, "message": message, "diagnostics": diagnostics or [message]}
+
     if not find_command("codex", "AAPS_CODEX_BIN"):
+        result = failure_payload("codex CLI was not found. Set AAPS_CODEX_BIN or install/configure Codex.")
+        stderr_path.write_text(result["message"], encoding="utf-8")
+        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         return {
             "status": "failed",
-            "error": "codex CLI was not found. Set AAPS_CODEX_BIN or install/configure Codex.",
+            "error": result["message"],
+            "result": result,
         }
 
     timeout = int(settings.get("codexTimeout") or os.environ.get("AAPS_CODEX_TIMEOUT", "240"))
-    process = subprocess.run(
-        codex_command(schema, output_path, settings, work_cwd),
-        input=prompt,
-        text=True,
-        cwd=work_cwd,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        process = subprocess.run(
+            codex_command(schema, output_path, settings, work_cwd),
+            input=prompt,
+            text=True,
+            cwd=work_cwd,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout_text = exc.stdout or ""
+        stderr_text = exc.stderr or ""
+        if isinstance(stdout_text, bytes):
+            stdout_text = stdout_text.decode("utf-8", errors="replace")
+        if isinstance(stderr_text, bytes):
+            stderr_text = stderr_text.decode("utf-8", errors="replace")
+        message = f"codex timed out after {timeout} seconds before producing a complete {schema} response"
+        stdout_path.write_text(stdout_text, encoding="utf-8")
+        stderr_path.write_text((stderr_text + "\n" + message).strip() + "\n", encoding="utf-8")
+        result = failure_payload(
+            message,
+            [
+                message,
+                "The full backend prompt is saved in prompt.txt; retry with a smaller request, a longer timeout, or an asynchronous job route.",
+            ],
+        )
+        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"status": "failed", "error": message, "result": result}
+    except Exception as exc:  # noqa: BLE001
+        message = f"codex backend failed before producing a complete {schema} response: {exc}"
+        stderr_path.write_text(message, encoding="utf-8")
+        result = failure_payload(message)
+        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"status": "failed", "error": message, "result": result}
     stdout_path.write_text(process.stdout or "", encoding="utf-8")
     stderr_path.write_text(process.stderr or "", encoding="utf-8")
 
@@ -4192,6 +4277,8 @@ def persist_agent_chat_files(project_dir: Path, result: dict, provider: str, job
     if not isinstance(result, dict):
         return result
     raw_files = result.get("files")
+    if raw_files == []:
+        return result
     if not raw_files:
         route = str(result.get("route") or "").strip().lower()
         message = str(result.get("message") or "").strip().lower()
@@ -4222,6 +4309,12 @@ def persist_agent_chat_files(project_dir: Path, result: dict, provider: str, job
             content = item.get("source")
         if not file_name or not isinstance(content, str):
             warnings.append(f"ignored files[{index}] because path/content were missing")
+            continue
+        stripped_content = content.strip()
+        if re.fullmatch(r"<\s*materialized\s+in\s+workspace\s*:.*>", stripped_content, flags=re.IGNORECASE | re.DOTALL):
+            warnings.append(
+                f"ignored files[{index}] for {file_name} because the agent returned a placeholder instead of complete file content"
+            )
             continue
         try:
             file_path = relative_to_project(project_dir, file_name)
@@ -4314,7 +4407,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                 project_dir = safe_repo_path(query.get("path", ["."])[0])
                 scope = query.get("scope", ["program"])[0]
                 scope_id = query.get("id", ["active"])[0]
-                history_file = studio_scope_path(STUDIO_HISTORY_DIR, scope, scope_id)
+                history_file = studio_scope_path(project_studio_history_dir(project_dir), scope, scope_id)
                 rows = []
                 if history_file.exists():
                     for raw in history_file.read_text(encoding="utf-8").splitlines():
@@ -4331,7 +4424,7 @@ class AAPSHandler(SimpleHTTPRequestHandler):
                         "project_path": project_label(project_dir),
                         "scope": scope,
                         "id": scope_id,
-                        "historyPath": history_file.relative_to(project_dir).as_posix(),
+                        "historyPath": project_relative_or_absolute(project_dir, history_file),
                         "events": rows,
                     },
                 )

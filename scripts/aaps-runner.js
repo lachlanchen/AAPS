@@ -619,6 +619,60 @@ function appendJsonl(file, value) {
   fs.appendFileSync(file, `${JSON.stringify(value)}\n`, "utf8");
 }
 
+const SENSITIVE_KEY_PATTERN = /(?:token|api[_-]?key|secret|password|passwd|pwd|credential|auth|bearer|cookie|session|npmrc|personal[_-]?access[_-]?token|private[_-]?key|ssh[_-]?key|webhook|sendgrid|mathpix|openai|deepseek|qwen|hf[_-]?token|github[_-]?pat)/i;
+const SENSITIVE_VALUE_PATTERN = /(?:sk-(?:proj-)?[A-Za-z0-9_-]{12,}|gh[opusr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,}|npm_[A-Za-z0-9]{12,}|hf_[A-Za-z0-9]{12,}|SG\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})/;
+const OMIT_ARTIFACT_VALUE = Symbol("omit-artifact-value");
+const SAFE_ENV_CONTEXT_KEYS = new Set([
+  "env.SHELL",
+  "env.PATH",
+  "env.PYTHON",
+  "env.CONDA_EXE",
+  "env.CONDA_PREFIX",
+  "env.CONDA_DEFAULT_ENV",
+  "env.CONDA_PYTHON_EXE",
+  "env.CUDA_HOME",
+  "env.CUDA_PATH",
+  "env.JAVA_HOME",
+  "env.NODE_OPTIONS",
+  "env.AAPS_CODEX_SANDBOX",
+  "env.AAPS_CODEX_MODEL",
+  "env.AAPS_CODEX_REASONING",
+]);
+
+function shouldRedactKey(key) {
+  return SENSITIVE_KEY_PATTERN.test(String(key || ""));
+}
+
+function redactString(value) {
+  const text = String(value ?? "");
+  if (!text) return text;
+  if (SENSITIVE_VALUE_PATTERN.test(text)) return "[REDACTED]";
+  return text.replace(SENSITIVE_VALUE_PATTERN, "[REDACTED]");
+}
+
+function sanitizeForArtifact(value, keyPath = "") {
+  if (Array.isArray(value)) {
+    return value
+      .map((item, index) => sanitizeForArtifact(item, `${keyPath}.${index}`))
+      .filter((item) => item !== OMIT_ARTIFACT_VALUE);
+  }
+  if (value && typeof value === "object") {
+    const output = {};
+    Object.entries(value).forEach(([key, item]) => {
+      const nextKey = keyPath ? `${keyPath}.${key}` : key;
+      if (nextKey.startsWith("context.env.") && !SAFE_ENV_CONTEXT_KEYS.has(key)) return;
+      if (key.startsWith("env.") && !SAFE_ENV_CONTEXT_KEYS.has(key)) return;
+      const sanitized = shouldRedactKey(nextKey) || shouldRedactKey(key)
+        ? "[REDACTED]"
+        : sanitizeForArtifact(item, nextKey);
+      if (sanitized !== OMIT_ARTIFACT_VALUE) output[key] = sanitized;
+    });
+    return output;
+  }
+  if (typeof value === "string") return redactString(value);
+  return value;
+}
+
 function contextFrom(ir, manifest, runId, projectDir, runDir, registries = {}) {
   const pipeline = ir.pipeline || {};
   const variables = (manifest && manifest.variables) || {};
@@ -1932,6 +1986,7 @@ function run(options) {
     const file = path.join(runDir, "repair_prompts", `${step.id || "step"}-repair.md`);
     const jsonFile = path.join(runDir, "repair_prompts", `${step.id || "step"}-repair.json`);
     const reportGuidance = /report|latex|tex|pdf/i.test(`${step.id} ${step.path} ${(step.outputs || []).map((item) => item.type || item.name).join(" ")}`);
+    const safeDetails = sanitizeForArtifact(details);
     const packet = {
       version: "aaps_dormant_repair_agent_packet/0.1",
       runId,
@@ -1948,7 +2003,7 @@ function run(options) {
         recovery: step.recovery || [],
       },
       reason,
-      details,
+      details: safeDetails,
       commands: {
         parse: `aaps parse ${loaded.file} --project ${projectDir} --json --no-auto-update`,
         validate: `aaps validate ${loaded.file} --project ${projectDir} --json --no-auto-update`,
@@ -1987,7 +2042,7 @@ function run(options) {
         : []),
       "## Failure Evidence",
       "```json",
-      JSON.stringify(details, null, 2),
+      JSON.stringify(safeDetails, null, 2),
       "```",
       "",
       "## Suggested Repair",

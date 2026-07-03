@@ -35,6 +35,8 @@ aaps chat --project .
 | `AAPS_CODEX_REASONING` | `medium` | Reasoning effort config. |
 | `AAPS_CODEX_TIMEOUT` | `240` | Synchronous wrapper timeout in seconds. |
 | `AAPS_CODEX_TIMEOUT_MS` | `900000` | Direct `aaps prompt --backend codex` timeout in milliseconds. |
+| `AAPS_CODEX_SANDBOX` | `danger-full-access` | Codex exec sandbox for local Studio backend jobs. Use `read-only` or `workspace-write` only when the host supports Codex sandboxing cleanly. |
+| `AAPS_ALLOW_EXTERNAL_PROJECTS` | `1` | Allow the local Studio backend to open explicit project paths under the current user's home directory. Set `0` to restrict paths to `AAPS_STUDIO_PROJECT`. |
 | `AAPS_AGENT_PROVIDER` | `codex` | Default backend provider. Supported values: `codex`, `deepseek`, `aginti`. |
 | `AAPS_DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek OpenAI-compatible base URL. |
 | `AAPS_DEEPSEEK_MODEL` | `deepseek-v4-pro` | Preferred DeepSeek model for the current stage. |
